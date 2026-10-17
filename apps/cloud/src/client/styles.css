@@ -1,0 +1,61 @@
+@import "tailwindcss";
+/* Tailwind 默认不扫 node_modules，Streamdown 的类名要单独引进来。 */
+@source "../../node_modules/streamdown/dist/*.js";
+
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f7f6f3, #161615);
+  --surface: light-dark(#ffffff, #201f1d);
+  --sunken: light-dark(#efede8, #1b1a19);
+  --fg: light-dark(#1f1e1c, #ecebe7);
+  --muted: light-dark(#6b6963, #a19f98);
+  --border: light-dark(#e3e0d8, #34322f);
+  --accent: light-dark(#2f6f5e, #74c2a9);
+  --accent-fg: light-dark(#ffffff, #10231d);
+  --accent-soft: light-dark(#e3efe9, #1c2e28);
+  --danger: light-dark(#b42318, #f97066);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Streamdown 用 shadcn 风格的变量，这里接到 Pupu 的配色上。 */
+.sd-theme {
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-foreground: var(--fg);
+  --color-background: var(--surface);
+  --color-muted: var(--sunken);
+  --color-muted-foreground: var(--muted);
+  --color-border: var(--border);
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.sd-theme pre {
+  overflow-x: auto;
+  background: var(--sunken);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.sd-theme code {
+  font-size: 0.92em;
+}
+
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
