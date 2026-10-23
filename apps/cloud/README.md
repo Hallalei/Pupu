@@ -1,6 +1,6 @@
 # Pupu 云端（v0）
 
-Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable；还有一个网页，分「主对话」和「项目」两个 tab。
+Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable；还有一个网页，分「主页」「聊天」「项目」三屏，交互参考 Hark，界面用 HeroUI v3。
 
 这一版还不连电脑，所以 Pupu 只能聊天、建项目，碰不到你电脑上的 Claude Code、Codex 等会话。
 
@@ -9,14 +9,15 @@ Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable�
 | 文件 | 内容 |
 |---|---|
 | `src/server.ts` | `Pupu` Durable Object，以及 Worker 的路由、鉴权和 REST API |
-| `src/prompt.ts` | 主对话和项目会话的系统提示词。主对话里会附上项目的实时状态 |
-| `src/tools.ts` | Pupu 能用的工具：`list_projects`、`propose_project`、`suggest_existing_project` |
-| `src/projects.ts` | 项目、建议等元数据的存储，放在 DO 的 SQLite 里，表名前缀 `pupu_` |
+| `src/prompt.ts` | 聊天和项目会话的系统提示词。聊天里会附上项目的实时状态 |
+| `src/tools.ts` | Pupu 能用的工具：`list_projects`、`create_project`（用户在聊天里答应后才建）、`hand_off_to_project`（把事交给已有项目去做） |
+| `src/messages.ts` | 两种特殊的用户消息：聊天转交给项目的消息、引用回复 |
+| `src/projects.ts` | 项目等元数据的存储，放在 DO 的 SQLite 里，表名前缀 `pupu_` |
 | `src/sockets.ts` `protocol.ts` `view.ts` `transcript.ts` | 把 pi 会话放到 WebSocket 上，并把事件折叠成界面状态。改编自 Cloudflare 官方的 pi 示例 |
 | `src/client/` | React 网页 |
 
 会话的组织方式：
-- 主对话是 pi 的根会话 `"1"`；
+- 聊天（主对话）是 pi 的根会话 `"1"`；
 - 每个项目通过 `harness.sessions.create()` 单独开一个 pi 会话；
 - 这些会话都在同一个 DO 里。
 

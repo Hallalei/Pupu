@@ -6,7 +6,8 @@ import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { createAI } from "agents/models/pi-ai";
 import { WebSockets } from "agents/websockets";
-import type { Project, Proposal } from "./projects";
+import { handoffMessage } from "./messages";
+import type { Project } from "./projects";
 import { ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
 import { PiSessionSockets } from "./sockets";
@@ -23,12 +24,11 @@ export const PUPU_INSTANCE = "me";
 
 export type PupuState = {
   readonly projects: readonly Project[];
-  readonly proposals: readonly Proposal[];
 };
 
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
- * 主对话是 pi 的根会话，每个项目各开一个 pi 会话，共用这个对象的 SQLite。
+ * 聊天（主对话）是 pi 的根会话，每个项目各开一个 pi 会话，共用这个对象的 SQLite。
  */
 export class Pupu extends DurableObject<Env> {
   readonly ai = createAI({ binding: this.env.AI });
@@ -46,7 +46,12 @@ export class Pupu extends DurableObject<Env> {
               renderPrompt(String(input.conversationId), this.store)
           }
         ],
-        tools: createPupuTools(this.store, () => this.#changed())
+        tools: createPupuTools({
+          store: this.store,
+          createProject: (input) => this.#createProject(input),
+          handOff: (project, task, operationId) =>
+            this.#handOff(project, task, operationId)
+        })
       });
       const models = createModels();
       models.setProvider(this.ai.provider);
@@ -99,52 +104,43 @@ export class Pupu extends DurableObject<Env> {
 
   async state(): Promise<PupuState> {
     await this.lifecycle.start();
-    return {
-      projects: this.store.listProjects(),
-      proposals: this.store.listProposals()
-    };
+    return { projects: this.store.listProjects() };
   }
 
-  async createProject(input: {
+  async createProject(input: { name: string; goal: string }): Promise<Project> {
+    await this.lifecycle.start();
+    return this.#createProject({ ...input, background: "" });
+  }
+
+  async #createProject(input: {
     name: string;
     goal: string;
-    background?: string;
+    background: string;
   }): Promise<Project> {
-    await this.lifecycle.start();
     const name = input.name.trim();
-    const goal = input.goal.trim();
     if (!name) throw new Error("项目名不能为空");
     const session = await this.harness.sessions.create();
     const project = this.store.insertProject({
       session: session.id,
       name,
-      goal,
-      background: (input.background ?? "").trim()
+      goal: input.goal.trim(),
+      background: input.background.trim()
     });
     this.#changed();
     return project;
   }
 
-  async acceptProposal(id: string): Promise<Project> {
-    await this.lifecycle.start();
-    const proposal = this.store.getProposal(id);
-    if (!proposal) throw new Error("找不到这条建议");
-    if (proposal.status === "accepted" && proposal.projectId) {
-      const existing = this.store.getProject(proposal.projectId);
-      if (existing) return existing;
-    }
-    // 先占住状态，避免连点两次建出两个项目。
-    this.store.setProposal(id, "accepted");
-    const project = await this.createProject(proposal);
-    this.store.setProposal(id, "accepted", project.id);
-    this.#changed();
-    return project;
-  }
-
-  async dismissProposal(id: string): Promise<void> {
-    await this.lifecycle.start();
-    if (!this.store.getProposal(id)) throw new Error("找不到这条建议");
-    this.store.setProposal(id, "dismissed");
+  /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。 */
+  async #handOff(
+    project: Project,
+    task: string,
+    operationId: string
+  ): Promise<void> {
+    await this.harness.session(project.session).submit(handoffMessage(task), {
+      whenBusy: "followUp",
+      operationId
+    });
+    this.store.touchSession(project.session);
     this.#changed();
   }
 }
@@ -199,15 +195,6 @@ async function handleApi(request: Request, env: Env, url: URL) {
       goal: String(body.goal ?? "")
     });
     return Response.json(project);
-  }
-  const proposal = pathname.match(/^\/api\/proposals\/([^/]+)\/(accept|dismiss)$/);
-  if (proposal && method === "POST") {
-    const [, id, action] = proposal;
-    if (action === "accept") {
-      return Response.json(await pupu(env).acceptProposal(decodeURIComponent(id)));
-    }
-    await pupu(env).dismissProposal(decodeURIComponent(id));
-    return Response.json({ ok: true });
   }
   return new Response("Not found", { status: 404 });
 }

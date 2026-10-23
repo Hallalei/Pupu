@@ -1,5 +1,5 @@
 /**
- * Pupu 自己的数据：项目，和 Pupu 在主对话里提出的「新建项目」建议。
+ * Pupu 自己的数据：项目，以及零散的设置。
  * 和 pi 共用这个 Durable Object 的 SQLite。pi 的表都带 `pi_` 前缀，这里用 `pupu_`。
  */
 
@@ -9,23 +9,10 @@ export type Project = {
   readonly session: string;
   readonly name: string;
   readonly goal: string;
-  /** 建项目时从主对话带过去的背景。 */
+  /** 建项目时从聊天带过去的背景。 */
   readonly background: string;
   readonly createdAt: number;
   readonly updatedAt: number;
-};
-
-export type ProposalStatus = "pending" | "accepted" | "dismissed";
-
-export type Proposal = {
-  /** 就是 Pupu 调用 propose_project 时的 tool call id，界面靠它把卡片和状态对上。 */
-  readonly id: string;
-  readonly name: string;
-  readonly goal: string;
-  readonly background: string;
-  readonly status: ProposalStatus;
-  readonly projectId: string | null;
-  readonly createdAt: number;
 };
 
 type Row = Record<string, SqlStorageValue>;
@@ -39,18 +26,6 @@ function toProject(row: Row): Project {
     background: String(row.background),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
-  };
-}
-
-function toProposal(row: Row): Proposal {
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    goal: String(row.goal),
-    background: String(row.background),
-    status: String(row.status) as ProposalStatus,
-    projectId: row.project_id === null ? null : String(row.project_id),
-    createdAt: Number(row.created_at)
   };
 }
 
@@ -72,15 +47,6 @@ export class ProjectStore {
         background TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      )`);
-      this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_proposals (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        goal TEXT NOT NULL,
-        background TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'pending',
-        project_id TEXT,
-        created_at INTEGER NOT NULL
       )`);
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_meta (
         key TEXT PRIMARY KEY,
@@ -156,52 +122,6 @@ export class ProjectStore {
       "UPDATE pupu_projects SET updated_at = ? WHERE session = ?",
       Date.now(),
       session
-    );
-  }
-
-  /** 同一个 tool call 重放时不会重复插入。 */
-  addProposal(input: {
-    id: string;
-    name: string;
-    goal: string;
-    background: string;
-  }): Proposal {
-    this.#db().exec(
-      `INSERT OR IGNORE INTO pupu_proposals (id, name, goal, background, status, created_at)
-       VALUES (?, ?, ?, ?, 'pending', ?)`,
-      input.id,
-      input.name,
-      input.goal,
-      input.background,
-      Date.now()
-    );
-    return this.getProposal(input.id)!;
-  }
-
-  getProposal(id: string): Proposal | undefined {
-    const [row] = this.#db()
-      .exec("SELECT * FROM pupu_proposals WHERE id = ?", id)
-      .toArray();
-    return row ? toProposal(row) : undefined;
-  }
-
-  listProposals(): Proposal[] {
-    return this.#db()
-      .exec("SELECT * FROM pupu_proposals ORDER BY created_at DESC")
-      .toArray()
-      .map(toProposal);
-  }
-
-  setProposal(
-    id: string,
-    status: ProposalStatus,
-    projectId: string | null = null
-  ): void {
-    this.#db().exec(
-      "UPDATE pupu_proposals SET status = ?, project_id = ? WHERE id = ?",
-      status,
-      projectId,
-      id
     );
   }
 }

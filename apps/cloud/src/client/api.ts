@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Project, Proposal } from "../projects";
+import type { Project } from "../projects";
 import type { PupuState } from "../server";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -26,21 +26,12 @@ export const api = {
     request<Project>("/api/projects", {
       method: "POST",
       body: JSON.stringify({ name, goal })
-    }),
-  acceptProposal: (id: string) =>
-    request<Project>(`/api/proposals/${encodeURIComponent(id)}/accept`, {
-      method: "POST"
-    }),
-  dismissProposal: (id: string) =>
-    request<{ ok: true }>(`/api/proposals/${encodeURIComponent(id)}/dismiss`, {
-      method: "POST"
     })
 };
 
-/** 项目和建议的列表，页面拿到 `projects_changed` 时调 `refresh()`。 */
+/** 项目列表，页面拿到 `projects_changed` 时调 `refresh()`。 */
 export function usePupuState() {
   const [projects, setProjects] = useState<readonly Project[]>([]);
-  const [proposals, setProposals] = useState<readonly Proposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -48,7 +39,6 @@ export function usePupuState() {
     try {
       const state = await api.state();
       setProjects(state.projects);
-      setProposals(state.proposals);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -64,5 +54,5 @@ export function usePupuState() {
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
-  return { projects, proposals, error, loaded, refresh };
+  return { projects, error, loaded, refresh };
 }

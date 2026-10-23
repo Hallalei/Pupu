@@ -1,34 +1,54 @@
+import { Avatar, Button, Drawer, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
-import { Chat, type CardContext } from "./Chat";
-import { Projects } from "./Projects";
+import { Chat, type ChatContext } from "./Chat";
+import { Home } from "./Home";
+import { MenuIcon, PlusIcon } from "./icons";
+import { NewProject } from "./NewProject";
 
-/** pi 的根会话 id，就是主对话。不从 agents/harness/pi 引，免得把服务端代码打进网页。 */
+/** pi 的根会话 id，就是聊天。不从 agents/harness/pi 引，免得把服务端代码打进网页。 */
 const ROOT_SESSION = "1";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
 type Route =
-  | { readonly kind: "main" }
+  | { readonly kind: "home" }
+  | { readonly kind: "chat" }
   | { readonly kind: "projects" }
   | { readonly kind: "project"; readonly id: string };
+
+type Section = "home" | "chat" | "projects";
+
+const SECTIONS: readonly (readonly [Section, string])[] = [
+  ["home", "主页"],
+  ["chat", "聊天"],
+  ["projects", "项目"]
+];
 
 function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, "");
   const project = path.match(/^\/projects\/(.+)$/);
   if (project) return { kind: "project", id: decodeURIComponent(project[1]) };
   if (path === "/projects") return { kind: "projects" };
-  return { kind: "main" };
+  if (path === "/home") return { kind: "home" };
+  return { kind: "chat" };
 }
 
 function hashOf(route: Route): string {
   switch (route.kind) {
-    case "main":
+    case "home":
+      return "#/home";
+    case "chat":
       return "#/";
     case "projects":
       return "#/projects";
     case "project":
       return `#/projects/${encodeURIComponent(route.id)}`;
   }
+}
+
+function sectionOf(route: Route): Section {
+  return route.kind === "project" ? "projects" : route.kind;
 }
 
 function useRoute() {
@@ -44,45 +64,87 @@ function useRoute() {
   return [route, go] as const;
 }
 
+/** 记住上次打开的项目，点「项目」时直接回到它。浏览器存储可能不可用，失败就算了。 */
+const LAST_PROJECT = "pupu:last-project";
+
+function lastProject(): string | null {
+  try {
+    return localStorage.getItem(LAST_PROJECT);
+  } catch {
+    return null;
+  }
+}
+
+function rememberProject(id: string) {
+  try {
+    localStorage.setItem(LAST_PROJECT, id);
+  } catch {
+    // 不记也能用。
+  }
+}
+
 export function App() {
   const [route, go] = useRoute();
-  const state = usePupuState();
-  const { refresh } = state;
+  const { projects, loaded, error, refresh } = usePupuState();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  const cards: CardContext = useMemo(
+  const chat: ChatContext = useMemo(
     () => ({
-      projects: new Map(state.projects.map((project) => [project.id, project])),
-      proposals: new Map(state.proposals.map((proposal) => [proposal.id, proposal])),
-      onAccept: async (id) => {
-        await api.acceptProposal(id);
-        await refresh();
-      },
-      onDismiss: async (id) => {
-        await api.dismissProposal(id);
-        await refresh();
-      },
+      projects: new Map(projects.map((project) => [project.id, project])),
+      projectTags: route.kind === "chat",
       onOpenProject: (id) => go({ kind: "project", id }),
       onProjectsChanged: () => void refresh()
     }),
-    [state.projects, state.proposals, refresh, go]
+    [projects, refresh, go, route.kind]
   );
 
+  // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
+  useEffect(() => {
+    if (route.kind !== "projects" || !loaded) return;
+    const last = lastProject();
+    const target =
+      projects.find((project) => project.id === last) ?? projects[0];
+    if (target) go({ kind: "project", id: target.id });
+  }, [route.kind, loaded, projects, go]);
+
   const project =
-    route.kind === "project" ? cards.projects.get(route.id) : undefined;
+    route.kind === "project" ? chat.projects.get(route.id) : undefined;
+  useEffect(() => {
+    if (project) rememberProject(project.id);
+  }, [project]);
+
+  const section = sectionOf(route);
+  const goSection = (key: Section) => {
+    if (key === "home") go({ kind: "home" });
+    else if (key === "chat") go({ kind: "chat" });
+    else go({ kind: "projects" });
+  };
 
   let body;
-  if (route.kind === "main") {
+  if (route.kind === "home") {
+    body = (
+      <Home
+        projects={projects}
+        onOpenProject={(id) => go({ kind: "project", id })}
+      />
+    );
+  } else if (route.kind === "chat") {
     body = (
       <Chat
-        key="main"
+        key="chat"
         session={ROOT_SESSION}
-        cards={cards}
-        placeholder="跟 Pupu 说点什么"
+        context={chat}
+        placeholder="给 Pupu 发消息"
         empty={
-          <div className="flex flex-col gap-2">
-            <div className="text-2xl font-semibold">我是 Pupu</div>
-            <div className="text-[15px] leading-7 text-(--muted)">
-              这是我们的主对话，会一直接着聊下去。小事我直接办；要持续推进的事，我会建议放进项目里。
+          <div className="flex flex-col gap-2 text-center">
+            <div className="text-2xl font-semibold text-(--on-sky-strong)">
+              我是 Pupu
+            </div>
+            <div className="text-[15px] leading-7 text-(--on-sky-strong)/80">
+              这是我们的聊天，会一直接着聊下去。
+              <br />
+              小事我直接办，要持续推进的事放进项目里。
             </div>
           </div>
         }
@@ -93,114 +155,175 @@ export function App() {
         ]}
       />
     );
-  } else if (route.kind === "projects") {
-    body = (
-      <Projects
-        projects={state.projects}
-        proposals={state.proposals}
-        onOpen={(id) => go({ kind: "project", id })}
-        onCreate={async (name, goal) => {
-          const created = await api.createProject(name, goal);
-          await refresh();
-          go({ kind: "project", id: created.id });
-        }}
-        onAccept={cards.onAccept}
-        onDismiss={cards.onDismiss}
-      />
-    );
   } else if (project) {
     body = (
       <Chat
         key={project.session}
         session={project.session}
-        cards={cards}
+        context={chat}
         placeholder={`在「${project.name}」里说`}
-        header={
-          <div className="flex flex-col gap-1 border-b border-(--border) pb-3">
-            <button
-              type="button"
-              onClick={() => go({ kind: "projects" })}
-              className="self-start text-sm text-(--muted)"
-            >
-              ← 所有项目
-            </button>
-            <div className="text-lg font-semibold">{project.name}</div>
-            {project.goal && (
-              <div className="text-sm text-(--muted)">{project.goal}</div>
-            )}
-          </div>
+        top={
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="glass mx-auto max-w-[80%] truncate rounded-full px-3.5 py-1 text-[13px] font-medium"
+          >
+            {project.name}
+          </button>
         }
         empty={
-          <div className="text-[15px] leading-7 text-(--muted)">
-            这是「{project.name}」的项目会话，会一直持续下去。从这里开始推进它。
+          <div className="glass-strong bubble mx-auto max-w-md rounded-3xl px-5 py-4 text-center text-[15px] leading-7">
+            <div className="font-semibold">{project.name}</div>
+            {project.goal && <div className="text-muted">{project.goal}</div>}
           </div>
         }
       />
     );
   } else {
     body = (
-      <div className="p-8 text-center text-sm text-(--muted)">
-        {state.loaded ? "找不到这个项目。" : "加载中…"}
+      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="text-[15px] leading-7 text-(--on-sky-strong)">
+          {!loaded
+            ? "加载中…"
+            : route.kind === "project"
+              ? "找不到这个项目。"
+              : "还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个；也可以自己建。"}
+        </div>
+        {loaded && (
+          <Button variant="secondary" onPress={() => setCreating(true)}>
+            <PlusIcon />
+            新项目
+          </Button>
+        )}
       </div>
     );
   }
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex items-center justify-between border-b border-(--border) px-4 pt-[max(env(safe-area-inset-top),0px)]">
-        <div className="flex h-12 items-center gap-2">
-          <span className="size-2.5 rounded-full bg-(--accent)" />
-          <span className="font-semibold">Pupu</span>
+      <div className="sky" />
+      <header className="pt-safe relative z-10 grid grid-cols-[3rem_1fr_3rem] items-center px-3 py-2.5">
+        <div>
+          {section === "projects" && (
+            <Button
+              isIconOnly
+              variant="ghost"
+              aria-label="打开项目抽屉"
+              onPress={() => setDrawerOpen(true)}
+              className="glass size-10 rounded-full text-lg text-foreground"
+            >
+              <MenuIcon />
+            </Button>
+          )}
         </div>
-        {state.error && (
-          <span className="truncate text-xs text-(--danger)">{state.error}</span>
-        )}
-      </header>
-      <main className="min-h-0 flex-1">{body}</main>
-      <nav className="pb-safe flex border-t border-(--border) bg-(--surface)">
-        <Tab active={route.kind === "main"} onClick={() => go({ kind: "main" })}>
-          主对话
-        </Tab>
-        <Tab
-          active={route.kind !== "main"}
-          onClick={() => go({ kind: "projects" })}
-          badge={state.proposals.filter((proposal) => proposal.status === "pending").length}
+        <Tabs
+          className="justify-self-center"
+          selectedKey={section}
+          onSelectionChange={(key) => goSection(key as Section)}
         >
-          项目
-        </Tab>
-      </nav>
+          <Tabs.ListContainer>
+            <Tabs.List aria-label="Pupu" className="glass rounded-full p-1 *:min-w-16 *:rounded-full">
+              {SECTIONS.map(([id, label]) => (
+                <Tabs.Tab
+                  key={id}
+                  id={id}
+                  className="data-[selected=true]:text-background"
+                >
+                  {label}
+                  <Tabs.Indicator className="rounded-full bg-foreground" />
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs.ListContainer>
+        </Tabs>
+        <Avatar size="sm" className="justify-self-end">
+          <Avatar.Fallback>我</Avatar.Fallback>
+        </Avatar>
+      </header>
+      {error && (
+        <div className="relative z-10 mx-auto rounded-full bg-danger px-3 py-1 text-xs text-danger-foreground">
+          {error}
+        </div>
+      )}
+      <main className="min-h-0 flex-1">{body}</main>
+
+      <ProjectDrawer
+        isOpen={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        projects={projects}
+        current={project?.id}
+        onOpen={(id) => {
+          setDrawerOpen(false);
+          go({ kind: "project", id });
+        }}
+        onCreate={() => {
+          setDrawerOpen(false);
+          setCreating(true);
+        }}
+      />
+      <NewProject
+        isOpen={creating}
+        onOpenChange={setCreating}
+        onCreate={async (name, goal) => {
+          const created = await api.createProject(name, goal);
+          await refresh();
+          go({ kind: "project", id: created.id });
+        }}
+      />
     </div>
   );
 }
 
-function Tab({
-  active,
-  onClick,
-  children,
-  badge = 0
+function ProjectDrawer({
+  isOpen,
+  onOpenChange,
+  projects,
+  current,
+  onOpen,
+  onCreate
 }: {
-  active: boolean;
-  onClick: () => void;
-  children: string;
-  badge?: number;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  projects: readonly Project[];
+  current: string | undefined;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative flex h-14 flex-1 items-center justify-center text-[15px] ${
-        active ? "font-semibold text-(--fg)" : "text-(--muted)"
-      }`}
-    >
-      {children}
-      {badge > 0 && (
-        <span className="ml-1.5 rounded-full bg-(--accent) px-1.5 text-xs leading-5 text-(--accent-fg)">
-          {badge}
-        </span>
-      )}
-      {active && (
-        <span className="absolute top-0 h-0.5 w-10 rounded-full bg-(--accent)" />
-      )}
-    </button>
+    <Drawer>
+      <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
+        <Drawer.Content placement="left">
+          <Drawer.Dialog className="w-[min(80vw,320px)]">
+            <Drawer.Header>
+              <Drawer.Heading>项目</Drawer.Heading>
+            </Drawer.Header>
+            <Drawer.Body>
+              <nav className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={onCreate}
+                  className="flex items-center gap-2 rounded-xl px-2 py-3 text-left text-[17px] text-muted hover:bg-default"
+                >
+                  <PlusIcon />
+                  新项目
+                </button>
+                {projects.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => onOpen(project.id)}
+                    className={`truncate rounded-xl px-2 py-3 text-left text-[17px] hover:bg-default ${
+                      project.id === current ? "font-semibold text-foreground" : "text-muted"
+                    }`}
+                  >
+                    {project.name}
+                  </button>
+                ))}
+              </nav>
+            </Drawer.Body>
+          </Drawer.Dialog>
+        </Drawer.Content>
+      </Drawer.Backdrop>
+    </Drawer>
   );
 }

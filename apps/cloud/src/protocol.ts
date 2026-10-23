@@ -33,7 +33,7 @@ export type ServerMessage =
       readonly session: PiSessionId;
       readonly events: readonly AgentEvent[];
     }
-  /** 项目或建项目的建议变了，客户端重新拉一次 /api/state。 */
+  /** 项目变了，客户端重新拉一次 /api/state。 */
   | { readonly type: "projects_changed" }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };
