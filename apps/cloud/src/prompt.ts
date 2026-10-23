@@ -3,7 +3,7 @@ import { HANDOFF_MARK } from "./messages";
 import type { Project, ProjectStore } from "./projects";
 
 /** 这一版还没连上任何电脑，Pupu 要如实说。 */
-const V0_LIMITS = `现在的能力边界：你还没有连上用户的任何电脑，看不到、也操作不了他电脑上的 Claude Code、Codex 等运行时会话，也不能执行命令。用户提到这类事时，如实说这部分还在接入，可以先帮他把要做的事理清楚、拆好步骤。`;
+const V0_LIMITS = `现在的能力边界：你还没有连上用户的任何电脑，不能在上面跑命令、读写文件或操作屏幕。用户提到这类事时，如实说电脑还在接入，可以先帮他把要做的事理清楚、拆好步骤。`;
 
 const QUOTES = `用户的消息开头如果有以 > 开头的引用块，那是他在回复之前的某条消息，结合被引用的内容理解他这句话。`;
 

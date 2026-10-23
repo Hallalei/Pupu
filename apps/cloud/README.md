@@ -2,7 +2,7 @@
 
 Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable；还有一个网页，分「主页」「聊天」「项目」三屏，交互参考 Hark，界面用 HeroUI v3。
 
-这一版还不连电脑，所以 Pupu 只能聊天、建项目，碰不到你电脑上的 Claude Code、Codex 等会话。
+这一版还不连电脑，所以 Pupu 只能聊天、建项目，还不能在你的电脑上跑命令、读写文件。
 
 ## 结构
 

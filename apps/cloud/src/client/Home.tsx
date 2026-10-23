@@ -57,7 +57,7 @@ export function Home({
         </Panel>
         <Panel icon={<ComputerIcon />} title="电脑">
           <div className="text-sm leading-6 text-muted">
-            还没有连上电脑。连上之后，这里会显示每台电脑上正在跑的 Claude Code、Codex 会话，Pupu 也能替你接着推进。
+            还没有连上电脑。连上之后，这里会显示每台电脑在不在线、Pupu 正在上面做什么。
           </div>
         </Panel>
       </div>
