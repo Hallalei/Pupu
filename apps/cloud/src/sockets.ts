@@ -9,6 +9,7 @@ import {
   type PiSessionId
 } from "agents/harness/pi";
 import type { ClientMessage, ServerMessage } from "./protocol";
+import type { BridgeSocket } from "./bridge/hub";
 
 const SESSION_TAG_PREFIX = "pi-session:";
 const SESSION_QUERY = "session";
@@ -44,6 +45,15 @@ function send(socket: WebSocket, message: ServerMessage): void {
   }
 }
 
+/** 和会话连接共用一条升级入口时，桥的连接从这里分出去。 */
+export type BridgeSocketHandlers = {
+  readonly tag: string;
+  isRequest(request: Request): boolean;
+  onConnect(socket: BridgeSocket, request: Request): Promise<void>;
+  onMessage(socket: BridgeSocket, message: string): Promise<void>;
+  onClose(socket: BridgeSocket): void;
+};
+
 /**
  * 把 pi 会话放到 WebSocket 上，只用 harness 的公开 API。
  *
@@ -54,38 +64,77 @@ function send(socket: WebSocket, message: ServerMessage): void {
 export class PiSessionSockets {
   readonly #harness: PiHarness;
   readonly #getWebSockets: (tag?: string) => WebSocket[];
+  readonly #getTags: (socket: WebSocket) => readonly string[];
   readonly #onSubmit: (session: PiSessionId) => void;
+  readonly #bridge: BridgeSocketHandlers | undefined;
   readonly #watches = new Map<WebSocket, AgentEventStream>();
 
   constructor(
     harness: PiHarness,
     getWebSockets: (tag?: string) => WebSocket[],
+    getTags: (socket: WebSocket) => readonly string[],
     /** 某个会话收到用户输入时调用。 */
-    onSubmit: (session: PiSessionId) => void
+    onSubmit: (session: PiSessionId) => void,
+    bridge?: BridgeSocketHandlers
   ) {
     this.#harness = harness;
     this.#getWebSockets = getWebSockets;
+    this.#getTags = getTags;
     this.#onSubmit = onSubmit;
+    this.#bridge = bridge;
   }
 
   options(): WebSocketsOptions {
     return {
-      getConnectionTags: (_connection, ctx) => [
-        sessionTag(sessionFromRequest(ctx.request))
-      ],
+      // 桥不说 Agent 的身份帧，它有自己的 welcome / hello。
+      protocol: (_connection, ctx) => !this.#bridge?.isRequest(ctx.request),
+      getConnectionTags: (_connection, ctx) =>
+        this.#bridge?.isRequest(ctx.request)
+          ? [this.#bridge.tag]
+          : [sessionTag(sessionFromRequest(ctx.request))],
       handlers: {
-        onConnect: (connection, ctx) => this.#onConnect(connection, ctx),
-        onMessage: (connection, message) =>
-          this.#onMessage(connection, message),
-        onClose: (connection) => this.#unwatch(connection),
-        onError: (connection) => this.#unwatch(connection)
+        onConnect: (connection, ctx) => {
+          if (this.#isBridge(connection)) {
+            return this.#bridge?.onConnect(connection, ctx.request);
+          }
+          return this.#onConnect(connection, ctx);
+        },
+        onMessage: (connection, message) => {
+          if (this.#isBridge(connection)) {
+            return typeof message === "string"
+              ? this.#bridge?.onMessage(connection, message)
+              : undefined;
+          }
+          return this.#onMessage(connection, message);
+        },
+        onClose: (connection) => {
+          if (this.#isBridge(connection)) {
+            this.#bridge?.onClose(connection);
+            return;
+          }
+          return this.#unwatch(connection);
+        },
+        onError: (connection) => {
+          if (this.#isBridge(connection)) {
+            this.#bridge?.onClose(connection);
+            return;
+          }
+          return this.#unwatch(connection);
+        }
       }
     };
   }
 
-  /** 发给所有连接，不管它在看哪个会话。 */
+  /** 发给看会话的连接。桥的连接不收这些帧。 */
   broadcast(message: ServerMessage): void {
-    for (const socket of this.#getWebSockets()) send(socket, message);
+    for (const socket of this.#getWebSockets()) {
+      if (this.#bridge && this.#getTags(socket).includes(this.#bridge.tag)) continue;
+      send(socket, message);
+    }
+  }
+
+  #isBridge(connection: Connection): boolean {
+    return Boolean(this.#bridge && connection.tags.includes(this.#bridge.tag));
   }
 
   /** 对象重启后，给每条休眠的连接重新订阅。 */

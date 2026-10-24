@@ -6,6 +6,18 @@ import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { createAI } from "agents/models/pi-ai";
 import { WebSockets } from "agents/websockets";
+import { ComputerBridge } from "./bridge/hub";
+import {
+  BRIDGE_PATH,
+  BRIDGE_PING,
+  BRIDGE_PONG,
+  BRIDGE_TAG,
+  isBridgeRequest,
+  newDeviceToken,
+  tokenHash
+} from "./bridge/protocol";
+import { ComputerStore } from "./bridge/store";
+import { createComputerTools } from "./bridge/tools";
 import { handoffMessage } from "./messages";
 import type { Project } from "./projects";
 import { ProjectStore } from "./projects";
@@ -24,6 +36,7 @@ export const PUPU_INSTANCE = "me";
 
 export type PupuState = {
   readonly projects: readonly Project[];
+  readonly computers: ReturnType<ComputerBridge["list"]>;
 };
 
 /**
@@ -33,6 +46,16 @@ export type PupuState = {
 export class Pupu extends DurableObject<Env> {
   readonly ai = createAI({ binding: this.env.AI });
   readonly store = new ProjectStore(this.ctx.storage.sql);
+  readonly computers = new ComputerStore(this.ctx.storage.sql);
+  readonly bridge = new ComputerBridge({
+    directory: this.computers,
+    sockets: () => this.ctx.getWebSockets(BRIDGE_TAG),
+    now: () => Date.now(),
+    heartbeatAt: (socket) => {
+      const at = this.ctx.getWebSocketAutoResponseTimestamp(socket as WebSocket);
+      return at ? at.getTime() : null;
+    }
+  });
   readonly registry = createRegistry();
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
@@ -43,15 +66,18 @@ export class Pupu extends DurableObject<Env> {
             key: "pupu",
             tag: false,
             render: (input) =>
-              renderPrompt(String(input.conversationId), this.store)
+              renderPrompt(String(input.conversationId), this.store, this.bridge.list())
           }
         ],
-        tools: createPupuTools({
-          store: this.store,
-          createProject: (input) => this.#createProject(input),
-          handOff: (project, task, operationId) =>
-            this.#handOff(project, task, operationId)
-        })
+        tools: [
+          ...createPupuTools({
+            store: this.store,
+            createProject: (input) => this.#createProject(input),
+            handOff: (project, task, operationId) =>
+              this.#handOff(project, task, operationId)
+          }),
+          ...createComputerTools(this.bridge)
+        ]
       });
       const models = createModels();
       models.setProvider(this.ai.provider);
@@ -74,7 +100,15 @@ export class Pupu extends DurableObject<Env> {
   readonly sockets = new PiSessionSockets(
     this.harness,
     (tag) => this.ctx.getWebSockets(tag),
-    (session) => this.store.touchSession(session)
+    (socket) => this.ctx.getTags(socket),
+    (session) => this.store.touchSession(session),
+    {
+      tag: BRIDGE_TAG,
+      isRequest: isBridgeRequest,
+      onConnect: (socket, request) => this.bridge.onConnect(socket, request),
+      onMessage: (socket, message) => this.bridge.onMessage(socket, message),
+      onClose: (socket) => this.bridge.onClose(socket)
+    }
   );
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
@@ -83,6 +117,9 @@ export class Pupu extends DurableObject<Env> {
 
   /** 宿主启动，harness 已经打开 pi 之后。 */
   async onStart(): Promise<void> {
+    // 心跳是固定字符串，运行时直接回 pong，不把这个对象叫醒。
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(BRIDGE_PING, BRIDGE_PONG));
+    this.bridge.onChange = () => this.sockets.broadcast({ type: "computers_changed" });
     await this.#syncModel();
     await this.sockets.reattach();
   }
@@ -104,7 +141,45 @@ export class Pupu extends DurableObject<Env> {
 
   async state(): Promise<PupuState> {
     await this.lifecycle.start();
-    return { projects: this.store.listProjects() };
+    return { projects: this.store.listProjects(), computers: this.bridge.list() };
+  }
+
+  /** 发一张设备凭据。明文只在这一次返回。 */
+  async createComputer(name: string): Promise<{ id: string; name: string; token: string }> {
+    await this.lifecycle.start();
+    const trimmed = name.trim().slice(0, 80) || "电脑";
+    const token = newDeviceToken();
+    const row = this.computers.insert({ name: trimmed, tokenHash: await tokenHash(token) });
+    this.bridge.onChange();
+    return { id: row.id, name: row.name, token };
+  }
+
+  async revokeComputer(id: string): Promise<boolean> {
+    await this.lifecycle.start();
+    const row = this.computers.revoke(id);
+    if (!row || row.revokedAt === null) return false;
+    this.bridge.disconnect(id, 1008, "凭据已吊销");
+    this.bridge.onChange();
+    return true;
+  }
+
+  /** 本地把一条命令直接送到桥上，不经过模型。线上没有这条路。 */
+  async runCommand(input: {
+    command: string;
+    computerId?: string;
+    requestId: string;
+    background?: boolean;
+  }) {
+    await this.lifecycle.start();
+    return this.bridge.exec({
+      requestId: input.requestId,
+      computerId: input.computerId,
+      action: {
+        kind: "run",
+        command: input.command,
+        background: input.background === true
+      }
+    });
   }
 
   async createProject(input: { name: string; goal: string }): Promise<Project> {
@@ -188,6 +263,28 @@ async function handleApi(request: Request, env: Env, url: URL) {
   if (pathname === "/api/state" && method === "GET") {
     return Response.json(await pupu(env).state());
   }
+  if (pathname === "/api/computers" && method === "POST") {
+    const body = await readJson<{ name?: string }>(request);
+    const computer = await pupu(env).createComputer(String(body.name ?? ""));
+    return Response.json(computer);
+  }
+  const revoke = pathname.match(/^\/api\/computers\/([^/]+)\/revoke$/);
+  if (revoke && method === "POST") {
+    const ok = await pupu(env).revokeComputer(decodeURIComponent(revoke[1] ?? ""));
+    if (!ok) return Response.json({ error: "没有这台电脑" }, { status: 404 });
+    return Response.json({ ok: true });
+  }
+  if (pathname === "/api/computers/run" && method === "POST") {
+    if (!isLocal(request)) return new Response("Not found", { status: 404 });
+    const body = await readJson<{ command?: string; computerId?: string; background?: boolean }>(request);
+    const result = await pupu(env).runCommand({
+      command: String(body.command ?? ""),
+      computerId: body.computerId,
+      background: body.background === true,
+      requestId: crypto.randomUUID()
+    });
+    return Response.json(result);
+  }
   if (pathname === "/api/projects" && method === "POST") {
     const body = await readJson<{ name?: string; goal?: string }>(request);
     const project = await pupu(env).createProject({
@@ -216,6 +313,14 @@ export default {
           "Set-Cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`
         }
       });
+    }
+
+    // 桥用设备凭据，不走网页口令。凭据对不对由 Durable Object 看。
+    if (url.pathname === BRIDGE_PATH) {
+      if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+        return new Response("桥要用 WebSocket 连接。", { status: 426 });
+      }
+      return pupu(env).fetch(request);
     }
 
     if (!authorized(request, env)) {

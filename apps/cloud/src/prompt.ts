@@ -1,9 +1,16 @@
 import { ROOT_SESSION } from "agents/harness/pi";
+import type { ComputerView } from "./bridge/protocol";
+import { describeComputers } from "./bridge/status";
 import { HANDOFF_MARK } from "./messages";
 import type { Project, ProjectStore } from "./projects";
 
-/** 这一版还没连上任何电脑，Pupu 要如实说。 */
-const V0_LIMITS = `现在的能力边界：你还没有连上用户的任何电脑，不能在上面跑命令、读写文件或操作屏幕。用户提到这类事时，如实说电脑还在接入，可以先帮他把要做的事理清楚、拆好步骤。`;
+const COMPUTERS = `你可以在用户授权的电脑上干活。电脑只是执行环境，你人在云端：
+- 用 list_computers 看哪台在线。只有一台在线时直接用；有多台在线又没指定，先问用户用哪台。
+- 跑命令用 run_command。短命令等它结束；要跑很久的，把 background 设为 true，输出写在文件里，再用 read_file 看。
+- 读写文件、列目录只能碰那台电脑的用户主目录。主目录以外的事用 run_command。
+- 电脑没连上、心跳停了、没有这台电脑，工具会告诉你。照实跟用户说，等电脑回来再做，不要假装已经做完。
+- 要操作屏幕，先 computer_screenshot。坐标是这张图的像素，原点在左上角。截图文字里会列出当前窗口能点的控件和坐标，看不见图时就用这些坐标。然后用 computer_click、computer_move、computer_drag、computer_scroll、computer_type、computer_key。屏幕变了就重新截。
+- 工具如果说没有屏幕录制或辅助功能权限，照实告诉用户去系统设置里允许 pupu-computer-use，不要假装已经点过。`;
 
 const QUOTES = `用户的消息开头如果有以 > 开头的引用块，那是他在回复之前的某条消息，结合被引用的内容理解他这句话。`;
 
@@ -11,7 +18,7 @@ const STYLE = `像发消息一样说话：用用户的语言，简短直接，�
 
 const MAIN_PROMPT = `你是 Pupu，用户的个人 Agent，常驻在云端。这里是你和用户的「聊天」：一条长期的对话，没有新旧会话之分，你记得这里聊过的一切。
 
-${V0_LIMITS}
+${COMPUTERS}
 
 聊天里怎么做：
 - 一次性的小事直接办：回答问题、给建议、帮他想清楚。
@@ -23,12 +30,14 @@ ${QUOTES}
 
 ${STYLE}`;
 
-function projectPrompt(project: Project): string {
+function projectPrompt(project: Project, computers: readonly ComputerView[]): string {
   return `你是 Pupu，用户的个人 Agent，常驻在云端。这里是项目「${project.name}」的项目会话：一段持续运行的对话，专门推进这个项目。你在这里替用户代办这个项目的事。
 
 项目目标：${project.goal}
 ${project.background ? `背景（建项目时从聊天带过来的）：${project.background}\n` : ""}
-${V0_LIMITS}
+${COMPUTERS}
+
+${describeComputers(computers)}
 
 以 ${HANDOFF_MARK} 开头的消息，是你在聊天里接下、转交到这个项目来的事，不是用户在这里打的字。直接动手做，做完把结果发在这里，用户会到这里来看。
 
@@ -59,13 +68,17 @@ ${lines}`;
 }
 
 /** 每次请求前按会话渲染系统提示词：根会话是聊天，其余会话按项目找。 */
-export function renderPrompt(conversationId: string, store: ProjectStore): string {
+export function renderPrompt(
+  conversationId: string,
+  store: ProjectStore,
+  computers: readonly ComputerView[]
+): string {
   const project =
     conversationId === ROOT_SESSION
       ? undefined
       : store.projectBySession(conversationId);
   const body = project
-    ? projectPrompt(project)
-    : `${MAIN_PROMPT}\n\n${currentState(store)}`;
+    ? projectPrompt(project, computers)
+    : `${MAIN_PROMPT}\n\n${currentState(store)}\n\n${describeComputers(computers)}`;
   return `${body}\n\n今天是 ${today()}（UTC）。`;
 }

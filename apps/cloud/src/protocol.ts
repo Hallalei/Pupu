@@ -35,6 +35,8 @@ export type ServerMessage =
     }
   /** 项目变了，客户端重新拉一次 /api/state。 */
   | { readonly type: "projects_changed" }
+  /** 电脑连上、断开或吊销了，客户端重新拉一次 /api/state。 */
+  | { readonly type: "computers_changed" }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };
 

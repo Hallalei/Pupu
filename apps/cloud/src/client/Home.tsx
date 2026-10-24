@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ComputerView } from "../bridge/protocol";
 import type { Project } from "../projects";
 import { ComputerIcon, FolderIcon } from "./icons";
 
@@ -17,10 +18,14 @@ function ago(timestamp: number): string {
  */
 export function Home({
   projects,
-  onOpenProject
+  computers,
+  onOpenProject,
+  onOpenSettings
 }: {
   projects: readonly Project[];
+  computers: readonly ComputerView[];
   onOpenProject: (id: string) => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <div className="h-full overflow-y-auto">
@@ -56,13 +61,44 @@ export function Home({
           )}
         </Panel>
         <Panel icon={<ComputerIcon />} title="电脑">
-          <div className="text-sm leading-6 text-muted">
-            还没有连上电脑。连上之后，这里会显示每台电脑在不在线、Pupu 正在上面做什么。
-          </div>
+          {computers.length === 0 ? (
+            <div className="text-sm leading-6 text-muted">
+              还没有授权的电脑。在电脑上配对桥之后，这里会显示它在不在线。
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {computers.map((computer) => (
+                <button
+                  key={computer.id}
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="flex items-center gap-3 rounded-2xl bg-(--glass-strong) px-4 py-3 text-left"
+                >
+                  <span
+                    className={`size-2 shrink-0 rounded-full ${
+                      computer.online ? "bg-emerald-600" : "bg-foreground/25"
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{computer.name}</div>
+                    <div className="text-sm text-muted">{computerLabel(computer)}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </Panel>
       </div>
     </div>
   );
+}
+
+export function computerLabel(computer: ComputerView): string {
+  if (computer.online) return "在线";
+  if (computer.stale) return "心跳中断";
+  if (computer.lastSeenAt) return `离线 · ${ago(computer.lastSeenAt)}`;
+  return "离线";
 }
 
 function Panel({

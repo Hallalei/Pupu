@@ -2,7 +2,7 @@
 
 Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable；还有一个网页，分「主页」「聊天」「项目」三屏，交互参考 Hark，界面用 HeroUI v3。
 
-这一版还不连电脑，所以 Pupu 只能聊天、建项目，还不能在你的电脑上跑命令、读写文件。
+电脑桥让 Pupu 在你授权的电脑上跑命令、读写主目录里的文件。电脑主动连出云端，本机不听端口。一台电脑一份设备凭据，和网页访问口令分开，可以单独吊销。
 
 ## 结构
 
@@ -10,7 +10,9 @@ Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable�
 |---|---|
 | `src/server.ts` | `Pupu` Durable Object，以及 Worker 的路由、鉴权和 REST API |
 | `src/prompt.ts` | 聊天和项目会话的系统提示词。聊天里会附上项目的实时状态 |
-| `src/tools.ts` | Pupu 能用的工具：`list_projects`、`create_project`（用户在聊天里答应后才建）、`hand_off_to_project`（把事交给已有项目去做） |
+| `src/tools.ts` | Pupu 能用的项目工具：`list_projects`、`create_project`（用户在聊天里答应后才建）、`hand_off_to_project`（把事交给已有项目去做） |
+| `src/bridge/` | 电脑桥的协议、在线状态、设备凭据和给模型的工具 |
+| `bridge/` | 跑在电脑上的桥。常驻进程，由 launchd 拉起 |
 | `src/messages.ts` | 两种特殊的用户消息：聊天转交给项目的消息、引用回复 |
 | `src/projects.ts` | 项目等元数据的存储，放在 DO 的 SQLite 里，表名前缀 `pupu_` |
 | `src/sockets.ts` `protocol.ts` `view.ts` `transcript.ts` | 把 pi 会话放到 WebSocket 上，并把事件折叠成界面状态。改编自 Cloudflare 官方的 pi 示例 |
@@ -35,6 +37,23 @@ npm run dev
 需要先执行 `npx wrangler login`：Workers AI 走的是远程调用，会产生用量。
 
 本地数据存在 `.wrangler/state/`，删掉这个目录就能从头开始。
+
+## 电脑桥
+
+在要授权的电脑上配对，然后让桥常驻：
+
+```bash
+npm run bridge -- pair --url http://localhost:5173 --name 书房
+npm run bridge -- start
+```
+
+线上 Pupu 要加 `--token <访问口令>`。设备凭据写在 `~/.pupu/bridge.json`，明文只在配对时出现一次。
+
+开机自启是 `npm run bridge -- install`，卸下是 `uninstall`。`revoke` 吊销这台电脑的凭据，配置文件还在。`status` 看当前配对。
+
+主页的「电脑」面板列出授权的电脑和在线状态。点右上角「我」打开设置，可以看这台电脑能做什么，也可以吊销它。桥没开时 Pupu 照常聊天，并说明电脑没连上。
+
+这一版能跑命令、读写主目录里的文件、列目录，也能截主屏幕并用图上的坐标点、拖、滚动和打字。还没有权限分级、推送、刘海和远程桌面。
 
 ## 部署
 

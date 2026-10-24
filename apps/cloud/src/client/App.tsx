@@ -6,6 +6,7 @@ import { Chat, type ChatContext } from "./Chat";
 import { Home } from "./Home";
 import { MenuIcon, PlusIcon } from "./icons";
 import { NewProject } from "./NewProject";
+import { Settings } from "./Settings";
 
 /** pi 的根会话 id，就是聊天。不从 agents/harness/pi 引，免得把服务端代码打进网页。 */
 const ROOT_SESSION = "1";
@@ -85,9 +86,10 @@ function rememberProject(id: string) {
 
 export function App() {
   const [route, go] = useRoute();
-  const { projects, loaded, error, refresh } = usePupuState();
+  const { projects, computers, loaded, error, refresh } = usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const chat: ChatContext = useMemo(
     () => ({
@@ -126,7 +128,9 @@ export function App() {
     body = (
       <Home
         projects={projects}
+        computers={computers}
         onOpenProject={(id) => go({ kind: "project", id })}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
     );
   } else if (route.kind === "chat") {
@@ -236,9 +240,16 @@ export function App() {
             </Tabs.List>
           </Tabs.ListContainer>
         </Tabs>
-        <Avatar size="sm" className="justify-self-end">
-          <Avatar.Fallback>我</Avatar.Fallback>
-        </Avatar>
+        <button
+          type="button"
+          aria-label="设置"
+          onClick={() => setSettingsOpen(true)}
+          className="justify-self-end rounded-full"
+        >
+          <Avatar size="sm">
+            <Avatar.Fallback>我</Avatar.Fallback>
+          </Avatar>
+        </button>
       </header>
       {error && (
         <div className="relative z-10 mx-auto rounded-full bg-danger px-3 py-1 text-xs text-danger-foreground">
@@ -259,6 +270,15 @@ export function App() {
         onCreate={() => {
           setDrawerOpen(false);
           setCreating(true);
+        }}
+      />
+      <Settings
+        isOpen={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        computers={computers}
+        onRevoke={async (id) => {
+          await api.revokeComputer(id);
+          await refresh();
         }}
       />
       <NewProject

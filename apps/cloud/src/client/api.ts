@@ -26,12 +26,17 @@ export const api = {
     request<Project>("/api/projects", {
       method: "POST",
       body: JSON.stringify({ name, goal })
+    }),
+  revokeComputer: (id: string) =>
+    request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/revoke`, {
+      method: "POST"
     })
 };
 
 /** 项目列表，页面拿到 `projects_changed` 时调 `refresh()`。 */
 export function usePupuState() {
   const [projects, setProjects] = useState<readonly Project[]>([]);
+  const [computers, setComputers] = useState<PupuState["computers"]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -39,6 +44,7 @@ export function usePupuState() {
     try {
       const state = await api.state();
       setProjects(state.projects);
+      setComputers(state.computers);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -51,8 +57,14 @@ export function usePupuState() {
     void refresh();
     const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 5000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(timer);
+    };
   }, [refresh]);
 
-  return { projects, error, loaded, refresh };
+  return { projects, computers, error, loaded, refresh };
 }

@@ -42,6 +42,7 @@ export function usePiSession(session: string, onProjectsChanged: () => void) {
           }));
           return;
         case "projects_changed":
+        case "computers_changed":
           changed.current();
           return;
         case "error":
