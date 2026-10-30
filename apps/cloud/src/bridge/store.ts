@@ -1,3 +1,5 @@
+import { DEFAULT_POLICY, isComputerPolicy, type ComputerPolicy } from "./policy.ts";
+
 /**
  * 授权电脑和设备凭据。和项目表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
  * 凭据只存哈希。吊销后行还在，同一份凭据不能再连。
@@ -12,6 +14,10 @@ export type ComputerRow = {
   readonly createdAt: number;
   readonly revokedAt: number | null;
   readonly lastSeenAt: number | null;
+  /** 这台电脑的审批分级。 */
+  readonly policy: ComputerPolicy;
+  /** 屏幕授权到这个时间失效。没有授权是 null。 */
+  readonly screenUntil: number | null;
 };
 
 export interface ComputerDirectory {
@@ -23,6 +29,8 @@ export interface ComputerDirectory {
     id: string,
     patch: { name?: string; localRoot?: string; terminalsFolder?: string; seenAt: number }
   ): void;
+  setPolicy(id: string, policy: ComputerPolicy): boolean;
+  setScreenUntil(id: string, until: number | null): void;
 }
 
 type Row = Record<string, SqlStorageValue>;
@@ -36,7 +44,9 @@ function toRow(row: Row): ComputerRow {
     terminalsFolder: String(row.terminals_folder),
     createdAt: Number(row.created_at),
     revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
-    lastSeenAt: row.last_seen_at === null ? null : Number(row.last_seen_at)
+    lastSeenAt: row.last_seen_at === null ? null : Number(row.last_seen_at),
+    policy: isComputerPolicy(row.policy) ? row.policy : DEFAULT_POLICY,
+    screenUntil: row.screen_until === null || row.screen_until === undefined ? null : Number(row.screen_until)
   };
 }
 
@@ -60,6 +70,14 @@ export class ComputerStore implements ComputerDirectory {
         revoked_at INTEGER,
         last_seen_at INTEGER
       )`);
+      // 后加的列。已经有了的话 ALTER 会报错，忽略就行。
+      for (const column of [`policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`, "screen_until INTEGER"]) {
+        try {
+          this.#sql.exec(`ALTER TABLE pupu_computers ADD COLUMN ${column}`);
+        } catch {
+          // 列已经在了。
+        }
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -125,5 +143,18 @@ export class ComputerStore implements ComputerDirectory {
       patch.seenAt,
       id
     );
+  }
+
+  setPolicy(id: string, policy: ComputerPolicy): boolean {
+    const [row] = this.#db()
+      .exec("SELECT id FROM pupu_computers WHERE id = ? AND revoked_at IS NULL", id)
+      .toArray();
+    if (!row) return false;
+    this.#db().exec("UPDATE pupu_computers SET policy = ? WHERE id = ?", policy, id);
+    return true;
+  }
+
+  setScreenUntil(id: string, until: number | null): void {
+    this.#db().exec("UPDATE pupu_computers SET screen_until = ? WHERE id = ?", until, id);
   }
 }

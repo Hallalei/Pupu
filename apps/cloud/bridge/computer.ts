@@ -1,12 +1,11 @@
-import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ComputerAction, UpFrame } from "../src/bridge/protocol.ts";
-import { pupuDir } from "./config.ts";
 import type { ActionHost } from "./actions.ts";
+import { ensureSwiftBinary } from "./swift.ts";
 
 const SOURCE = fileURLToPath(new URL("./computer.swift", import.meta.url));
 
@@ -139,21 +138,8 @@ function requiredNumber(value: Record<string, unknown>, key: string): number {
   return number;
 }
 
-async function ensureHelper(): Promise<string> {
-  const directory = path.join(pupuDir(), "bin");
-  const bin = path.join(directory, "pupu-computer-use");
-  const source = await readFile(SOURCE);
-  const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
-  const stampPath = `${bin}.sha`;
-  const current = await readFile(stampPath, "utf8").catch(() => "");
-  if (current.trim() === hash) return bin;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const compiled = spawnSync("swiftc", ["-O", "-o", bin, SOURCE], { encoding: "utf8", timeout: 120_000 });
-  if (compiled.status !== 0) {
-    throw new Error(compiled.stderr?.trim() || "这台电脑编译不了屏幕操作程序。需要 Xcode 命令行工具里的 swiftc。");
-  }
-  await writeFile(stampPath, hash);
-  return bin;
+function ensureHelper(): Promise<string> {
+  return ensureSwiftBinary({ source: SOURCE, name: "pupu-computer-use" });
 }
 
 function run(bin: string, args: string[], stdin?: string): Promise<Record<string, unknown>> {

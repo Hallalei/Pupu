@@ -1,12 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { createAI } from "agents/models/pi-ai";
 import { WebSockets } from "agents/websockets";
+import { ApprovalStore, type ApprovalView } from "./bridge/approvals";
+import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
+import { isComputerPolicy } from "./bridge/policy";
 import {
   BRIDGE_PATH,
   BRIDGE_PING,
@@ -37,6 +40,8 @@ export const PUPU_INSTANCE = "me";
 export type PupuState = {
   readonly projects: readonly Project[];
   readonly computers: ReturnType<ComputerBridge["list"]>;
+  /** 等用户批准的电脑动作，先来的在前。 */
+  readonly approvals: readonly ApprovalView[];
 };
 
 /**
@@ -55,6 +60,14 @@ export class Pupu extends DurableObject<Env> {
       const at = this.ctx.getWebSocketAutoResponseTimestamp(socket as WebSocket);
       return at ? at.getTime() : null;
     }
+  });
+  readonly approvals = new ApprovalStore(this.ctx.storage.sql);
+  readonly gate = new ComputerGate({
+    computers: () => this.bridge.list(),
+    directory: this.computers,
+    approvals: this.approvals,
+    now: () => Date.now(),
+    onChange: (computerIds) => this.#approvalsChanged(computerIds)
   });
   readonly registry = createRegistry();
   readonly harness = new PiHarness({
@@ -77,6 +90,11 @@ export class Pupu extends DurableObject<Env> {
               this.#handOff(project, task, operationId)
           }),
           ...createComputerTools(this.bridge)
+        ],
+        hooks: [
+          hook(ToolTask, {
+            beforeTool: (call, _api, context) => this.gate.beforeTool(call, context.abortSignal)
+          })
         ]
       });
       const models = createModels();
@@ -115,6 +133,14 @@ export class Pupu extends DurableObject<Env> {
     .use(this.webSockets)
     .use(this.harness);
 
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // 在构造时就接上，DO 重启后 pi 恢复的调用跑到桥上之前，审批已经能查了。
+    this.bridge.approvedFor = (input) => this.gate.approved(input);
+    this.bridge.onReady = (computerId) => this.bridge.sendStatus(computerId, this.gate.statusFor(computerId));
+    this.bridge.onTakeback = (computerId) => this.gate.takeback(computerId);
+  }
+
   /** 宿主启动，harness 已经打开 pi 之后。 */
   async onStart(): Promise<void> {
     // 心跳是固定字符串，运行时直接回 pong，不把这个对象叫醒。
@@ -137,11 +163,34 @@ export class Pupu extends DurableObject<Env> {
     this.sockets.broadcast({ type: "projects_changed" });
   }
 
+  /** 审批或屏幕授权变了：网页重新拉状态，菜单栏换显示。 */
+  #approvalsChanged(computerIds: readonly string[]): void {
+    this.sockets.broadcast({ type: "approvals_changed" });
+    for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
+  }
+
   // 下面是给 Worker 调的 RPC。原生 RPC 不经过 fetch，所以要自己先启动 Lifecycle。
 
   async state(): Promise<PupuState> {
     await this.lifecycle.start();
-    return { projects: this.store.listProjects(), computers: this.bridge.list() };
+    return {
+      projects: this.store.listProjects(),
+      computers: this.bridge.list(),
+      approvals: this.gate.pending()
+    };
+  }
+
+  /** 用户在手机上点了允许或拒绝。 */
+  async decideApproval(id: string, decision: "allow" | "deny"): Promise<"ok" | "missing" | "settled"> {
+    // 等着的那次调用可能在 DO 被回收时断了。先把 pi 拉起来，它会重跑那次调用，读到这里的决定。
+    await this.lifecycle.start();
+    return this.gate.decide(id, decision);
+  }
+
+  async setComputerPolicy(id: string, policy: string): Promise<boolean> {
+    await this.lifecycle.start();
+    if (!isComputerPolicy(policy)) throw new Error("没有这个分级");
+    return this.gate.setPolicy(id, policy);
   }
 
   /** 发一张设备凭据。明文只在这一次返回。 */
@@ -267,6 +316,24 @@ async function handleApi(request: Request, env: Env, url: URL) {
     const body = await readJson<{ name?: string }>(request);
     const computer = await pupu(env).createComputer(String(body.name ?? ""));
     return Response.json(computer);
+  }
+  const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
+  if (policy && method === "POST") {
+    const body = await readJson<{ policy?: string }>(request);
+    const ok = await pupu(env).setComputerPolicy(decodeURIComponent(policy[1] ?? ""), String(body.policy ?? ""));
+    if (!ok) return Response.json({ error: "没有这台电脑" }, { status: 404 });
+    return Response.json({ ok: true });
+  }
+  const approval = pathname.match(/^\/api\/approvals\/([^/]+)$/);
+  if (approval && method === "POST") {
+    const body = await readJson<{ decision?: string }>(request);
+    if (body.decision !== "allow" && body.decision !== "deny") {
+      return Response.json({ error: "decision 只能是 allow 或 deny" }, { status: 400 });
+    }
+    const result = await pupu(env).decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision);
+    if (result === "missing") return Response.json({ error: "没有这条请示" }, { status: 404 });
+    if (result === "settled") return Response.json({ error: "这条请示已经处理过或过期了" }, { status: 409 });
+    return Response.json({ ok: true });
   }
   const revoke = pathname.match(/^\/api\/computers\/([^/]+)\/revoke$/);
   if (revoke && method === "POST") {

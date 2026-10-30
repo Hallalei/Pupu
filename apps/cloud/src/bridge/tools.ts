@@ -1,9 +1,9 @@
 import type { Context } from "@earendil-works/chord";
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
+import { actionOf } from "./calls.ts";
 import type { ComputerBridge } from "./hub.ts";
 import {
-  MAX_READ_BYTES,
   MAX_STDIN_CHARS,
   MAX_WRITE_CHARS,
   type Action
@@ -20,6 +20,13 @@ const screenY = Type.Number({ description: "截图像素的纵坐标，左上角
 const computerId = Type.Optional(
   Type.String({
     description: "哪台电脑的 id，来自 list_computers。只有一台在线时可以不填"
+  })
+);
+
+const sensitive = Type.Optional(
+  Type.Boolean({
+    description:
+      "这一步会发消息、付款、提交表单或删除东西时设为 true。会先请用户在手机上批准这一步"
   })
 );
 
@@ -79,11 +86,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
               // 这次调用已经结束，输出不再往对话里补。
             }
           },
-          action: {
-            kind: "run",
-            command,
-            background: args.background === true
-          }
+          action: actionOf("run_command", args)
         })
       );
     }
@@ -108,12 +111,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: {
-            kind: "stdin",
-            commandId: args.command_id,
-            data: args.data,
-            eof: args.eof === true
-          }
+          action: actionOf("write_stdin", args)
         })
       );
     }
@@ -135,7 +133,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "read", path: args.path, maxBytes: MAX_READ_BYTES }
+          action: actionOf("read_file", args)
         })
       );
     }
@@ -164,7 +162,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "write", path: args.path, content: args.content }
+          action: actionOf("write_file", args)
         })
       );
     }
@@ -184,7 +182,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "list", path: args.path?.trim() ?? "" }
+          action: actionOf("list_directory", args)
         })
       );
     }
@@ -202,7 +200,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "screenshot" }
+          action: actionOf("computer_screenshot", args)
         })
       );
     }
@@ -216,6 +214,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
       y: screenY,
       button: Type.Optional(Type.String({ description: "left、right 或 middle，默认 left" })),
       count: Type.Optional(Type.Number({ description: "点击次数，默认 1" })),
+      sensitive,
       computer_id: computerId
     }),
     async execute(args, api, context) {
@@ -224,16 +223,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: {
-            kind: "computer",
-            op: "click",
-            x: args.x,
-            y: args.y,
-            ...(args.button === "right" || args.button === "middle" || args.button === "left"
-              ? { button: args.button }
-              : {}),
-            ...(typeof args.count === "number" ? { count: args.count } : {})
-          }
+          action: actionOf("computer_click", args)
         })
       );
     }
@@ -249,7 +239,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "move", x: args.x, y: args.y }
+          action: actionOf("computer_move", args)
         })
       );
     }
@@ -263,6 +253,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
       y: screenY,
       x2: Type.Number({ description: "终点横坐标" }),
       y2: Type.Number({ description: "终点纵坐标" }),
+      sensitive,
       computer_id: computerId
     }),
     async execute(args, api, context) {
@@ -271,7 +262,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "drag", x: args.x, y: args.y, x2: args.x2, y2: args.y2 }
+          action: actionOf("computer_drag", args)
         })
       );
     }
@@ -292,7 +283,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "scroll", x: args.x, y: args.y, delta: args.delta }
+          action: actionOf("computer_scroll", args)
         })
       );
     }
@@ -303,6 +294,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     description: "往当前焦点输入文字。先点中输入框。打完会再截一张图。",
     parameters: Type.Object({
       text: Type.String({ description: "要输入的文字" }),
+      sensitive,
       computer_id: computerId
     }),
     async execute(args, api, context) {
@@ -311,7 +303,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "type", text: args.text }
+          action: actionOf("computer_type", args)
         })
       );
     }
@@ -322,6 +314,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     description: "按一个键或组合键，比如 enter、escape、cmd+c、cmd+shift+space。按完会再截一张图。",
     parameters: Type.Object({
       key: Type.String({ description: "键名，组合用加号连接" }),
+      sensitive,
       computer_id: computerId
     }),
     async execute(args, api, context) {
@@ -330,7 +323,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
           requestId: api.callId,
           computerId: args.computer_id,
           signal: abortSignal(context),
-          action: { kind: "computer", op: "key", key: args.key }
+          action: actionOf("computer_key", args)
         })
       );
     }

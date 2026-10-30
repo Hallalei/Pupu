@@ -1,3 +1,5 @@
+import type { ComputerPolicy } from "./policy.ts";
+
 /**
  * 电脑桥的帧。云端和本机桥共用这一份。
  *
@@ -65,6 +67,8 @@ export type ComputerAction = {
   readonly delta?: number;
   readonly text?: string;
   readonly key?: string;
+  /** 这一步会发消息、付款、提交或删除。分级里算高风险，单独审批。 */
+  readonly sensitive?: boolean;
 };
 
 export type Action =
@@ -78,10 +82,18 @@ export type Action =
 /** 云端 → 桥。 */
 export type DownFrame =
   | { readonly type: "welcome" }
-  | { readonly type: "exec"; readonly requestId: string; readonly action: Action }
+  | {
+      readonly type: "exec";
+      readonly requestId: string;
+      readonly action: Action;
+      /** 用户批过这一步、屏幕授权还有效，或者分级是都放行。高风险动作和屏幕操作，桥只认带它的。 */
+      readonly approved?: boolean;
+    }
   | { readonly type: "cancel"; readonly requestId: string }
   /** 停止把输出往连接上送，进程继续跑，输出继续写进文件。 */
-  | { readonly type: "detach"; readonly requestId: string };
+  | { readonly type: "detach"; readonly requestId: string }
+  /** 菜单栏上要显示的：这台电脑在等批准的动作、屏幕授权还在不在。 */
+  | { readonly type: "status"; readonly pending: readonly string[]; readonly screen: boolean };
 
 export type ListEntry = {
   readonly name: string;
@@ -99,6 +111,8 @@ export type UpFrame =
       readonly terminalsFolder: string;
     }
   | { readonly type: "output"; readonly requestId: string; readonly text: string }
+  /** 用户在电脑的菜单栏上收回了屏幕控制。 */
+  | { readonly type: "takeback" }
   | {
       readonly type: "started";
       readonly requestId: string;
@@ -138,6 +152,9 @@ export type ComputerView = {
   /** 连着，但是心跳停了。界面上算离线，工具会说明是心跳。 */
   readonly stale: boolean;
   readonly lastSeenAt: number | null;
+  readonly policy: ComputerPolicy;
+  /** 屏幕授权还有效。 */
+  readonly screen: boolean;
 };
 
 export function isBridgeRequest(request: Request): boolean {
@@ -196,6 +213,8 @@ export function parseUpFrame(raw: string): UpFrame | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   const requestId = stringField(value, "requestId");
   switch (value.type) {
+    case "takeback":
+      return { type: "takeback" };
     case "hello": {
       const computerId = stringField(value, "computerId");
       const name = stringField(value, "name");
@@ -309,7 +328,17 @@ export function parseDownFrame(raw: string): DownFrame | null {
     case "detach":
       return requestId ? { type: "detach", requestId } : null;
     case "exec":
-      return requestId && isAction(value.action) ? { type: "exec", requestId, action: value.action } : null;
+      return requestId && isAction(value.action)
+        ? { type: "exec", requestId, action: value.action, ...(value.approved === true ? { approved: true } : {}) }
+        : null;
+    case "status":
+      return Array.isArray(value.pending)
+        ? {
+            type: "status",
+            pending: value.pending.filter((item): item is string => typeof item === "string").slice(0, 20),
+            screen: value.screen === true
+          }
+        : null;
     default:
       return null;
   }

@@ -10,6 +10,7 @@ import {
   tokenHash,
   type Action,
   type ComputerView,
+  type DownFrame,
   type UpFrame
 } from "./protocol.ts";
 import {
@@ -85,6 +86,12 @@ export class ComputerBridge {
   readonly #heartbeatAt: (socket: BridgeSocket) => number | null;
   readonly #waiters = new Map<string, Waiter>();
   onChange: () => void = () => {};
+  /** 桥 hello 完、可以收活了。 */
+  onReady: (computerId: string) => void = () => {};
+  /** 用户在电脑的菜单栏上收回了屏幕控制。 */
+  onTakeback: (computerId: string) => void = () => {};
+  /** 这个动作批过没有。批过的在 exec 帧里带上 approved，桥上的二次判断认它。 */
+  approvedFor: (input: { requestId: string; computerId: string; action: Action }) => boolean = () => false;
 
   constructor(options: ComputerBridgeOptions) {
     this.#directory = options.directory;
@@ -133,6 +140,11 @@ export class ComputerBridge {
     if (!frame) return;
     if (frame.type === "hello") {
       await this.#hello(socket, frame);
+      return;
+    }
+    if (frame.type === "takeback") {
+      const link = readLink(socket);
+      if (link?.ready) this.onTakeback(link.computerId);
       return;
     }
     const waiter = this.#waiters.get(frame.requestId);
@@ -184,7 +196,18 @@ export class ComputerBridge {
 
     const waiter: Waiter = { socket, frames: [], failed: null, notify: null };
     this.#waiters.set(input.requestId, waiter);
-    if (!this.#send(socket, { type: "exec", requestId: input.requestId, action: input.action })) {
+    const approved = this.approvedFor({
+      requestId: input.requestId,
+      computerId: computer.id,
+      action: input.action
+    });
+    const frame = {
+      type: "exec",
+      requestId: input.requestId,
+      action: input.action,
+      ...(approved ? { approved: true } : {})
+    } satisfies DownFrame;
+    if (!this.#send(socket, frame)) {
       this.#waiters.delete(input.requestId);
       return {
         ok: false,
@@ -244,6 +267,14 @@ export class ComputerBridge {
       seenAt: this.#now()
     });
     this.onChange();
+    this.onReady(link.computerId);
+  }
+
+  /** 把菜单栏要显示的状态推给这台电脑。没连着就算了，连上时会再推。 */
+  sendStatus(computerId: string, status: { pending: readonly string[]; screen: boolean }): void {
+    const socket = this.#socketFor(computerId);
+    if (!socket) return;
+    this.#send(socket, { type: "status", pending: status.pending, screen: status.screen } satisfies DownFrame);
   }
 
   async #collect(
@@ -467,7 +498,9 @@ export class ComputerBridge {
       name: link?.ready ? link.name : row.name,
       online: alive,
       stale,
-      lastSeenAt: lastBeat ?? row.lastSeenAt
+      lastSeenAt: lastBeat ?? row.lastSeenAt,
+      policy: row.policy,
+      screen: row.screenUntil !== null && row.screenUntil > now
     };
   }
 

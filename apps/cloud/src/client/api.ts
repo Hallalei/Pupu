@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ApprovalView } from "../bridge/approvals";
+import type { ComputerPolicy } from "../bridge/policy";
 import type { Project } from "../projects";
 import type { PupuState } from "../server";
 
@@ -30,13 +32,24 @@ export const api = {
   revokeComputer: (id: string) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
+    }),
+  setPolicy: (id: string, policy: ComputerPolicy) =>
+    request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/policy`, {
+      method: "POST",
+      body: JSON.stringify({ policy })
+    }),
+  decideApproval: (id: string, decision: "allow" | "deny") =>
+    request<{ ok: true }>(`/api/approvals/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ decision })
     })
 };
 
-/** 项目列表，页面拿到 `projects_changed` 时调 `refresh()`。 */
+/** 项目、电脑和请示。页面拿到 `projects_changed` 这类消息时调 `refresh()`。 */
 export function usePupuState() {
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [computers, setComputers] = useState<PupuState["computers"]>([]);
+  const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -45,6 +58,7 @@ export function usePupuState() {
       const state = await api.state();
       setProjects(state.projects);
       setComputers(state.computers);
+      setApprovals(state.approvals);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -66,5 +80,5 @@ export function usePupuState() {
     };
   }, [refresh]);
 
-  return { projects, computers, error, loaded, refresh };
+  return { projects, computers, approvals, error, loaded, refresh };
 }

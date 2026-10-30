@@ -82,7 +82,10 @@ export function Home({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{computer.name}</div>
-                    <div className="text-sm text-muted">{computerLabel(computer)}</div>
+                    <div className="text-sm text-muted">
+                      {computerLabel(computer)}
+                      {computer.screen ? " · 屏幕已授权" : ""}
+                    </div>
                   </div>
                 </button>
               ))}

@@ -11,8 +11,8 @@ Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable�
 | `src/server.ts` | `Pupu` Durable Object，以及 Worker 的路由、鉴权和 REST API |
 | `src/prompt.ts` | 聊天和项目会话的系统提示词。聊天里会附上项目的实时状态 |
 | `src/tools.ts` | Pupu 能用的项目工具：`list_projects`、`create_project`（用户在聊天里答应后才建）、`hand_off_to_project`（把事交给已有项目去做） |
-| `src/bridge/` | 电脑桥的协议、在线状态、设备凭据和给模型的工具 |
-| `bridge/` | 跑在电脑上的桥。常驻进程，由 launchd 拉起 |
+| `src/bridge/` | 电脑桥的协议、在线状态、设备凭据、给模型的工具，以及风险判定（`policy.ts`）和审批（`gate.ts`） |
+| `bridge/` | 跑在电脑上的桥。常驻进程，由 launchd 拉起；菜单栏图标（`menubar.swift`）是它的子进程 |
 | `src/messages.ts` | 两种特殊的用户消息：聊天转交给项目的消息、引用回复 |
 | `src/projects.ts` | 项目等元数据的存储，放在 DO 的 SQLite 里，表名前缀 `pupu_` |
 | `src/sockets.ts` `protocol.ts` `view.ts` `transcript.ts` | 把 pi 会话放到 WebSocket 上，并把事件折叠成界面状态。改编自 Cloudflare 官方的 pi 示例 |
@@ -53,7 +53,23 @@ npm run bridge -- start
 
 主页的「电脑」面板列出授权的电脑和在线状态。点右上角「我」打开设置，可以看这台电脑能做什么，也可以吊销它。桥没开时 Pupu 照常聊天，并说明电脑没连上。
 
-这一版能跑命令、读写主目录里的文件、列目录，也能截主屏幕并用图上的坐标点、拖、滚动和打字。还没有权限分级、推送、刘海和远程桌面。
+这一版能跑命令、读写主目录里的文件、列目录，也能截主屏幕并用图上的坐标点、拖、滚动和打字。还没有推送和远程桌面。
+
+### 审批
+
+每台电脑在设置里选一个分级：「高风险的才问」（默认）、「每一步都问」、「都放行」。要问的动作会在网页每一屏的顶部弹出卡片，点允许或拒绝；10 分钟没人处理就作废。
+
+- 高风险怎么算，在 `src/bridge/policy.ts`：删除、提权、`git push`、发布、部署、改系统设置、碰凭据之类。规则参考了 Cindy 的 auto-review（Apache-2.0）。
+- 屏幕按电脑批一次授权，15 分钟没有屏幕操作就失效。会发消息、付款、提交的那一步，模型标上 `sensitive`，单独再问。
+- 等批准挂在 pi 的 `beforeTool` 上，请示存在 `pupu_approvals` 表里，按工具调用 id 唯一。DO 被回收后 pi 重跑这次调用，会接着等同一条。
+
+### 菜单栏图标
+
+桥启动后在菜单栏放一个图标，显示没连上、空闲、在跑命令、操作屏幕、等批准五种状态。菜单里能收回屏幕控制、停掉在跑的命令，还有两个本机开关：「允许跑命令和写文件」「允许操作屏幕」，存在 `~/.pupu/local.json`。
+
+本机开关关掉的，云端批准了也不做。高风险动作和屏幕操作，桥只认云端说批过的（exec 帧里的 `approved`）。
+
+图标第一次启动时用 `swiftc` 在本机编译，需要 Xcode 命令行工具。不想要图标，启动桥时设 `PUPU_MENUBAR=0`。
 
 ## 部署
 

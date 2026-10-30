@@ -10,7 +10,9 @@ import {
   PROTOCOL_VERSION,
   REJECT_CODE,
   bridgeWebSocketUrl,
-  parseDownFrame
+  parseDownFrame,
+  type DownFrame,
+  type UpFrame
 } from "../src/bridge/protocol.ts";
 
 export type ConnectEnd = "closed" | "rejected" | "busy";
@@ -19,11 +21,20 @@ export type BridgeConnection = {
   readonly done: Promise<ConnectEnd>;
   /** 连上并且已经 hello 过。用来判断重连要不要退避。 */
   welcomed(): boolean;
+  /** 往云端发一帧。没连着返回 false。 */
+  send(frame: UpFrame): boolean;
   close(): void;
 };
 
+/** 连接上的事，菜单栏要知道。 */
+export type BridgeHooks = {
+  onReady?(): void;
+  onStatus?(status: Extract<DownFrame, { type: "status" }>): void;
+  onClosed?(): void;
+};
+
 /** 连上云端，直到这条连接关掉。 */
-export function openBridge(config: BridgeConfig): BridgeConnection {
+export function openBridge(config: BridgeConfig, hooks: BridgeHooks = {}): BridgeConnection {
   let welcomed = false;
   let socket: WebSocket | null = null;
   const done = new Promise<ConnectEnd>((resolve) => {
@@ -80,16 +91,22 @@ export function openBridge(config: BridgeConfig): BridgeConnection {
           })
         );
         console.log(`已连上 ${config.url}，这台电脑是「${config.name}」。`);
+        hooks.onReady?.();
         return;
       }
       if (frame.type === "exec") {
-        void perform(frame.requestId, frame.action, host);
+        void perform(frame.requestId, frame.action, host, frame.approved === true);
+        return;
+      }
+      if (frame.type === "status") {
+        hooks.onStatus?.(frame);
         return;
       }
       if (frame.type === "cancel") controlJob(frame.requestId, "kill");
       if (frame.type === "detach") controlJob(frame.requestId, "detach");
     });
     current.on("close", (code, reason) => {
+      hooks.onClosed?.();
       const why = reason.toString();
       if (why) console.error(why);
       if (code === REJECT_CODE) finish("rejected");
@@ -104,6 +121,11 @@ export function openBridge(config: BridgeConfig): BridgeConnection {
   return {
     done,
     welcomed: () => welcomed,
+    send(frame) {
+      if (!welcomed || socket?.readyState !== WebSocket.OPEN) return false;
+      socket.send(JSON.stringify(frame));
+      return true;
+    },
     close() {
       if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000, "bridge stopping");
       else socket?.terminate();

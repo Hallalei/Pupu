@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { open, mkdir, readdir, readFile, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { usesScreen } from "../src/bridge/policy.ts";
 import { performComputer } from "./computer.ts";
 import { containPath } from "./contain.ts";
+import { localRefusal, readLocal } from "./local.ts";
 import {
   MAX_LIST_ENTRIES,
   MAX_READ_BYTES,
@@ -33,10 +35,44 @@ type RunningCommand = {
 type Job = {
   streaming: boolean;
   readonly child?: ChildProcess;
+  readonly command?: string;
+  readonly startedAt: number;
 };
 
 const running = new Map<string, RunningCommand>();
 const jobs = new Map<string, Job>();
+
+// ---- 给菜单栏看的：在跑的命令、是不是在操作屏幕 ----
+
+const listeners = new Set<() => void>();
+let screenOps = 0;
+let lastScreenAt = 0;
+
+/** 在跑的命令或屏幕操作变了就通知。返回取消订阅。 */
+export function onActivity(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function changed(): void {
+  for (const listener of listeners) listener();
+}
+
+/** 还在跑的命令，先开始的在前。 */
+export function runningCommands(): { requestId: string; command: string; startedAt: number }[] {
+  return [...jobs.entries()]
+    .filter(([, job]) => job.command !== undefined)
+    .map(([requestId, job]) => ({ requestId, command: job.command!, startedAt: job.startedAt }))
+    .sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/** 正在做屏幕操作，或者刚做完不久。 */
+export function screenActivity(now = Date.now()): { active: boolean; lastAt: number } {
+  return { active: screenOps > 0 || now - lastScreenAt < SCREEN_RECENT_MS, lastAt: lastScreenAt };
+}
+
+/** 屏幕操作之后这么久，菜单栏还显示「正在操作屏幕」。 */
+export const SCREEN_RECENT_MS = 8_000;
 
 export type ActionHost = {
   readonly root: string;
@@ -59,7 +95,35 @@ export function controlJob(requestId: string, mode: "kill" | "detach"): void {
  * 执行云端发来的一个动作。会改电脑的命令和写文件按 requestId 去重，
  * 同一次调用再送来，不跑第二遍。
  */
-export async function perform(requestId: string, action: Action, host: ActionHost): Promise<void> {
+export async function perform(
+  requestId: string,
+  action: Action,
+  host: ActionHost,
+  approved = false
+): Promise<void> {
+  const refusal = localRefusal(action, approved, await readLocal(), host.root);
+  if (refusal) {
+    host.send({ type: "error", requestId, message: refusal });
+    return;
+  }
+  if (usesScreen(action)) {
+    screenOps += 1;
+    changed();
+    try {
+      await performAction(requestId, action, host);
+    } finally {
+      screenOps -= 1;
+      lastScreenAt = Date.now();
+      changed();
+      // 「刚做完」那段时间过了，再通知一次，让菜单栏换回来。
+      setTimeout(changed, SCREEN_RECENT_MS + 100).unref();
+    }
+    return;
+  }
+  await performAction(requestId, action, host);
+}
+
+async function performAction(requestId: string, action: Action, host: ActionHost): Promise<void> {
   if (action.kind === "read") {
     await read(requestId, action.path, action.maxBytes, host);
     return;
@@ -127,9 +191,10 @@ async function run(
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"]
   });
-  const job: Job = { streaming: !action.background, child };
+  const job: Job = { streaming: !action.background, child, command, startedAt: Date.now() };
   jobs.set(requestId, job);
   running.set(commandId, { child, outputPath, file });
+  changed();
   // 监听要在任何 await 之前挂上，不然很短的命令会在监听前就退出，输出丢了。
   let tail = "";
   const push = createPusher(() => job.streaming, (text) => {
@@ -181,6 +246,7 @@ async function finish(
   job.streaming = false;
   jobs.delete(requestId);
   running.delete(commandId);
+  changed();
   try {
     await log.write(`\n--- exit ${error ? "error" : String(code)} ---\n`);
   } catch {

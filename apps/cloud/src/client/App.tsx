@@ -2,6 +2,7 @@ import { Avatar, Button, Drawer, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
+import { Approvals } from "./Approvals";
 import { Chat, type ChatContext } from "./Chat";
 import { Home } from "./Home";
 import { MenuIcon, PlusIcon } from "./icons";
@@ -86,7 +87,7 @@ function rememberProject(id: string) {
 
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, loaded, error, refresh } = usePupuState();
+  const { projects, computers, approvals, loaded, error, refresh } = usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -256,6 +257,13 @@ export function App() {
           {error}
         </div>
       )}
+      <Approvals
+        approvals={approvals}
+        onDecide={async (id, decision) => {
+          await api.decideApproval(id, decision);
+          await refresh();
+        }}
+      />
       <main className="min-h-0 flex-1">{body}</main>
 
       <ProjectDrawer
@@ -278,6 +286,10 @@ export function App() {
         computers={computers}
         onRevoke={async (id) => {
           await api.revokeComputer(id);
+          await refresh();
+        }}
+        onSetPolicy={async (id, policy) => {
+          await api.setPolicy(id, policy);
           await refresh();
         }}
       />

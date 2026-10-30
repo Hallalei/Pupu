@@ -32,7 +32,9 @@ class MemoryDirectory implements ComputerDirectory {
       terminalsFolder: "",
       createdAt: this.rows.length + 1,
       revokedAt: null,
-      lastSeenAt: null
+      lastSeenAt: null,
+      policy: "ask_risky",
+      screenUntil: null
     };
     this.rows.push(row);
     return row;
@@ -44,6 +46,20 @@ class MemoryDirectory implements ComputerDirectory {
     const next = { ...row, revokedAt: 1 };
     this.rows[this.rows.indexOf(row)] = next;
     return next;
+  }
+
+  setPolicy(id: string, policy: ComputerRow["policy"]): boolean {
+    const index = this.rows.findIndex((row) => row.id === id);
+    const row = this.rows[index];
+    if (!row) return false;
+    this.rows[index] = { ...row, policy };
+    return true;
+  }
+
+  setScreenUntil(id: string, until: number | null): void {
+    const index = this.rows.findIndex((row) => row.id === id);
+    const row = this.rows[index];
+    if (row) this.rows[index] = { ...row, screenUntil: until };
   }
 
   markSeen(
