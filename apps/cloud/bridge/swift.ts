@@ -31,7 +31,11 @@ async function compile(input: {
   const bin = path.join(directory, input.name);
   const flags = input.flags ?? ["-O"];
   const source = await readFile(input.source);
-  const hash = createHash("sha256").update(source).update(flags.join(" ")).digest("hex").slice(0, 16);
+  // 默认参数只按源码算，和以前编好的对得上，免得白白重编：重编后签名变了，
+  // 系统设置里给它开的屏幕录制、辅助功能权限可能要重新开。
+  const hasher = createHash("sha256").update(source);
+  if (input.flags) hasher.update(flags.join(" "));
+  const hash = hasher.digest("hex").slice(0, 16);
   const stampPath = `${bin}.sha`;
   const stamp = await readFile(stampPath, "utf8").catch(() => "");
   if (stamp.trim() === hash) return bin;
