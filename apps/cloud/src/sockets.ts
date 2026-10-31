@@ -10,6 +10,7 @@ import {
 } from "agents/harness/pi";
 import type { ClientMessage, ServerMessage } from "./protocol";
 import type { BridgeSocket } from "./bridge/hub";
+import { DEVICE_HEADER, deviceTag } from "./devices";
 
 const SESSION_TAG_PREFIX = "pi-session:";
 const SESSION_QUERY = "session";
@@ -88,10 +89,13 @@ export class PiSessionSockets {
     return {
       // 桥不说 Agent 的身份帧，它有自己的 welcome / hello。
       protocol: (_connection, ctx) => !this.#bridge?.isRequest(ctx.request),
-      getConnectionTags: (_connection, ctx) =>
-        this.#bridge?.isRequest(ctx.request)
-          ? [this.#bridge.tag]
-          : [sessionTag(sessionFromRequest(ctx.request))],
+      // 会话连接再按设备打一个标签（Worker 认出设备后放在请求头里），吊销时按它断开。
+      getConnectionTags: (_connection, ctx) => {
+        if (this.#bridge?.isRequest(ctx.request)) return [this.#bridge.tag];
+        const session = sessionTag(sessionFromRequest(ctx.request));
+        const device = ctx.request.headers.get(DEVICE_HEADER);
+        return device ? [session, deviceTag(device)] : [session];
+      },
       handlers: {
         onConnect: (connection, ctx) => {
           if (this.#isBridge(connection)) {

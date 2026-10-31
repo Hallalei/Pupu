@@ -7,10 +7,12 @@ final class SessionSocket {
         case connecting, open, closed
     }
 
+    private static let revokedCloseCode = 4003
+
     let session: String
     var onStatus: ((Status) -> Void)?
     var onEvents: (([JSON]) -> Void)?
-    /// 项目、电脑或请示变了，该重新拉一次状态。
+    /// 项目、电脑、请示或设备变了，该重新拉一次状态。这台手机被吊销时也调，拉状态会拿到 401。
     var onChanged: (() -> Void)?
     var onError: ((String) -> Void)?
 
@@ -92,6 +94,8 @@ final class SessionSocket {
                 }
             } catch {
                 task.cancel(with: .goingAway, reason: nil)
+                // 4003：这台手机被吊销了（云端 protocol.ts 的 REVOKED_CLOSE_CODE）。
+                if task.closeCode.rawValue == Self.revokedCloseCode { onChanged?() }
             }
             if Task.isCancelled { break }
             setStatus(.closed)
@@ -106,7 +110,7 @@ final class SessionSocket {
         switch message["type"]?.string {
         case "events":
             onEvents?(message["events"]?.array ?? [])
-        case "projects_changed", "computers_changed", "approvals_changed":
+        case "projects_changed", "computers_changed", "approvals_changed", "devices_changed":
             onChanged?()
         case "error":
             onError?(message["message"]?.string ?? "出错了")

@@ -2,6 +2,8 @@ import Foundation
 
 nonisolated struct APIError: LocalizedError {
     let message: String
+    /// 401：凭据不对，或者这台手机被吊销了。
+    var unauthorized = false
     var errorDescription: String? { message }
 }
 
@@ -29,6 +31,22 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/approvals/\(id)", method: "POST", body: ["decision": allow ? "allow" : "deny"])
     }
 
+    /// 新手机拿配对码（或访问口令）换自己的凭据。这时还没有凭据，所以不挂在某个 endpoint 上。
+    static func pair(base: URL, code: String?, accessToken: String?, name: String) async throws -> Paired {
+        var body = ["kind": "phone", "name": name]
+        if let code { body["code"] = code }
+        if let accessToken { body["accessToken"] = accessToken }
+        return try await API(endpoint: Endpoint(base: base, token: nil)).send("api/pair", method: "POST", body: body)
+    }
+
+    func createPairingCode() async throws -> PairingCode {
+        try await send("api/pairing-codes", method: "POST", body: [:])
+    }
+
+    func revoke(device id: String) async throws {
+        let _: Done = try await send("api/devices/\(id)/revoke", method: "POST", body: [:])
+    }
+
     private struct Done: Decodable {}
     private struct Failure: Decodable { let error: String }
 
@@ -50,10 +68,11 @@ nonisolated struct API: Sendable {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            if let failure = try? JSONDecoder().decode(Failure.self, from: data) {
-                throw APIError(message: failure.error)
+            let failure = try? JSONDecoder().decode(Failure.self, from: data)
+            if status == 401 {
+                throw APIError(message: failure?.error ?? "这台手机的凭据失效了，或者被吊销了。", unauthorized: true)
             }
-            if status == 401 { throw APIError(message: "访问口令不对，或者还没填。") }
+            if let failure { throw APIError(message: failure.error) }
             throw APIError(message: "请求失败：\(status)")
         }
         return try JSONDecoder().decode(T.self, from: data)

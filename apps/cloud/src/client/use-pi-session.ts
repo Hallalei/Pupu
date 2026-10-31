@@ -1,7 +1,7 @@
 // 改编自 Cloudflare agents 仓库的 examples/next/harnesses/pi（MIT 协议，见 licenses/）。
 import { useAgent } from "agents/react";
 import { useCallback, useRef, useState } from "react";
-import type { ClientMessage, ServerMessage, SessionView } from "../protocol";
+import { REVOKED_CLOSE_CODE, type ClientMessage, type ServerMessage, type SessionView } from "../protocol";
 import { EMPTY_VIEW, reduceEvents } from "../view";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
@@ -26,7 +26,11 @@ export function usePiSession(session: string, onProjectsChanged: () => void) {
     name: "me",
     query: { session },
     onOpen: () => setState((current) => ({ ...current, status: "open" })),
-    onClose: () => setState((current) => ({ ...current, status: "closed" })),
+    onClose: (event) => {
+      setState((current) => ({ ...current, status: "closed" }));
+      // 这个浏览器被吊销了：马上重新拉一次状态，拿到 401 就换成登录页，不用等轮询。
+      if (event.code === REVOKED_CLOSE_CODE) changed.current();
+    },
     onMessage: (event) => {
       let message: ServerMessage;
       try {
@@ -44,6 +48,7 @@ export function usePiSession(session: string, onProjectsChanged: () => void) {
         case "projects_changed":
         case "computers_changed":
         case "approvals_changed":
+        case "devices_changed":
           changed.current();
           return;
         case "error":

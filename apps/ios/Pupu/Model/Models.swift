@@ -66,8 +66,40 @@ nonisolated struct Approval: Decodable, Sendable, Hashable {
     let expiresAt: Double
 }
 
+/// 配对过的手机或浏览器。
+nonisolated struct Device: Decodable, Sendable, Hashable {
+    let id: String
+    let name: String
+    /// phone 或 browser。
+    let kind: String
+    let createdAt: Double
+    let lastSeenAt: Double?
+    /// 就是这台手机。
+    let current: Bool
+
+    var label: String {
+        let kind = kind == "phone" ? "手机" : "浏览器"
+        guard let lastSeenAt else { return kind }
+        return "\(kind) · \(Ago.text(lastSeenAt))用过"
+    }
+}
+
+/// 给新设备用的配对码，10 分钟内有效，用一次就作废。
+nonisolated struct PairingCode: Decodable, Sendable, Hashable {
+    let code: String
+    let expiresAt: Double
+}
+
+/// 配对换来的凭据。明文只在这一次返回。
+nonisolated struct Paired: Decodable, Sendable {
+    let id: String
+    let name: String
+    let token: String
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
     let computers: [Computer]
     let approvals: [Approval]?
+    let devices: [Device]?
 }

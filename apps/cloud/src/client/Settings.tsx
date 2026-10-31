@@ -1,8 +1,10 @@
 import { Button, Drawer } from "@heroui/react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
-import { computerLabel } from "./Home";
+import type { DeviceView } from "../devices";
+import { ago, computerLabel } from "./Home";
 
 const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
   ["ask_risky", "高风险的才问", "删除、推送、发布这类先问你；屏幕先批一次，15 分钟不用就失效。"],
@@ -10,21 +12,30 @@ const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
   ["trust", "都放行", "什么都不问。电脑菜单栏上照样能看到 Pupu 在做什么。"]
 ];
 
+type PairingCode = { readonly code: string; readonly expiresAt: number };
+
 /**
- * 这一版的设置：管已经连上的电脑，以及每台电脑上 Pupu 什么时候要先问你。
+ * 这一版的设置：管已经连上的电脑、手机和浏览器，每台电脑上 Pupu 什么时候要先问你，
+ * 以及给新设备生成配对码。
  */
 export function Settings({
   isOpen,
   onOpenChange,
   computers,
   onRevoke,
-  onSetPolicy
+  onSetPolicy,
+  devices,
+  onRevokeDevice,
+  onCreatePairingCode
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   computers: readonly ComputerView[];
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
+  devices: readonly DeviceView[];
+  onRevokeDevice: (id: string) => Promise<void>;
+  onCreatePairingCode: () => Promise<PairingCode>;
 }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -43,11 +54,11 @@ export function Settings({
     }
   }
 
-  async function revoke(id: string) {
+  async function revoke(id: string, kind: "computer" | "device") {
     setPendingId(id);
     setError(null);
     try {
-      await onRevoke(id);
+      await (kind === "computer" ? onRevoke(id) : onRevokeDevice(id));
       setConfirmId(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -150,7 +161,7 @@ export function Settings({
                               size="sm"
                               variant="danger"
                               isPending={pendingId === computer.id}
-                              onPress={() => void revoke(computer.id)}
+                              onPress={() => void revoke(computer.id, "computer")}
                             >
                               吊销
                             </Button>
@@ -174,16 +185,208 @@ export function Settings({
               </section>
 
               <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium text-muted">再配一台</h3>
-                <p className="text-sm leading-6 text-muted">在那台电脑上运行：</p>
-                <pre className="overflow-x-auto rounded-2xl bg-default px-3 py-2 text-xs leading-5">
-                  {`npm run bridge -- pair --url ${origin} --name 名字\nnpm run bridge -- install`}
-                </pre>
+                <h3 className="text-sm font-medium text-muted">手机和浏览器</h3>
+                {devices.length === 0 ? (
+                  <p className="text-sm leading-6 text-muted">还没有配对的手机或浏览器。</p>
+                ) : (
+                  devices.map((device) => (
+                    <div
+                      key={device.id}
+                      className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">
+                            {device.name}
+                            {device.current && <span className="font-normal text-muted"> · 这个浏览器</span>}
+                          </div>
+                          <div className="text-sm text-muted">{deviceLabel(device)}</div>
+                        </div>
+                        {confirmId !== device.id && (
+                          <button
+                            type="button"
+                            className="shrink-0 text-sm text-danger"
+                            onClick={() => {
+                              setError(null);
+                              setConfirmId(device.id);
+                            }}
+                          >
+                            吊销
+                          </button>
+                        )}
+                      </div>
+                      {confirmId === device.id && (
+                        <div className="flex flex-col gap-2">
+                          <p className="text-sm leading-6 text-muted">
+                            {device.current
+                              ? "吊销后这个浏览器马上退出，要再用就重新配对。"
+                              : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`}
+                          </p>
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="tertiary" onPress={() => setConfirmId(null)}>
+                              取消
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              isPending={pendingId === device.id}
+                              onPress={() => void revoke(device.id, "device")}
+                            >
+                              吊销
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
               </section>
+
+              <PairNew
+                origin={origin}
+                connected={[...devices, ...computers]}
+                onCreate={onCreatePairingCode}
+              />
             </Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
     </Drawer>
+  );
+}
+
+function deviceLabel(device: DeviceView): string {
+  const kind = device.kind === "phone" ? "手机" : "浏览器";
+  return device.lastSeenAt ? `${kind} · ${ago(device.lastSeenAt)}用过` : kind;
+}
+
+/**
+ * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑填码。
+ * 用这个码的设备连上了，或者码过期了，就收起来。
+ */
+function PairNew({
+  origin,
+  connected,
+  onCreate
+}: {
+  origin: string;
+  /** 已经连上的设备和电脑。生成码之后多出来的那台，就是用这个码连上的。 */
+  connected: readonly { readonly id: string; readonly name: string }[];
+  onCreate: () => Promise<PairingCode>;
+}) {
+  const [pairing, setPairing] = useState<(PairingCode & { known: ReadonlySet<string> }) | null>(null);
+  const [joined, setJoined] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!pairing) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
+
+  useEffect(() => {
+    if (!pairing) return;
+    const added = connected.find((item) => !pairing.known.has(item.id));
+    if (added) {
+      setJoined(added.name);
+      setPairing(null);
+    }
+  }, [connected, pairing]);
+
+  async function create() {
+    setBusy(true);
+    setError(null);
+    setJoined(null);
+    try {
+      const code = await onCreate();
+      setPairing({ ...code, known: new Set(connected.map((item) => item.id)) });
+      setNow(Date.now());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const left = pairing ? Math.max(0, Math.ceil((pairing.expiresAt - now) / 1000)) : 0;
+  const link = pairing
+    ? `pupu://pair?server=${encodeURIComponent(origin)}&code=${encodeURIComponent(pairing.code)}`
+    : "";
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium text-muted">连接新设备</h3>
+      {pairing && left > 0 ? (
+        <div className="flex flex-col gap-3 rounded-2xl bg-default px-3 py-3">
+          <div className="flex items-center gap-3">
+            <QrCode text={link} label="配对二维码，用 iPhone 相机扫" />
+            <div className="flex min-w-0 flex-col gap-1">
+              <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
+                {pairing.code}
+              </div>
+              <div className="text-sm text-muted" aria-live="polite">
+                {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 后过期
+              </div>
+            </div>
+          </div>
+          <ul className="flex flex-col gap-1.5 text-sm leading-6">
+            <li>手机：用相机扫二维码，在 Pupu App 里打开；或者在 App 的连接页填这个码。</li>
+            <li>浏览器：打开 {origin}，填这个码。</li>
+            <li>电脑：在 apps/cloud 目录里运行</li>
+          </ul>
+          <pre className="overflow-x-auto rounded-xl bg-background px-3 py-2 text-xs leading-5">
+            {`npm run bridge -- pair --url ${origin} --code ${pairing.code}\nnpm run bridge -- install`}
+          </pre>
+          <div className="flex justify-end">
+            <Button size="sm" variant="tertiary" onPress={() => setPairing(null)}>
+              不用了
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm leading-6 text-muted">
+            {joined
+              ? `「${joined}」连上了。`
+              : pairing
+                ? "配对码过期了，再生成一个。"
+                : "手机、浏览器和电脑都用配对码连。码 10 分钟内有效，用一次就作废。"}
+          </p>
+          <Button size="sm" variant="secondary" isPending={busy} onPress={() => void create()}>
+            {joined || pairing ? "再生成一个" : "生成配对码"}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-sm text-danger">{error}</p>}
+    </section>
+  );
+}
+
+/** 白底黑块，深色模式下也一样，相机才认得出来。 */
+function QrCode({ text, label }: { text: string; label: string }) {
+  const { size, path } = useMemo(() => {
+    const qr = encode(text, { ecc: "M", border: 0 });
+    let d = "";
+    qr.data.forEach((row, y) =>
+      row.forEach((dark, x) => {
+        if (dark) d += `M${x} ${y}h1v1h-1z`;
+      })
+    );
+    return { size: qr.size, path: d };
+  }, [text]);
+  return (
+    <div className="shrink-0 rounded-xl bg-white p-2">
+      <svg
+        role="img"
+        aria-label={label}
+        viewBox={`0 0 ${size} ${size}`}
+        shapeRendering="crispEdges"
+        className="block size-32"
+      >
+        <path d={path} fill="#000" />
+      </svg>
+    </div>
   );
 }

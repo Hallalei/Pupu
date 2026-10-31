@@ -43,13 +43,13 @@ npm run dev
 在要授权的电脑上配对，然后让桥常驻：
 
 ```bash
-npm run bridge -- pair --url http://localhost:5173 --name 书房
+npm run bridge -- pair --url https://<你的 Pupu> --code <配对码>
 npm run bridge -- start
 ```
 
-线上 Pupu 要加 `--token <访问口令>`。设备凭据写在 `~/.pupu/bridge.json`，明文只在配对时出现一次。
+配对码在网页或 App 的设置里生成（「连接新设备」），10 分钟内有效，用一次就作废。连本机的开发服务器（`http://localhost:5173`）可以不带配对码；手边一台连上的设备都没有时，用 `--token <访问口令>` 代替。名字默认是主机名，`--name` 可以改。设备凭据写在 `~/.pupu/bridge.json`，明文只在配对时出现一次。
 
-开机自启是 `npm run bridge -- install`，卸下是 `uninstall`。`revoke` 吊销这台电脑的凭据，配置文件还在。`status` 看当前配对。
+开机自启是 `npm run bridge -- install`，卸下是 `uninstall`。`revoke` 拿这台电脑自己的凭据吊销它，配置文件还在。`status` 看当前配对。
 
 主页的「电脑」面板列出授权的电脑和在线状态。点右上角「我」打开设置，可以看这台电脑能做什么，也可以吊销它。桥没开时 Pupu 照常聊天，并说明电脑没连上。
 
@@ -78,9 +78,11 @@ npx wrangler secret put ACCESS_TOKEN
 npm run deploy
 ```
 
-第一步设一个访问口令，不设的话任何人都能用你的 Pupu。
+第一步设一个访问口令，不设的话谁都连不上（本机开发除外）。
 
-部署后，第一次访问打开 `https://<你的 workers 域名>/api/login?token=<口令>`。这一步会写入 cookie，之后直接访问首页即可。
+部署后第一次打开首页是登录页：点「用访问口令」填一次，这个浏览器就换到了自己的设备凭据（HttpOnly cookie），之后不用再填。别的手机、浏览器和电脑都用配对码连：在已经连上的设备上打开设置 →「连接新设备」，手机用相机扫二维码，或者在 App 的连接页填码。设置里列着所有连上的设备，每台都能单独吊销，吊销后它开着的连接马上断开。
+
+访问口令只在配对时认，是手边没有连上的设备时的救急钥匙。配对失败按来源（IPv4 一个地址，IPv6 一个 /56）计数，10 分钟内错 10 次，这个来源先停 10 分钟；访问口令另记一桶，不管从哪儿来，10 分钟内一共错 20 次就先停。换口令用 `wrangler secret put ACCESS_TOKEN`，已经配对的设备不受影响。
 
 ## 许可证
 

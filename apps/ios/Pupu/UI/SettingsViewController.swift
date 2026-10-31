@@ -1,11 +1,12 @@
 import UIKit
 
-/// 设置：授权的电脑、每台电脑的权限分级、怎么再配一台、连的是哪个 Pupu。
+/// 设置：授权的电脑、每台电脑的权限分级、配对过的手机和浏览器、给新设备生成配对码、连的是哪个 Pupu。
 final class SettingsViewController: UICollectionViewController {
     nonisolated private enum Section: Hashable, Sendable {
         case computers
         case policy(computerId: String, name: String)
         case abilities
+        case devices
         case pair
         case connection
     }
@@ -15,14 +16,24 @@ final class SettingsViewController: UICollectionViewController {
         case noComputer
         case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case abilities
-        case pair(String)
+        case device(Device)
+        case noDevice
+        case newCode(note: String, busy: Bool)
+        case code(PairingCode)
+        case bridgeCommand(String)
         case server(String)
         case disconnect
     }
 
     private var source: UICollectionViewDiffableDataSource<Section, Item>!
     private var token: StoreToken?
-    private var copied = false
+    /// 刚复制的那段文字，对应的那一行写「已复制」。
+    private var copied: String?
+    private var pairing: PairingCode?
+    /// 生成配对码时已经连上的设备和电脑。之后多出来的那台，就是用这个码连上的。
+    private var known: Set<String> = []
+    private var joined: String?
+    private var creating = false
 
     init() {
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
@@ -64,7 +75,8 @@ final class SettingsViewController: UICollectionViewController {
         case .computers: "电脑"
         case .policy(_, let name): "「\(name)」的权限分级"
         case .abilities: "这台电脑能做的"
-        case .pair: "再配一台"
+        case .devices: "手机和浏览器"
+        case .pair: "连接新设备"
         case .connection: "连接"
         }
     }
@@ -81,13 +93,32 @@ final class SettingsViewController: UICollectionViewController {
                 .policy(computerId: computer.id, policy: $0, selected: computer.currentPolicy == $0)
             }, toSection: section)
         }
-        snapshot.appendSections([.abilities, .pair, .connection])
+        snapshot.appendSections([.abilities, .devices, .pair, .connection])
         snapshot.appendItems([.abilities], toSection: .abilities)
+        snapshot.appendItems(store.devices.isEmpty ? [.noDevice] : store.devices.map(Item.device), toSection: .devices)
         let base = Connection.shared.endpoint?.base.absoluteString ?? ""
-        let token = Connection.shared.endpoint?.token == nil ? "" : " --token 访问口令"
-        snapshot.appendItems([.pair("npm run bridge -- pair --url \(base)\(token) --name 电脑名")], toSection: .pair)
+        noticeJoined(store)
+        if let pairing, pairing.expiresAt > Date.now.timeIntervalSince1970 * 1000 {
+            snapshot.appendItems([
+                .code(pairing),
+                .bridgeCommand("npm run bridge -- pair --url \(base) --code \(pairing.code)")
+            ], toSection: .pair)
+        } else {
+            let note = joined.map { "「\($0)」连上了。" }
+                ?? (pairing == nil ? "新手机、浏览器和电脑都用配对码连上。码 10 分钟内有效，用一次就作废。" : "配对码过期了，再生成一个。")
+            snapshot.appendItems([.newCode(note: note, busy: creating)], toSection: .pair)
+        }
         snapshot.appendItems([.server(base), .disconnect], toSection: .connection)
         source.apply(snapshot, animatingDifferences: false)
+    }
+
+    /// 生成码之后多出来一台设备或电脑，就是用这个码连上的：收起码，说一声。
+    private func noticeJoined(_ store: Store) {
+        guard pairing != nil else { return }
+        let connected = store.devices.map { ($0.id, $0.name) } + store.computers.map { ($0.id, $0.name) }
+        guard let added = connected.first(where: { !known.contains($0.0) }) else { return }
+        joined = added.1
+        pairing = nil
     }
 
     private func configure(_ cell: UICollectionViewListCell, item: Item) {
@@ -120,15 +151,37 @@ final class SettingsViewController: UICollectionViewController {
         case .abilities:
             content.text = nil
             content.secondaryText = "跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕时，系统会要求允许 pupu-computer-use 的屏幕录制和辅助功能。"
-        case .pair(let command):
+        case .device(let device):
+            content.text = device.current ? "\(device.name) · 这台手机" : device.name
+            content.secondaryText = device.label
+            let revoke = UIButton(configuration: .plain(), primaryAction: UIAction(title: "吊销") { [weak self] _ in
+                self?.confirmRevoke(device)
+            })
+            revoke.configuration?.baseForegroundColor = Theme.dangerInk
+            cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+        case .noDevice:
+            content.text = "还没有配对的手机或浏览器"
+        case .newCode(let note, let busy):
+            content.text = busy ? "正在生成…" : "生成配对码"
+            content.textProperties.font = Theme.font(.body, weight: .semibold)
+            content.secondaryText = note
+        case .code(let pairing):
+            content.text = pairing.code
+            content.textProperties.font = UIFontMetrics(forTextStyle: .title2)
+                .scaledFont(for: .monospacedSystemFont(ofSize: 28, weight: .semibold))
+            let until = Date(timeIntervalSince1970: pairing.expiresAt / 1000).formatted(date: .omitted, time: .shortened)
+            let base = Connection.shared.endpoint?.base.absoluteString ?? ""
+            content.secondaryText = (copied == pairing.code ? "已复制。" : "点一下复制。")
+                + "\(until) 前有效，用一次就作废。手机在 Pupu App 的连接页填；浏览器打开 \(base) 填。"
+        case .bridgeCommand(let command):
             content.text = command
             content.textProperties.font = Theme.font(.code)
             content.textProperties.numberOfLines = 0
-            let placeholders = Connection.shared.endpoint?.token == nil ? "「电脑名」" : "「访问口令」和「电脑名」"
-            content.secondaryText = (copied ? "已复制。" : "点一下复制。") + "在 apps/cloud 目录里跑，先把\(placeholders)换成你的。"
+            content.secondaryText = (copied == command ? "已复制。" : "点一下复制。")
+                + "电脑上在 apps/cloud 目录里跑，配好再跑 npm run bridge -- install。"
         case .server(let base):
             content.text = base
-            content.secondaryText = Connection.shared.endpoint?.token == nil ? "没有访问口令" : "访问口令存在钥匙串里"
+            content.secondaryText = "这台手机的设备凭据存在钥匙串里"
         case .disconnect:
             content.text = "换一个 Pupu"
             content.textProperties.color = Theme.dangerInk
@@ -138,7 +191,7 @@ final class SettingsViewController: UICollectionViewController {
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
-        case .policy, .pair, .disconnect: true
+        case .policy, .newCode, .code, .bridgeCommand, .disconnect: true
         default: false
         }
     }
@@ -157,20 +210,22 @@ final class SettingsViewController: UICollectionViewController {
                 }
                 Store.shared.refresh()
             }
-        case .pair(let command):
-            UIPasteboard.general.string = command
-            copied = true
-            var snapshot = source.snapshot()
-            snapshot.reconfigureItems([.pair(command)])
-            source.apply(snapshot, animatingDifferences: false)
+        case .newCode:
+            createCode()
+        case .code(let pairing):
+            copy(pairing.code, item: .code(pairing))
+        case .bridgeCommand(let command):
+            copy(command, item: .bridgeCommand(command))
         case .disconnect:
             let sheet = UIAlertController(
                 title: nil,
-                message: "这台手机会忘掉现在的地址和访问口令，回到连接页。",
+                message: "这台手机会从这个 Pupu 注销，回到连接页。要再连，就用配对码重新配对。",
                 preferredStyle: .actionSheet
             )
             sheet.addAction(UIAlertAction(title: "换一个 Pupu", style: .destructive) { [weak self] _ in
-                self?.dismiss(animated: true) { Connection.shared.forget() }
+                self?.dismiss(animated: true) {
+                    Task { await Connection.shared.signOut() }
+                }
             })
             sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
             present(sheet, animated: true)
@@ -190,6 +245,62 @@ final class SettingsViewController: UICollectionViewController {
             Task {
                 do {
                     try await api.revoke(computer: computer.id)
+                } catch {
+                    self?.show(error.localizedDescription)
+                }
+                Store.shared.refresh()
+            }
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(sheet, animated: true)
+    }
+
+    private func copy(_ text: String, item: Item) {
+        UIPasteboard.general.string = text
+        copied = text
+        var snapshot = source.snapshot()
+        snapshot.reconfigureItems([item])
+        source.apply(snapshot, animatingDifferences: false)
+    }
+
+    private func createCode() {
+        guard !creating, let api = Store.shared.api else { return }
+        creating = true
+        render()
+        Task {
+            defer {
+                creating = false
+                render()
+            }
+            do {
+                let code = try await api.createPairingCode()
+                known = Set(Store.shared.devices.map(\.id) + Store.shared.computers.map(\.id))
+                joined = nil
+                copied = nil
+                pairing = code
+            } catch {
+                show(error.localizedDescription)
+            }
+        }
+    }
+
+    private func confirmRevoke(_ device: Device) {
+        let sheet = UIAlertController(
+            title: nil,
+            message: device.current
+                ? "吊销后这台手机马上退出，回到连接页。要再用就重新配对。"
+                : "吊销后「\(device.name)」马上断开。要再用，就在那台设备上重新配对。",
+            preferredStyle: .actionSheet
+        )
+        sheet.addAction(UIAlertAction(title: "吊销「\(device.name)」", style: .destructive) { [weak self] _ in
+            guard let api = Store.shared.api else { return }
+            Task {
+                do {
+                    try await api.revoke(device: device.id)
+                    if device.current {
+                        self?.dismiss(animated: true) { Connection.shared.forget() }
+                        return
+                    }
                 } catch {
                     self?.show(error.localizedDescription)
                 }

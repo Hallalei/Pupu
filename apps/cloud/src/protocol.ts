@@ -8,6 +8,9 @@ import type { PiSessionId, PiWhenBusy } from "agents/harness/pi";
  * 主对话是根会话，每个项目各是一个会话。
  */
 
+/** 设备被吊销时，Pupu 用这个码关掉它的 WebSocket。客户端收到就别再重连，回登录页。 */
+export const REVOKED_CLOSE_CODE = 4003;
+
 /** 浏览器 → Pupu。带 `id` 的命令会收到 `result` 或 `error`。 */
 export type ClientMessage =
   | {
@@ -39,6 +42,8 @@ export type ServerMessage =
   | { readonly type: "computers_changed" }
   /** 有新的请示，或者请示处理完了，客户端重新拉一次 /api/state。 */
   | { readonly type: "approvals_changed" }
+  /** 有设备配对上或者被吊销了，客户端重新拉一次 /api/state。 */
+  | { readonly type: "devices_changed" }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };
 

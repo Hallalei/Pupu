@@ -26,19 +26,22 @@ async function main(): Promise<void> {
       console.log("已卸下开机自启。凭据还在，要作废它再运行 revoke。");
       return;
     case "revoke":
-      await revoke(flags);
+      await revoke();
       return;
     case "status":
       await status();
       return;
     default:
       console.log(`用法：
-  node bridge/main.ts pair --url http://localhost:5173 [--name 名字] [--token 访问口令] [--force]
+  node bridge/main.ts pair --url https://你的 Pupu --code 配对码 [--name 名字] [--force]
   node bridge/main.ts start
   node bridge/main.ts install
   node bridge/main.ts uninstall
   node bridge/main.ts status
-  node bridge/main.ts revoke [--token 访问口令]`);
+  node bridge/main.ts revoke
+
+配对码在网页或 App 的设置里生成，10 分钟内有效，用一次就作废。
+连本机的开发服务器可以不带；手边没有登录的设备时，可以用 --token 访问口令 代替。`);
       process.exit(command ? 1 : 0);
   }
 }
@@ -54,14 +57,17 @@ async function pair(flags: Map<string, string>): Promise<void> {
     if (error instanceof Error && error.message.startsWith("已经配对")) throw error;
   }
   const name = flags.get("name")?.trim() || os.hostname() || "电脑";
+  const code = flags.get("code");
   const access = flags.get("token");
-  const response = await fetch(new URL("/api/computers", origin), {
+  const response = await fetch(new URL("/api/pair", origin), {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(access ? { authorization: `Bearer ${access}` } : {})
-    },
-    body: JSON.stringify({ name })
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "computer",
+      name,
+      ...(code ? { code } : {}),
+      ...(access ? { accessToken: access } : {})
+    })
   });
   const body = (await response.json().catch(() => null)) as { id?: string; name?: string; token?: string; error?: string } | null;
   if (!response.ok || !body?.id || !body.token || !body.name) {
@@ -182,12 +188,12 @@ async function install(): Promise<void> {
   console.log(`日志在 ~/.pupu/bridge.log`);
 }
 
-async function revoke(flags: Map<string, string>): Promise<void> {
+/** 拿这台电脑自己的凭据注销自己，不用访问口令。 */
+async function revoke(): Promise<void> {
   const config = await readConfig();
-  const access = flags.get("token");
-  const response = await fetch(new URL(`/api/computers/${encodeURIComponent(config.computerId)}/revoke`, config.url), {
+  const response = await fetch(new URL("/api/bridge/revoke", config.url), {
     method: "POST",
-    headers: access ? { authorization: `Bearer ${access}` } : {}
+    headers: { authorization: `Bearer ${config.token}` }
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;

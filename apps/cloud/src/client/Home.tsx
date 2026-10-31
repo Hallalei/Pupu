@@ -3,7 +3,7 @@ import type { ComputerView } from "../bridge/protocol";
 import type { Project } from "../projects";
 import { ComputerIcon, FolderIcon } from "./icons";
 
-function ago(timestamp: number): string {
+export function ago(timestamp: number): string {
   const minutes = Math.floor((Date.now() - timestamp) / 60000);
   if (minutes < 1) return "刚刚";
   if (minutes < 60) return `${minutes} 分钟前`;

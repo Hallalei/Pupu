@@ -21,7 +21,24 @@ import {
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
 import { createComputerTools } from "./bridge/tools";
+import {
+  browserName,
+  DEVICE_HEADER,
+  DeviceStore,
+  deviceTag,
+  deviceView,
+  newPairingCode,
+  normalizePairingCode,
+  PAIRING_TTL_MS,
+  SOURCE_LIMIT,
+  sourceOf,
+  TOKEN_BUCKET,
+  TOKEN_LIMIT,
+  type DeviceKind,
+  type DeviceView
+} from "./devices";
 import { handoffMessage } from "./messages";
+import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
 import { ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
@@ -42,7 +59,14 @@ export type PupuState = {
   readonly computers: ReturnType<ComputerBridge["list"]>;
   /** 等用户批准的电脑动作，先来的在前。 */
   readonly approvals: readonly ApprovalView[];
+  /** 配对过的手机和浏览器，新连上的在前。 */
+  readonly devices: readonly DeviceView[];
 };
+
+/** 配对的结果。失败时带上给 Worker 回的状态码。 */
+export type PairResult =
+  | { readonly ok: true; readonly id: string; readonly name: string; readonly token: string }
+  | { readonly ok: false; readonly status: 400 | 401 | 429; readonly error: string };
 
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
@@ -52,6 +76,7 @@ export class Pupu extends DurableObject<Env> {
   readonly ai = createAI({ binding: this.env.AI });
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly computers = new ComputerStore(this.ctx.storage.sql);
+  readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly bridge = new ComputerBridge({
     directory: this.computers,
     sockets: () => this.ctx.getWebSockets(BRIDGE_TAG),
@@ -169,15 +194,117 @@ export class Pupu extends DurableObject<Env> {
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
   }
 
+  #devicesChanged(): void {
+    this.sockets.broadcast({ type: "devices_changed" });
+  }
+
   // 下面是给 Worker 调的 RPC。原生 RPC 不经过 fetch，所以要自己先启动 Lifecycle。
 
-  async state(): Promise<PupuState> {
+  /** `current` 是发请求的设备，列表里给它打个标记。 */
+  async state(current: string | null = null): Promise<PupuState> {
     await this.lifecycle.start();
     return {
       projects: this.store.listProjects(),
       computers: this.bridge.list(),
-      approvals: this.gate.pending()
+      approvals: this.gate.pending(),
+      devices: this.devices.list().map((row) => deviceView(row, current))
     };
+  }
+
+  /** Worker 每个请求都先来这里认设备，认出来返回设备 id。只碰 SQLite，不用把 pi 拉起来。 */
+  async authenticateDevice(token: string): Promise<string | null> {
+    const row = this.devices.byTokenHash(await tokenHash(token));
+    if (!row || row.revokedAt !== null) return null;
+    this.devices.touch(row, Date.now());
+    return row.id;
+  }
+
+  /** 已经连上的设备要一个配对码，给新设备用。明文只在这一次返回。 */
+  async createPairingCode(): Promise<{ code: string; expiresAt: number }> {
+    const now = Date.now();
+    const expiresAt = now + PAIRING_TTL_MS;
+    for (;;) {
+      const code = newPairingCode();
+      if (this.devices.addCode(await tokenHash(code.replace("-", "")), expiresAt, now)) {
+        return { code, expiresAt };
+      }
+    }
+  }
+
+  /**
+   * 新设备拿配对码换自己的凭据，电脑换桥的凭据。访问口令也能换，当救急钥匙。
+   * 同一个来源错多了先停 10 分钟；访问口令另记一桶，换着地址也没法一个个试。
+   * `source` 是 Worker 按 CF-Connecting-IP 算的来源。
+   * `trusted` 是本机开发、又没设访问口令：什么都不带也放行。
+   */
+  async pair(input: {
+    kind: DeviceKind | "computer";
+    name: string;
+    code?: string;
+    accessToken?: string;
+    source: string;
+    trusted: boolean;
+  }): Promise<PairResult> {
+    if (!input.code && !input.accessToken) {
+      return input.trusted ? this.#issue(input) : { ok: false, status: 400, error: "要填配对码。" };
+    }
+    const code = input.code ? normalizePairingCode(input.code) : null;
+    if (input.code && !code) {
+      return { ok: false, status: 400, error: "配对码是 8 位字母和数字，比如 7K3M-Q9TX。" };
+    }
+    const now = Date.now();
+    const source = `source:${input.source}`;
+    if (this.devices.failures(source, now) >= SOURCE_LIMIT) {
+      return { ok: false, status: 429, error: "这里试错的次数太多了，过 10 分钟再试。" };
+    }
+    if (!code && this.devices.failures(TOKEN_BUCKET, now) >= TOKEN_LIMIT) {
+      return { ok: false, status: 429, error: "访问口令试错的次数太多了。过 10 分钟再试，或者用配对码。" };
+    }
+    const attempt = this.devices.addAttempt(code ? [source] : [source, TOKEN_BUCKET], now);
+    const matched = code
+      ? this.devices.takeCode(await tokenHash(code), now)
+      : await this.#isAccessToken(input.accessToken ?? "");
+    if (!matched) {
+      return { ok: false, status: 401, error: code ? "配对码不对，或者已经用过、过期了。" : "访问口令不对。" };
+    }
+    this.devices.forgive(attempt);
+    return this.#issue(input);
+  }
+
+  async #isAccessToken(token: string): Promise<boolean> {
+    const expected = this.env.ACCESS_TOKEN;
+    if (!expected) return false;
+    return (await tokenHash(token)) === (await tokenHash(expected));
+  }
+
+  /** 配对过了关：电脑发桥的凭据，手机和浏览器发设备凭据。 */
+  async #issue(input: { kind: DeviceKind | "computer"; name: string }): Promise<PairResult> {
+    if (input.kind === "computer") {
+      return { ok: true, ...(await this.createComputer(input.name)) };
+    }
+    const token = newDeviceToken();
+    const row = this.devices.insert({
+      name: input.name.trim().slice(0, 80) || (input.kind === "phone" ? "手机" : "浏览器"),
+      kind: input.kind,
+      tokenHash: await tokenHash(token)
+    });
+    this.#devicesChanged();
+    return { ok: true, id: row.id, name: row.name, token };
+  }
+
+  /** 吊销手机或浏览器，它开着的连接马上断开。 */
+  async revokeDevice(id: string): Promise<boolean> {
+    const row = this.devices.revoke(id);
+    if (!row || row.revokedAt === null) return false;
+    for (const socket of this.ctx.getWebSockets(deviceTag(id))) {
+      try {
+        socket.close(REVOKED_CLOSE_CODE, "设备已吊销");
+      } catch {
+        // 已经断了。
+      }
+    }
+    this.#devicesChanged();
+    return true;
   }
 
   /** 用户在手机上点了允许或拒绝。 */
@@ -210,6 +337,13 @@ export class Pupu extends DurableObject<Env> {
     this.bridge.disconnect(id, 1008, "凭据已吊销");
     this.bridge.onChange();
     return true;
+  }
+
+  /** 桥拿自己的凭据注销自己，不用访问口令。 */
+  async revokeComputerByToken(token: string): Promise<boolean> {
+    const row = this.computers.byTokenHash(await tokenHash(token));
+    if (!row || row.revokedAt !== null) return false;
+    return this.revokeComputer(row.id);
   }
 
   /** 本地把一条命令直接送到桥上，不经过模型。线上没有这条路。 */
@@ -278,19 +412,46 @@ function isLocal(request: Request): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
+/** 手机和桥把凭据放在 Authorization 头里，浏览器放在 cookie 里。 */
+function credentialOf(request: Request): { token: string; cookie: boolean } | null {
+  const header = request.headers.get("Authorization");
+  if (header?.startsWith("Bearer ")) {
+    const token = header.slice("Bearer ".length).trim();
+    if (token) return { token, cookie: false };
+  }
+  for (const part of (request.headers.get("Cookie") ?? "").split(";")) {
+    const [name, value] = part.trim().split("=");
+    if (name === TOKEN_COOKIE && value) return { token: value, cookie: true };
+  }
+  return null;
+}
+
+/** 发请求的设备。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。 */
+type Caller = { readonly device: string | null };
+
 /**
- * 本地开发没设 ACCESS_TOKEN 时直接放行；线上没设口令就一律拒绝，
+ * 带了凭据就一定要对上一台没吊销的设备，本机也一样，吊销马上能看到效果。
+ * 什么都不带，只有本机开发又没设 ACCESS_TOKEN 时放行；线上没设口令就一律拒绝，
  * 免得部署后到设口令之前这段时间对所有人开放。
  */
-function authorized(request: Request, env: Env): boolean {
-  const expected = env.ACCESS_TOKEN;
-  if (!expected) return isLocal(request);
-  const header = request.headers.get("Authorization");
-  if (header === `Bearer ${expected}`) return true;
-  const cookie = request.headers.get("Cookie") ?? "";
-  return cookie
-    .split(";")
-    .some((part) => part.trim() === `${TOKEN_COOKIE}=${expected}`);
+async function authenticate(request: Request, env: Env): Promise<Caller | null> {
+  const credential = credentialOf(request);
+  if (credential) {
+    // cookie 是浏览器自己带上的：别的网站发起的请求和 WebSocket（Origin 对不上）不认。
+    const origin = request.headers.get("Origin");
+    if (credential.cookie && origin !== null && origin !== new URL(request.url).origin) return null;
+    const device = await pupu(env).authenticateDevice(credential.token);
+    return device ? { device } : null;
+  }
+  return isLocal(request) && !env.ACCESS_TOKEN ? { device: null } : null;
+}
+
+/** 浏览器的凭据只放进 HttpOnly cookie，页面上的脚本拿不到。`token` 是 null 时清掉。 */
+function deviceCookie(url: URL, token: string | null): string {
+  // 本机开发是 http，Safari 不收带 Secure 的 cookie。
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  const value = token ? `${token}; Max-Age=31536000` : "; Max-Age=0";
+  return `${TOKEN_COOKIE}=${value}; Path=/; HttpOnly${secure}; SameSite=Lax`;
 }
 
 function pupu(env: Env) {
@@ -305,17 +466,51 @@ async function readJson<T>(request: Request): Promise<T> {
   }
 }
 
-async function handleApi(request: Request, env: Env, url: URL) {
+/**
+ * 新设备换凭据，不用先登录。手机和电脑在响应里拿到凭据，自己存好；
+ * 浏览器拿到的是 cookie。
+ */
+async function handlePair(request: Request, env: Env, url: URL): Promise<Response> {
+  const body = await readJson<{ kind?: unknown; name?: unknown; code?: unknown; accessToken?: unknown }>(request);
+  const kind = body.kind;
+  if (kind !== "phone" && kind !== "browser" && kind !== "computer") {
+    return Response.json({ error: "kind 只能是 phone、browser 或 computer" }, { status: 400 });
+  }
+  const result = await pupu(env).pair({
+    kind,
+    name: kind === "browser" ? browserName(request.headers.get("User-Agent")) : String(body.name ?? ""),
+    code: typeof body.code === "string" ? body.code : undefined,
+    accessToken: typeof body.accessToken === "string" ? body.accessToken : undefined,
+    // 来源只认 Cloudflare 填的这个头，客户端自己写的 X-Forwarded-For 不算。
+    source: sourceOf(request.headers.get("CF-Connecting-IP")),
+    trusted: isLocal(request) && !env.ACCESS_TOKEN
+  });
+  if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
+  if (kind !== "browser") return Response.json({ id: result.id, name: result.name, token: result.token });
+  return Response.json(
+    { id: result.id, name: result.name },
+    { headers: { "Set-Cookie": deviceCookie(url, result.token) } }
+  );
+}
+
+async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   const { pathname } = url;
   const method = request.method;
 
   if (pathname === "/api/state" && method === "GET") {
-    return Response.json(await pupu(env).state());
+    return Response.json(await pupu(env).state(caller.device));
   }
-  if (pathname === "/api/computers" && method === "POST") {
-    const body = await readJson<{ name?: string }>(request);
-    const computer = await pupu(env).createComputer(String(body.name ?? ""));
-    return Response.json(computer);
+  if (pathname === "/api/pairing-codes" && method === "POST") {
+    return Response.json(await pupu(env).createPairingCode());
+  }
+  const device = pathname.match(/^\/api\/devices\/([^/]+)\/revoke$/);
+  if (device && method === "POST") {
+    const id = decodeURIComponent(device[1] ?? "");
+    const ok = await pupu(env).revokeDevice(id);
+    if (!ok) return Response.json({ error: "没有这台设备" }, { status: 404 });
+    // 吊销的是自己：浏览器顺手清掉 cookie。
+    const headers: HeadersInit = id === caller.device ? { "Set-Cookie": deviceCookie(url, null) } : {};
+    return Response.json({ ok: true }, { headers });
   }
   const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
   if (policy && method === "POST") {
@@ -367,21 +562,6 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // 第一次访问带上 ?token=，换成 cookie 后跳回首页。
-    if (url.pathname === "/api/login") {
-      const token = url.searchParams.get("token") ?? "";
-      if (!env.ACCESS_TOKEN || token !== env.ACCESS_TOKEN) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: "/",
-          "Set-Cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`
-        }
-      });
-    }
-
     // 桥用设备凭据，不走网页口令。凭据对不对由 Durable Object 看。
     if (url.pathname === BRIDGE_PATH) {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -390,13 +570,29 @@ export default {
       return pupu(env).fetch(request);
     }
 
-    if (!authorized(request, env)) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-
     try {
+      // 这三条在设备鉴权之前：配对时还没有凭据，桥注销用的是桥自己的凭据。
+      if (url.pathname === "/api/pair" && request.method === "POST") {
+        return await handlePair(request, env, url);
+      }
+      // 老的登录链接 `?token=访问口令`。口令不该出现在地址里（会进历史记录和日志），
+      // 不再认，跳到首页的登录页去填。
+      if (url.pathname === "/api/login") {
+        return Response.redirect(new URL("/", url).toString(), 302);
+      }
+      if (url.pathname === "/api/bridge/revoke" && request.method === "POST") {
+        const token = credentialOf(request)?.token;
+        if (!token || !(await pupu(env).revokeComputerByToken(token))) {
+          return Response.json({ error: "凭据无效，或者已经吊销了" }, { status: 401 });
+        }
+        return Response.json({ ok: true });
+      }
+
+      const caller = await authenticate(request, env);
+      if (!caller) return new Response("Unauthorized", { status: 401 });
+
       if (url.pathname.startsWith("/api/")) {
-        return await handleApi(request, env, url);
+        return await handleApi(request, env, url, caller);
       }
       // 只开放这一个 Pupu 实例。
       if (
@@ -405,8 +601,12 @@ export default {
       ) {
         return new Response("Not found", { status: 404 });
       }
+      // 告诉 Pupu 这条连接是哪台设备的，吊销时按设备断开。客户端自己带的这个头不算数。
+      const forwarded = new Request(request);
+      forwarded.headers.delete(DEVICE_HEADER);
+      if (caller.device) forwarded.headers.set(DEVICE_HEADER, caller.device);
       return (
-        (await routeAgentRequest(request, env)) ??
+        (await routeAgentRequest(forwarded, env)) ??
         new Response("Not found", { status: 404 })
       );
     } catch (error) {

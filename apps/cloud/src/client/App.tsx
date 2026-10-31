@@ -6,6 +6,7 @@ import { Approvals } from "./Approvals";
 import { Chat, type ChatContext } from "./Chat";
 import { Home } from "./Home";
 import { MenuIcon, PlusIcon } from "./icons";
+import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { Settings } from "./Settings";
 
@@ -87,7 +88,7 @@ function rememberProject(id: string) {
 
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, loaded, error, refresh } = usePupuState();
+  const { projects, computers, approvals, devices, loaded, error, unauthorized, refresh } = usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -116,6 +117,8 @@ export function App() {
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
+
+  if (unauthorized) return <Login />;
 
   const section = sectionOf(route);
   const goSection = (key: Section) => {
@@ -292,6 +295,12 @@ export function App() {
           await api.setPolicy(id, policy);
           await refresh();
         }}
+        devices={devices}
+        onRevokeDevice={async (id) => {
+          await api.revokeDevice(id);
+          await refresh();
+        }}
+        onCreatePairingCode={api.createPairingCode}
       />
       <NewProject
         isOpen={creating}

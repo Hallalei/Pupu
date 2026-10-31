@@ -1,12 +1,14 @@
 import Foundation
 
-/// 项目、电脑和待批的请示。和网页版一样：收到「变了」的通知或者每 5 秒拉一次 /api/state。
+/// 项目、电脑、待批的请示和配对过的设备。和网页版一样：收到「变了」的通知或者每 5 秒拉一次 /api/state。
+/// 拿到 401 说明这台手机被吊销了，忘掉凭据回连接页。
 final class Store {
     static let shared = Store()
 
     private(set) var projects: [Project] = []
     private(set) var computers: [Computer] = []
     private(set) var approvals: [Approval] = []
+    private(set) var devices: [Device] = []
     private(set) var error: String?
     private(set) var loaded = false
 
@@ -72,7 +74,14 @@ final class Store {
                 projects = state.projects
                 computers = state.computers
                 approvals = state.approvals ?? []
+                devices = state.devices ?? []
                 error = nil
+            } catch let failure as APIError where failure.unauthorized {
+                // 只忘掉发请求时用的那份凭据；这期间重新配对过的话，新的不动。
+                if Connection.shared.endpoint == api.endpoint {
+                    Connection.shared.forget(notice: "这台手机的凭据失效了，可能是在别的设备上被吊销了。重新配对一次。")
+                }
+                return
             } catch {
                 self.error = error.localizedDescription
             }
@@ -85,6 +94,7 @@ final class Store {
         projects = []
         computers = []
         approvals = []
+        devices = []
         error = nil
         loaded = false
         notify()

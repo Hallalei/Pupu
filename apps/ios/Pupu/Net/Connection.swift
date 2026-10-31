@@ -1,7 +1,8 @@
 import Foundation
 import Security
+import UIKit
 
-/// 连哪个 Pupu、用什么口令。口令放钥匙串，地址放 UserDefaults。
+/// 连哪个 Pupu、用哪份设备凭据。凭据放钥匙串，地址放 UserDefaults。
 nonisolated struct Endpoint: Equatable, Sendable {
     let base: URL
     let token: String?
@@ -29,14 +30,25 @@ nonisolated struct Endpoint: Equatable, Sendable {
     }
 }
 
+/// 这台手机连的是哪个 Pupu。凭据是配对时换来的，这台手机独一份，可以单独吊销。
 final class Connection {
     static let shared = Connection()
     static let changed = Notification.Name("PupuConnectionChanged")
 
     private static let serverKey = "pupu.server"
-    private static let tokenAccount = "access-token"
+    private static let deviceKey = "pupu.device"
+    private static let tokenAccount = "device-token"
 
     private(set) var endpoint: Endpoint?
+    /// 这台手机在 Pupu 上的设备 id。注销时用。
+    private(set) var deviceId: String?
+    /// 为什么回到了连接页，比如凭据被吊销了。连接页显示一次就清掉。
+    var notice: String?
+
+    /// 上次连的地址。凭据没了回到连接页时，地址已经填好。
+    var lastServer: URL? {
+        UserDefaults.standard.string(forKey: Self.serverKey).flatMap(URL.init(string:))
+    }
 
     /// 模拟器里默认连本机的开发服务器（`npm run dev`，不要口令）；真机默认连线上。
     static var suggestedServer: String {
@@ -48,23 +60,56 @@ final class Connection {
     }
 
     private init() {
-        if let saved = UserDefaults.standard.string(forKey: Self.serverKey), let url = URL(string: saved) {
-            endpoint = Endpoint(base: url, token: Keychain.read(Self.tokenAccount))
+        if let server = lastServer, let token = Keychain.read(Self.tokenAccount) {
+            endpoint = Endpoint(base: server, token: token)
+            deviceId = UserDefaults.standard.string(forKey: Self.deviceKey)
         }
     }
 
-    func save(_ endpoint: Endpoint) {
-        UserDefaults.standard.set(endpoint.base.absoluteString, forKey: Self.serverKey)
-        Keychain.write(endpoint.token, account: Self.tokenAccount)
-        self.endpoint = endpoint
+    /// 拿配对码（或者访问口令）换这台手机的凭据，存好就算连上了。
+    /// 两样都不带，只有连本机的开发服务器、又没设访问口令时能过。
+    /// 原来连着别的 Pupu，换过去之前先在那边注销。
+    func pair(base: URL, code: String?, accessToken: String?) async throws {
+        let paired = try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name)
+        await revokeSelf()
+        UserDefaults.standard.set(base.absoluteString, forKey: Self.serverKey)
+        UserDefaults.standard.set(paired.id, forKey: Self.deviceKey)
+        Keychain.write(paired.token, account: Self.tokenAccount)
+        endpoint = Endpoint(base: base, token: paired.token)
+        deviceId = paired.id
+        notice = nil
         NotificationCenter.default.post(name: Self.changed, object: nil)
     }
 
-    func forget() {
-        UserDefaults.standard.removeObject(forKey: Self.serverKey)
+    /// 在 Pupu 上注销这台手机，再忘掉凭据。连不上就只忘掉，凭据留在设备列表里，可以从别处吊销。
+    func signOut() async {
+        await revokeSelf()
+        forget()
+    }
+
+    /// 忘掉凭据，回到连接页。地址留着，重新配对时不用再填。
+    func forget(notice: String? = nil) {
+        UserDefaults.standard.removeObject(forKey: Self.deviceKey)
         Keychain.write(nil, account: Self.tokenAccount)
         endpoint = nil
+        deviceId = nil
+        self.notice = notice
         NotificationCenter.default.post(name: Self.changed, object: nil)
+    }
+
+    private func revokeSelf() async {
+        guard let endpoint, let deviceId else { return }
+        try? await API(endpoint: endpoint).revoke(device: deviceId)
+    }
+
+    /// 网页设置里二维码的内容：`pupu://pair?server=https://…&code=XXXX-XXXX`。
+    static func pairLink(_ url: URL) -> (server: URL, code: String)? {
+        guard url.scheme == "pupu", url.host() == "pair",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let server = items.first(where: { $0.name == "server" })?.value.flatMap(normalize),
+              let code = items.first(where: { $0.name == "code" })?.value, !code.isBlank
+        else { return nil }
+        return (server, code)
     }
 
     /// 把用户填的地址整理成只有协议和主机的形式。
