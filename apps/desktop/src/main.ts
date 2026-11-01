@@ -44,6 +44,11 @@ const PRIVACY_PANES: Record<PrivacyPane, string> = {
 // 开发时可以用 PUPU_URL 连本机的 wrangler dev；正式包只连线上，免得被人用环境变量引到别处去配对。
 const origin = originOf((!app.isPackaged && process.env.PUPU_URL) || DEFAULT_URL);
 const dataName = app.isPackaged ? "Pupu" : "Pupu Dev";
+/**
+ * 开发时测试用：PUPU_BACKGROUND=1 时 App 不进程序坞、窗口不抢前台，配合 `open -g` 启动，
+ * 用户手上的活不被打断。界面用 CDP（--remote-debugging-port）读 DOM、截图来看。
+ */
+const background = !app.isPackaged && process.env.PUPU_BACKGROUND === "1";
 
 app.setName("Pupu");
 // 开发时可以用 PUPU_USER_DATA 另开一份数据，同时跑两个互不干扰的 App 来测。
@@ -298,10 +303,21 @@ function guard(contents: WebContents, allowPupu: boolean): void {
   contents.on("will-attach-webview", (event) => event.preventDefault());
 }
 
-/** 有窗口时在程序坞里，没窗口时只留托盘。 */
+/** 有窗口时在程序坞里，没窗口时只留托盘。后台测试时一直不进程序坞。 */
 function updateDock(): void {
   if (process.platform !== "darwin") return;
-  app.setActivationPolicy(mainWindow || pairWindow ? "regular" : "accessory");
+  app.setActivationPolicy(!background && (mainWindow || pairWindow) ? "regular" : "accessory");
+}
+
+/** 显示窗口并拿到前台；后台测试时只显示，不激活 App、不抢焦点。 */
+function reveal(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  if (background) {
+    window.showInactive();
+    return;
+  }
+  window.show();
+  window.focus();
 }
 
 async function openMain(): Promise<void> {
@@ -310,8 +326,7 @@ async function openMain(): Promise<void> {
     return;
   }
   if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
+    reveal(mainWindow);
     return;
   }
   await setCookie(pairing.desktop.token);
@@ -338,7 +353,7 @@ async function openMain(): Promise<void> {
   updateDock();
   guard(window.webContents, true);
   const show = () => {
-    if (!window.isDestroyed() && !window.isVisible()) window.show();
+    if (!window.isDestroyed() && !window.isVisible()) reveal(window);
   };
   window.once("ready-to-show", show);
   // 第一次加载就失败时可能等不到 ready-to-show。
@@ -365,11 +380,10 @@ async function openMain(): Promise<void> {
 
 function openPairWindow(): void {
   if (pairWindow) {
-    pairWindow.show();
-    pairWindow.focus();
+    reveal(pairWindow);
     return;
   }
-  const window = createPairWindow(dist("pair-preload.cjs"), dist("pair.html"), {});
+  const window = createPairWindow(dist("pair-preload.cjs"), dist("pair.html"), {}, reveal);
   pairWindow = window;
   updateDock();
   guard(window.webContents, false);
@@ -495,6 +509,7 @@ function setupMenu(): void {
 }
 
 async function boot(): Promise<void> {
+  if (background) updateDock();
   mainLog = openLog("main.log");
   bridgeLog = openLog("bridge.log");
   log(`Pupu ${app.getVersion()} 启动，连 ${origin}，数据在 ${app.getPath("userData")}`);

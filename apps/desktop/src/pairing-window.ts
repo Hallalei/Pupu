@@ -24,7 +24,12 @@ export type PairingRequest = {
   readonly adopt: boolean;
 };
 
-export function createPairWindow(preload: string, page: string, query: Record<string, string>): BrowserWindow {
+export function createPairWindow(
+  preload: string,
+  page: string,
+  query: Record<string, string>,
+  reveal: (window: BrowserWindow) => void
+): BrowserWindow {
   const window = new BrowserWindow({
     width: 440,
     height: 560,
@@ -43,7 +48,7 @@ export function createPairWindow(preload: string, page: string, query: Record<st
       partition: "pupu-pairing"
     }
   });
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => reveal(window));
   void window.loadFile(page, { query });
   return window;
 }

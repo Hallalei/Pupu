@@ -36,6 +36,21 @@ npm run typecheck
 
 日志在 `~/Library/Logs/Pupu Dev/`：`main.log` 是主进程，`bridge.log` 是桥。
 
+### 后台测试，不抢前台
+
+测试时别把 App 拉到前台、打断手上在用电脑的人。用 `open -g` 在后台启动，再加 `PUPU_BACKGROUND=1`：App 不进程序坞，窗口只用 `showInactive()` 显示，不激活、不抢焦点。界面用 CDP 读 DOM、截窗口的图来看：
+
+```bash
+npm run build
+open -g -n -a "$PWD/node_modules/electron/dist/Electron.app" \
+  --env PUPU_BACKGROUND=1 --env PUPU_URL=http://localhost:5173 \
+  --env PUPU_USER_DATA=/tmp/pupu-test/userdata --env PUPU_DIR=/tmp/pupu-test/pupu \
+  --args "$PWD" --remote-debugging-port=9333
+curl -s http://127.0.0.1:9333/json   # 找到页面，用它的 webSocketDebuggerUrl 发 Runtime.evaluate、Page.captureScreenshot
+```
+
+`PUPU_USER_DATA` 换一份 App 数据（凭据、cookie），`PUPU_DIR` 换一份桥的数据（代替 `~/.pupu`），这样能同时跑两套，也不碰正在用的配对。这几个环境变量只在开发版里认，正式包不认 `PUPU_BACKGROUND`、`PUPU_URL`、`PUPU_USER_DATA`。配对、吊销、桥重启、开关、退出这些主进程的事，尽量用 CDP 调 `window.pupuPairing` / `window.pupuDesktop`，或者对本机 wrangler dev 发请求来验，不开窗口给人看。
+
 ### 系统授权
 
 屏幕录制和辅助功能按「谁把程序拉起来的」算。实测（2026-11-01，`responsibility_get_pid_responsible_for_pid`）：
