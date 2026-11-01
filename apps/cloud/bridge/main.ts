@@ -1,11 +1,10 @@
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import { onActivity, runningCommands, screenActivity, stopAllJobs } from "./actions.ts";
 import { readConfig, writeConfig, configPath, type BridgeConfig } from "./config.ts";
 import { installLaunchAgent, plistPath, uninstallLaunchAgent } from "./launchd.ts";
-import { localPath, readLocal, writeLocal } from "./local.ts";
-import { menubarState, startMenubar, type MenubarAction } from "./menubar.ts";
-import { openBridge, type BridgeConnection } from "./session.ts";
+import { localPath, readLocal } from "./local.ts";
+import { startMenubar } from "./menubar.ts";
+import { runBridge } from "./run.ts";
 
 const scriptPath = fileURLToPath(import.meta.url);
 
@@ -82,103 +81,18 @@ async function pair(flags: Map<string, string>): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  let current: BridgeConnection | null = null;
-  let stop = false;
-  let config = await readConfig();
-  let switches = await readLocal();
-  let connected = false;
-  let cloud: { pending: readonly string[]; screen: boolean } = { pending: [], screen: false };
-  // 没连上时点了收回，连上后补发。
-  let takebackQueued = false;
-
-  const takeback = () => {
-    cloud = { ...cloud, screen: false };
-    takebackQueued = !current?.send({ type: "takeback" });
-  };
-  const onMenu = async (action: MenubarAction) => {
-    if (action.action === "takeback") {
-      takeback();
-    } else if (action.action === "stopJobs") {
-      stopAllJobs();
-    } else if (action.action === "setAllowCommands") {
-      switches = { ...switches, allowCommands: action.value };
-      await writeLocal(switches);
-    } else {
-      switches = { ...switches, allowScreen: action.value };
-      await writeLocal(switches);
-      // 关掉屏幕操作，云端的屏幕授权也一起收回。
-      if (!action.value) takeback();
-    }
-    refresh();
-  };
-  const menubar = startMenubar((action) => {
-    void onMenu(action).catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : error);
-    });
-  });
-  const refresh = () => {
-    menubar.update(
-      menubarState({
-        connected,
-        pending: connected ? cloud.pending : [],
-        screenGrant: connected && cloud.screen,
-        screenActive: screenActivity().active,
-        commands: runningCommands().map((job) => job.command),
-        allowCommands: switches.allowCommands,
-        allowScreen: switches.allowScreen,
-        url: config.url,
-        name: config.name
-      })
-    );
-  };
-  onActivity(refresh);
-  refresh();
-
-  const shutdown = () => {
-    stop = true;
-    stopAllJobs();
-    menubar.stop();
-    current?.close();
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  let failures = 0;
-  while (!stop) {
-    config = await readConfig();
-    const session = openBridge(config, {
-      onReady() {
-        connected = true;
-        if (takebackQueued) takebackQueued = !session.send({ type: "takeback" });
-        refresh();
-      },
-      onStatus(status) {
-        cloud = { pending: status.pending, screen: status.screen };
-        refresh();
-      },
-      onClosed() {
-        connected = false;
-        cloud = { pending: [], screen: false };
-        refresh();
-      }
-    });
-    current = session;
-    const end = await session.done;
-    if (stop) break;
-    if (end === "rejected") {
+  const bridge = runBridge({
+    config: readConfig,
+    async rejected() {
       console.error("凭据被拒绝。重新 pair。30 秒后再看一次配置。");
       await sleep(30_000);
-      continue;
-    }
-    if (end === "busy") {
-      console.error("这台电脑已经有桥连着。15 秒后再试。");
-      await sleep(15_000);
-      continue;
-    }
-    failures = session.welcomed() ? 0 : failures + 1;
-    const delay = Math.min(10_000, 1000 * 2 ** Math.min(failures, 3));
-    console.error("连接断了，正在重连。");
-    await sleep(delay);
-  }
+    },
+    ui: startMenubar,
+    blocked: [configPath()]
+  });
+  process.on("SIGINT", bridge.stop);
+  process.on("SIGTERM", bridge.stop);
+  await bridge.done;
 }
 
 async function install(): Promise<void> {

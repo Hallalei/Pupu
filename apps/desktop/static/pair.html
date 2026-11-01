@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'" />
+    <title>连上 Pupu</title>
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <form class="card" id="form">
+      <h1 id="title">连上 Pupu</h1>
+      <p id="lead">在已经连上的手机或浏览器上打开设置，点「生成配对码」，把码填在这里。</p>
+      <input id="code" type="text" placeholder="比如 7K3M-Q9TX" autocomplete="one-time-code" spellcheck="false" autofocus />
+      <label class="check" id="adopt-row" hidden>
+        <input id="adopt" type="checkbox" checked />
+        <span id="adopt-label"></span>
+      </label>
+      <p class="error" id="error" role="alert" hidden></p>
+      <button id="submit" type="submit">连上</button>
+      <p class="hint" id="hint"></p>
+    </form>
+    <script src="pair.js"></script>
+  </body>
+</html>

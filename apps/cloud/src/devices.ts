@@ -1,11 +1,19 @@
 /**
- * 手机和浏览器的凭据，以及配对码。和电脑表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
+ * 手机、浏览器和电脑 App 窗口的凭据，以及配对码。和电脑表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
  *
  * 已经连上的设备要一个配对码，新设备拿它换自己的凭据。凭据和配对码都只存哈希；
  * 吊销后行还在，同一份凭据不能再用。原来的访问口令只在配对时认，当救急钥匙。
  */
 
-export type DeviceKind = "phone" | "browser";
+/** `desktop` 是电脑 App 的窗口，和那台电脑上的桥是两份凭据。 */
+export type DeviceKind = "phone" | "browser" | "desktop";
+
+/** 配对时没给名字用这个。浏览器的名字由服务端按 User-Agent 起。 */
+export const DEFAULT_DEVICE_NAMES: Readonly<Record<DeviceKind, string>> = {
+  phone: "手机",
+  browser: "浏览器",
+  desktop: "电脑 App"
+};
 
 export type DeviceRow = {
   readonly id: string;
@@ -125,7 +133,7 @@ function toRow(row: Row): DeviceRow {
   return {
     id: String(row.id),
     name: String(row.name),
-    kind: row.kind === "phone" ? "phone" : "browser",
+    kind: row.kind === "phone" || row.kind === "desktop" ? row.kind : "browser",
     tokenHash: String(row.token_hash),
     createdAt: Number(row.created_at),
     lastSeenAt: row.last_seen_at === null ? null : Number(row.last_seen_at),

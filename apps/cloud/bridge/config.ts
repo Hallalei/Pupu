@@ -9,8 +9,9 @@ export type BridgeConfig = {
   readonly name: string;
 };
 
+/** 桥的数据目录，默认 ~/.pupu。测试时用 PUPU_DIR 换一个，同一台电脑上跑两套互不干扰。 */
 export function pupuDir(): string {
-  return path.join(os.homedir(), ".pupu");
+  return process.env.PUPU_DIR || path.join(os.homedir(), ".pupu");
 }
 
 export function configPath(): string {

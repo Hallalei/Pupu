@@ -18,6 +18,9 @@ export type MenubarState = {
   readonly name: string;
 };
 
+/** 没连上的原因：凭据被拒，或者这台电脑已经有别的桥连着。 */
+export type MenubarProblem = "rejected" | "busy";
+
 export type MenubarAction =
   | { readonly action: "takeback" }
   | { readonly action: "stopJobs" }
@@ -125,6 +128,7 @@ export function startMenubar(onAction: (action: MenubarAction) => void): Menubar
 /** 状态、标题和菜单里的几行，按优先级挑：没连上、等批准、操作屏幕、在跑命令、空闲。 */
 export function menubarState(input: {
   readonly connected: boolean;
+  readonly problem?: MenubarProblem | null;
   readonly pending: readonly string[];
   readonly screenGrant: boolean;
   readonly screenActive: boolean;
@@ -139,7 +143,14 @@ export function menubarState(input: {
   let title: string;
   if (!input.connected) {
     status = "offline";
-    title = jobs > 0 ? `没连上 Pupu，还有 ${jobs} 条命令在跑` : "没连上 Pupu";
+    title =
+      input.problem === "rejected"
+        ? "这台电脑的凭据被拒了，要重新配对"
+        : input.problem === "busy"
+          ? "这台电脑已经有别的桥连着"
+          : jobs > 0
+            ? `没连上 Pupu，还有 ${jobs} 条命令在跑`
+            : "没连上 Pupu";
   } else if (input.pending.length > 0) {
     status = "waiting";
     title = `等你在手机上批准（${input.pending.length} 件）`;

@@ -70,7 +70,7 @@ nonisolated struct Approval: Decodable, Sendable, Hashable {
 nonisolated struct Device: Decodable, Sendable, Hashable {
     let id: String
     let name: String
-    /// phone 或 browser。
+    /// phone、browser 或 desktop（电脑 App 的窗口）。
     let kind: String
     let createdAt: Double
     let lastSeenAt: Double?
@@ -78,7 +78,7 @@ nonisolated struct Device: Decodable, Sendable, Hashable {
     let current: Bool
 
     var label: String {
-        let kind = kind == "phone" ? "手机" : "浏览器"
+        let kind = kind == "phone" ? "手机" : kind == "desktop" ? "电脑 App" : "浏览器"
         guard let lastSeenAt else { return kind }
         return "\(kind) · \(Ago.text(lastSeenAt))用过"
     }

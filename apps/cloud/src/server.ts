@@ -23,6 +23,7 @@ import { ComputerStore } from "./bridge/store";
 import { createComputerTools } from "./bridge/tools";
 import {
   browserName,
+  DEFAULT_DEVICE_NAMES,
   DEVICE_HEADER,
   DeviceStore,
   deviceTag,
@@ -291,7 +292,7 @@ export class Pupu extends DurableObject<Env> {
     }
     const token = newDeviceToken();
     const row = this.devices.insert({
-      name: input.name.trim().slice(0, 80) || (input.kind === "phone" ? "手机" : "浏览器"),
+      name: input.name.trim().slice(0, 80) || DEFAULT_DEVICE_NAMES[input.kind],
       kind: input.kind,
       tokenHash: await tokenHash(token)
     });
@@ -419,7 +420,7 @@ function isLocal(request: Request): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
-/** 手机和桥把凭据放在 Authorization 头里，浏览器放在 cookie 里。 */
+/** 手机和桥把凭据放在 Authorization 头里，浏览器放在 cookie 里。电脑 App 的窗口也用 cookie，由 App 自己种。 */
 function credentialOf(request: Request): { token: string; cookie: boolean } | null {
   const header = request.headers.get("Authorization");
   if (header?.startsWith("Bearer ")) {
@@ -474,14 +475,14 @@ async function readJson<T>(request: Request): Promise<T> {
 }
 
 /**
- * 新设备换凭据，不用先登录。手机和电脑在响应里拿到凭据，自己存好；
+ * 新设备换凭据，不用先登录。手机、电脑和电脑 App 在响应里拿到凭据，自己存好；
  * 浏览器拿到的是 cookie。
  */
 async function handlePair(request: Request, env: Env, url: URL): Promise<Response> {
   const body = await readJson<{ kind?: unknown; name?: unknown; code?: unknown; accessToken?: unknown }>(request);
   const kind = body.kind;
-  if (kind !== "phone" && kind !== "browser" && kind !== "computer") {
-    return Response.json({ error: "kind 只能是 phone、browser 或 computer" }, { status: 400 });
+  if (kind !== "phone" && kind !== "browser" && kind !== "desktop" && kind !== "computer") {
+    return Response.json({ error: "kind 只能是 phone、browser、desktop 或 computer" }, { status: 400 });
   }
   const result = await pupu(env).pair({
     kind,

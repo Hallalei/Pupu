@@ -4,6 +4,7 @@ import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
 import { Chat, type ChatContext } from "./Chat";
+import { useDesktopComputer } from "./desktop";
 import { Home } from "./Home";
 import { MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
@@ -92,6 +93,7 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const thisComputer = useDesktopComputer();
 
   const chat: ChatContext = useMemo(
     () => ({
@@ -208,66 +210,98 @@ export function App() {
   }
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh">
       <div className="sky" />
-      <header className="pt-safe relative z-10 grid grid-cols-[3rem_1fr_3rem] items-center px-3 py-2.5">
-        <div>
-          {section === "projects" && (
-            <Button
-              isIconOnly
-              variant="ghost"
-              aria-label="打开项目抽屉"
-              onPress={() => setDrawerOpen(true)}
-              className="glass size-10 rounded-full text-lg text-foreground"
-            >
-              <MenuIcon />
-            </Button>
-          )}
+      {/* 宽屏（电脑 App 的窗口、电脑浏览器）：项目列表常驻左边，抽屉不用了。 */}
+      <aside className="glass relative z-10 my-3 ml-3 hidden w-64 shrink-0 flex-col overflow-hidden rounded-3xl lg:flex">
+        <div className="px-4 pt-4 pb-1 text-sm font-medium text-muted">项目</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          <ProjectList
+            projects={projects}
+            current={project?.id}
+            onOpen={(id) => go({ kind: "project", id })}
+            onCreate={() => setCreating(true)}
+          />
         </div>
-        <Tabs
-          className="justify-self-center"
-          selectedKey={section}
-          onSelectionChange={(key) => goSection(key as Section)}
-        >
-          <Tabs.ListContainer>
-            <Tabs.List aria-label="Pupu" className="glass rounded-full p-1 *:min-w-16 *:rounded-full">
-              {SECTIONS.map(([id, label]) => (
-                <Tabs.Tab
-                  key={id}
-                  id={id}
-                  className="data-[selected=true]:text-background"
-                >
-                  {label}
-                  <Tabs.Indicator className="rounded-full bg-foreground" />
-                </Tabs.Tab>
-              ))}
-            </Tabs.List>
-          </Tabs.ListContainer>
-        </Tabs>
-        <button
-          type="button"
-          aria-label="设置"
-          onClick={() => setSettingsOpen(true)}
-          className="justify-self-end rounded-full"
-        >
-          <Avatar size="sm">
-            <Avatar.Fallback>我</Avatar.Fallback>
-          </Avatar>
-        </button>
-      </header>
-      {error && (
-        <div className="relative z-10 mx-auto rounded-full bg-danger px-3 py-1 text-xs text-danger-foreground">
-          {error}
-        </div>
-      )}
-      <Approvals
-        approvals={approvals}
-        onDecide={async (id, decision) => {
-          await api.decideApproval(id, decision);
-          await refresh();
-        }}
-      />
-      <main className="min-h-0 flex-1">{body}</main>
+        {thisComputer && (
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="flex items-center gap-2 border-t border-foreground/10 px-4 py-3 text-left text-[13px]"
+          >
+            <span
+              className={`size-2 shrink-0 rounded-full ${
+                thisComputer.status === "offline" ? "bg-foreground/25" : "bg-emerald-600"
+              }`}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{thisComputer.name}</span>
+              <span className="block truncate text-muted">{thisComputer.title}</span>
+            </span>
+          </button>
+        )}
+      </aside>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="pt-safe relative z-10 grid grid-cols-[3rem_1fr_3rem] items-center px-3 py-2.5">
+          <div className="lg:invisible">
+            {section === "projects" && (
+              <Button
+                isIconOnly
+                variant="ghost"
+                aria-label="打开项目抽屉"
+                onPress={() => setDrawerOpen(true)}
+                className="glass size-10 rounded-full text-lg text-foreground"
+              >
+                <MenuIcon />
+              </Button>
+            )}
+          </div>
+          <Tabs
+            className="justify-self-center"
+            selectedKey={section}
+            onSelectionChange={(key) => goSection(key as Section)}
+          >
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="Pupu" className="glass rounded-full p-1 *:min-w-16 *:rounded-full">
+                {SECTIONS.map(([id, label]) => (
+                  <Tabs.Tab
+                    key={id}
+                    id={id}
+                    className="data-[selected=true]:text-background"
+                  >
+                    {label}
+                    <Tabs.Indicator className="rounded-full bg-foreground" />
+                  </Tabs.Tab>
+                ))}
+              </Tabs.List>
+            </Tabs.ListContainer>
+          </Tabs>
+          <button
+            type="button"
+            aria-label="设置"
+            onClick={() => setSettingsOpen(true)}
+            className="justify-self-end rounded-full"
+          >
+            <Avatar size="sm">
+              <Avatar.Fallback>我</Avatar.Fallback>
+            </Avatar>
+          </button>
+        </header>
+        {error && (
+          <div className="relative z-10 mx-auto rounded-full bg-danger px-3 py-1 text-xs text-danger-foreground">
+            {error}
+          </div>
+        )}
+        <Approvals
+          approvals={approvals}
+          onDecide={async (id, decision) => {
+            await api.decideApproval(id, decision);
+            await refresh();
+          }}
+        />
+        <main className="min-h-0 flex-1">{body}</main>
+      </div>
 
       <ProjectDrawer
         isOpen={drawerOpen}
@@ -339,32 +373,50 @@ function ProjectDrawer({
               <Drawer.Heading>项目</Drawer.Heading>
             </Drawer.Header>
             <Drawer.Body>
-              <nav className="flex flex-col">
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  className="flex items-center gap-2 rounded-xl px-2 py-3 text-left text-[17px] text-muted hover:bg-default"
-                >
-                  <PlusIcon />
-                  新项目
-                </button>
-                {projects.map((project) => (
-                  <button
-                    key={project.id}
-                    type="button"
-                    onClick={() => onOpen(project.id)}
-                    className={`truncate rounded-xl px-2 py-3 text-left text-[17px] hover:bg-default ${
-                      project.id === current ? "font-semibold text-foreground" : "text-muted"
-                    }`}
-                  >
-                    {project.name}
-                  </button>
-                ))}
-              </nav>
+              <ProjectList projects={projects} current={current} onOpen={onOpen} onCreate={onCreate} />
             </Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
     </Drawer>
+  );
+}
+
+/** 新项目按钮和项目列表。手机上放在抽屉里，宽屏常驻左边。 */
+function ProjectList({
+  projects,
+  current,
+  onOpen,
+  onCreate
+}: {
+  projects: readonly Project[];
+  current: string | undefined;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <nav className="flex flex-col">
+      <button
+        type="button"
+        onClick={onCreate}
+        className="flex items-center gap-2 rounded-xl px-2 py-3 text-left text-[17px] text-muted hover:bg-default lg:py-2 lg:text-[15px]"
+      >
+        <PlusIcon />
+        新项目
+      </button>
+      {projects.map((project) => (
+        <button
+          key={project.id}
+          type="button"
+          onClick={() => onOpen(project.id)}
+          aria-current={project.id === current ? "page" : undefined}
+          className={`truncate rounded-xl px-2 py-3 text-left text-[17px] hover:bg-default lg:py-2 lg:text-[15px] ${
+            project.id === current ? "bg-default font-semibold text-foreground" : "text-muted"
+          }`}
+        >
+          {project.name}
+        </button>
+      ))}
+    </nav>
   );
 }

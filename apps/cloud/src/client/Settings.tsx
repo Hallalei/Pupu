@@ -4,7 +4,9 @@ import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
 import type { DeviceView } from "../devices";
+import { useDesktopComputer } from "./desktop";
 import { ago, computerLabel } from "./Home";
+import { ThisComputer } from "./ThisComputer";
 
 const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
   ["ask_risky", "高风险的才问", "删除、推送、发布这类先问你；屏幕先批一次，15 分钟不用就失效。"],
@@ -41,6 +43,7 @@ export function Settings({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const origin = window.location.origin;
+  const thisComputer = useDesktopComputer();
 
   async function setPolicy(id: string, policy: ComputerPolicy) {
     setPendingId(id);
@@ -76,6 +79,7 @@ export function Settings({
               <Drawer.Heading>设置</Drawer.Heading>
             </Drawer.Header>
             <Drawer.Body className="flex flex-col gap-6">
+              {thisComputer && <ThisComputer computer={thisComputer} />}
               <section className="flex flex-col gap-2">
                 <h3 className="text-sm font-medium text-muted">电脑</h3>
                 {computers.length === 0 ? (
@@ -94,7 +98,12 @@ export function Settings({
                           aria-hidden="true"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">{computer.name}</div>
+                          <div className="truncate font-medium">
+                            {computer.name}
+                            {computer.id === thisComputer?.computerId && (
+                              <span className="font-normal text-muted"> · 这台电脑</span>
+                            )}
+                          </div>
                           <div className="text-sm text-muted">
                             {computerLabel(computer)}
                             {computer.screen ? " · 屏幕已授权" : ""}
@@ -185,9 +194,9 @@ export function Settings({
               </section>
 
               <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium text-muted">手机和浏览器</h3>
+                <h3 className="text-sm font-medium text-muted">手机、浏览器和电脑 App</h3>
                 {devices.length === 0 ? (
-                  <p className="text-sm leading-6 text-muted">还没有配对的手机或浏览器。</p>
+                  <p className="text-sm leading-6 text-muted">还没有配对的手机、浏览器或电脑 App。</p>
                 ) : (
                   devices.map((device) => (
                     <div
@@ -198,7 +207,11 @@ export function Settings({
                         <div className="min-w-0 flex-1">
                           <div className="truncate font-medium">
                             {device.name}
-                            {device.current && <span className="font-normal text-muted"> · 这个浏览器</span>}
+                            {device.current && (
+                              <span className="font-normal text-muted">
+                                {device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}
+                              </span>
+                            )}
                           </div>
                           <div className="text-sm text-muted">{deviceLabel(device)}</div>
                         </div>
@@ -219,7 +232,9 @@ export function Settings({
                         <div className="flex flex-col gap-2">
                           <p className="text-sm leading-6 text-muted">
                             {device.current
-                              ? "吊销后这个浏览器马上退出，要再用就重新配对。"
+                              ? device.kind === "desktop"
+                                ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
+                                : "吊销后这个浏览器马上退出，要再用就重新配对。"
                               : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`}
                           </p>
                           <div className="flex justify-end gap-2">
@@ -255,8 +270,10 @@ export function Settings({
   );
 }
 
+const DEVICE_KINDS: Record<DeviceView["kind"], string> = { phone: "手机", browser: "浏览器", desktop: "电脑 App" };
+
 function deviceLabel(device: DeviceView): string {
-  const kind = device.kind === "phone" ? "手机" : "浏览器";
+  const kind = DEVICE_KINDS[device.kind];
   return device.lastSeenAt ? `${kind} · ${ago(device.lastSeenAt)}用过` : kind;
 }
 
@@ -334,7 +351,7 @@ function PairNew({
           <ul className="flex flex-col gap-1.5 text-sm leading-6">
             <li>手机：用相机扫二维码，在 Pupu App 里打开；或者在 App 的连接页填这个码。</li>
             <li>浏览器：打开 {origin}，填这个码。</li>
-            <li>电脑：在 apps/cloud 目录里运行</li>
+            <li>电脑：打开 Pupu 电脑 App，填这个码。还没装 App 的，在 apps/cloud 目录里运行</li>
           </ul>
           <pre className="overflow-x-auto rounded-xl bg-background px-3 py-2 text-xs leading-5">
             {`npm run bridge -- pair --url ${origin} --code ${pairing.code}\nnpm run bridge -- install`}

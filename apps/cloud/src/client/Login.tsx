@@ -1,12 +1,14 @@
 import { Button, Input } from "@heroui/react";
 import { useState } from "react";
 import { api } from "./api";
+import { desktop } from "./desktop";
 
 /**
  * 这个浏览器还没有凭据，或者被吊销了：填配对码连上。配对码在已经连上的手机或浏览器的设置里生成。
  * 手边一台连上的都没有时，用访问口令。
  */
 export function Login() {
+  const app = desktop();
   const [useToken, setUseToken] = useState(false);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +36,24 @@ export function Login() {
     setUseToken(!useToken);
     setValue("");
     setError(null);
+  }
+
+  // 电脑 App 的窗口不在网页上配对：凭据由 App 管，配对走 App 自己的窗口。
+  if (app) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center px-4">
+        <div className="sky" />
+        <div className="glass-strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-[28px] p-6">
+          <div className="flex flex-col gap-1.5">
+            <h1 className="text-xl font-semibold">这个窗口没连上 Pupu</h1>
+            <p className="text-[15px] leading-6 text-muted">它的授权失效了，多半是在别的设备上吊销了。重新配对一次就好。</p>
+          </div>
+          <Button className="w-full" onPress={() => void app.repair()}>
+            重新配对
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (

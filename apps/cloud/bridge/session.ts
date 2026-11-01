@@ -33,8 +33,12 @@ export type BridgeHooks = {
   onClosed?(): void;
 };
 
-/** 连上云端，直到这条连接关掉。 */
-export function openBridge(config: BridgeConfig, hooks: BridgeHooks = {}): BridgeConnection {
+/** 连上云端，直到这条连接关掉。`blocked` 是文件工具不让碰的路径，默认挡住桥的凭据。 */
+export function openBridge(
+  config: BridgeConfig,
+  hooks: BridgeHooks = {},
+  blocked: readonly string[] = [configPath()]
+): BridgeConnection {
   let welcomed = false;
   let socket: WebSocket | null = null;
   const done = new Promise<ConnectEnd>((resolve) => {
@@ -53,7 +57,7 @@ export function openBridge(config: BridgeConfig, hooks: BridgeHooks = {}): Bridg
       root,
       terminals: terminalsDir(),
       requests: requestsDir(),
-      blocked: [configPath()],
+      blocked,
       send(frame) {
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
       }

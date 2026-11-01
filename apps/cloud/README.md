@@ -12,7 +12,7 @@ Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable�
 | `src/prompt.ts` | 聊天和项目会话的系统提示词。聊天里会附上项目的实时状态 |
 | `src/tools.ts` | Pupu 能用的项目工具：`list_projects`、`create_project`（用户在聊天里答应后才建）、`hand_off_to_project`（把事交给已有项目去做） |
 | `src/bridge/` | 电脑桥的协议、在线状态、设备凭据、给模型的工具，以及风险判定（`policy.ts`）和审批（`gate.ts`） |
-| `bridge/` | 跑在电脑上的桥。常驻进程，由 launchd 拉起；菜单栏图标（`menubar.swift`）是它的子进程 |
+| `bridge/` | 跑在电脑上的桥。电脑 App（`apps/desktop/`）托管它；也能单独跑，由 launchd 拉起，菜单栏图标（`menubar.swift`）是它的子进程。常驻那一圈在 `run.ts`，两边共用 |
 | `src/messages.ts` | 两种特殊的用户消息：聊天转交给项目的消息、引用回复 |
 | `src/projects.ts` | 项目等元数据的存储，放在 DO 的 SQLite 里，表名前缀 `pupu_` |
 | `src/sockets.ts` `protocol.ts` `view.ts` `transcript.ts` | 把 pi 会话放到 WebSocket 上，并把事件折叠成界面状态。改编自 Cloudflare 官方的 pi 示例 |
