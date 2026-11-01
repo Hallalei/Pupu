@@ -4,8 +4,6 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Workers AI，本地开发也走远程，会产生 Workers AI 用量。
-  "ai": { "binding": "AI", "remote": true },
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/agents/*"]

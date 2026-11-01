@@ -1,4 +1,6 @@
-/** 不在 wrangler.jsonc 里的绑定：部署时用 `wrangler secret put ACCESS_TOKEN` 设置。 */
+/** 不在 wrangler.jsonc 里的绑定：部署时用 `wrangler secret put <名字>` 设置，本地开发写进 `.dev.vars`。 */
 interface Env {
   readonly ACCESS_TOKEN?: string;
+  /** DeepSeek 开放平台的 API key，模型调用全靠它。 */
+  readonly DEEPSEEK_API_KEY?: string;
 }

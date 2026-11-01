@@ -1,10 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { createModels } from "@earendil-works/pi-ai/models";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { createRegistry, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
-import { createAI } from "agents/models/pi-ai";
 import { WebSockets } from "agents/websockets";
 import { ApprovalStore, type ApprovalView } from "./bridge/approvals";
 import { ComputerGate } from "./bridge/gate";
@@ -46,10 +46,12 @@ import { PiSessionSockets } from "./sockets";
 import { createPupuTools } from "./tools";
 
 /**
- * Workers AI 上的模型，不需要额外的 API key。2026-10-17 实测：免费套餐可用、支持工具调用，
- * 响应最快（简单问答约 1.5 秒；Qwen 3.8 约 6 秒，GLM-4.7-Flash 超时）。kimi-k2.7-code 要付费套餐。
+ * DeepSeek 官方接口的 V4.1 Flash：支持工具调用，也能看截图。费用从 DeepSeek 开放平台的充值余额里扣，
+ * key 用 `wrangler secret put DEEPSEEK_API_KEY` 设置。之前用的 Workers AI gpt-oss-120b 只认文字。
  */
-const MODEL_ID = "@cf/openai/gpt-oss-120b";
+const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
+/** 记在 meta 里，用来判断已有会话要不要切模型。 */
+const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
 export const PUPU_INSTANCE = "me";
@@ -73,7 +75,6 @@ export type PairResult =
  * 聊天（主对话）是 pi 的根会话，每个项目各开一个 pi 会话，共用这个对象的 SQLite。
  */
 export class Pupu extends DurableObject<Env> {
-  readonly ai = createAI({ binding: this.env.AI });
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
@@ -122,8 +123,14 @@ export class Pupu extends DurableObject<Env> {
           })
         ]
       });
-      const models = createModels();
-      models.setProvider(this.ai.provider);
+      // Workers 里没有本机环境变量，key 只从 secret 里拿。
+      const models = createModels({
+        authContext: {
+          env: async (name) => (name === "DEEPSEEK_API_KEY" ? this.env.DEEPSEEK_API_KEY : undefined),
+          fileExists: async () => false
+        }
+      });
+      models.setProvider(deepseekProvider());
       return Harness.open(
         storage,
         {
@@ -138,7 +145,7 @@ export class Pupu extends DurableObject<Env> {
         context
       );
     },
-    defaults: { model: this.ai(MODEL_ID), thinkingLevel: "low" }
+    defaults: { model: MODEL, thinkingLevel: "low" }
   });
   readonly sockets = new PiSessionSockets(
     this.harness,
@@ -175,13 +182,13 @@ export class Pupu extends DurableObject<Env> {
     await this.sockets.reattach();
   }
 
-  /** `defaults` 只管新会话；换了 MODEL_ID 之后，把已有会话也切过去。 */
+  /** `defaults` 只管新会话；换了 MODEL 之后，把已有会话也切过去。 */
   async #syncModel(): Promise<void> {
-    if (this.store.meta("model") === MODEL_ID) return;
+    if (this.store.meta("model") === MODEL_KEY) return;
     for (const { id } of await this.harness.sessions.list()) {
-      await this.harness.session(id).setModel(this.ai(MODEL_ID));
+      await this.harness.session(id).setModel(MODEL);
     }
-    this.store.setMeta("model", MODEL_ID);
+    this.store.setMeta("model", MODEL_KEY);
   }
 
   #changed(): void {

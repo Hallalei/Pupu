@@ -23,7 +23,7 @@ Pupu 的云端部分：一个 Cloudflare Durable Object，里面跑 pi-durable�
 - 每个项目通过 `harness.sessions.create()` 单独开一个 pi 会话；
 - 这些会话都在同一个 DO 里。
 
-模型用的是 Workers AI 的 `@cf/openai/gpt-oss-120b`。选它的原因：Workers 免费套餐就能用、支持工具调用，而且实测响应最快。要换模型，改 `src/server.ts` 里的 `MODEL_ID`，已有会话会在 DO 重启时自动切过去。
+模型用的是 DeepSeek 官方接口的 `deepseek-flash`（V4.1 Flash）：支持工具调用，也能看电脑桥的截图。费用从 DeepSeek 开放平台的充值余额里扣。要换模型，改 `src/server.ts` 里的 `MODEL`，已有会话会在 DO 重启时自动切过去。
 
 ## 本地运行
 
@@ -34,7 +34,7 @@ npm run dev
 
 然后打开 http://localhost:5173 。
 
-需要先执行 `npx wrangler login`：Workers AI 走的是远程调用，会产生用量。
+需要先在 `apps/cloud/.dev.vars` 里写一行 `DEEPSEEK_API_KEY=<你的 key>`，本地发消息也会从 DeepSeek 余额里扣钱。这个文件不进 git。
 
 本地数据存在 `.wrangler/state/`，删掉这个目录就能从头开始。
 
@@ -75,10 +75,11 @@ npm run bridge -- start
 
 ```bash
 npx wrangler secret put ACCESS_TOKEN
+npx wrangler secret put DEEPSEEK_API_KEY
 npm run deploy
 ```
 
-第一步设一个访问口令，不设的话谁都连不上（本机开发除外）。
+第一步设一个访问口令，不设的话谁都连不上（本机开发除外）。第二步填 DeepSeek 开放平台的 API key，没有它 Pupu 回不了话。
 
 部署后第一次打开首页是登录页：点「用访问口令」填一次，这个浏览器就换到了自己的设备凭据（HttpOnly cookie），之后不用再填。别的手机、浏览器和电脑都用配对码连：在已经连上的设备上打开设置 →「连接新设备」，手机用相机扫二维码，或者在 App 的连接页填码。设置里列着所有连上的设备，每台都能单独吊销，吊销后它开着的连接马上断开。
 
