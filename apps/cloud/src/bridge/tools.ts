@@ -26,7 +26,7 @@ const computerId = Type.Optional(
 const sensitive = Type.Optional(
   Type.Boolean({
     description:
-      "这一步会发消息、付款、提交表单或删除东西时设为 true。会先请用户在手机上批准这一步"
+      "这一步会发消息、付款、提交表单或删除东西时设为 true。会先请用户在手机或网页上批准这一步"
   })
 );
 

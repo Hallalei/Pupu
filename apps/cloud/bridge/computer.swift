@@ -31,9 +31,31 @@ func trusted() -> Bool {
     AXIsProcessTrusted()
 }
 
+/// 系统设置里这两项权限记在谁名下：把这个助手拉起来的那个程序。电脑 App 开发版是 Electron，
+/// launchd 里的桥是 node，从终端起的桥是那个终端。用的是私有接口，找不到就笼统地说。
+func grantee() -> String {
+    typealias Responsible = @convention(c) (pid_t) -> pid_t
+    let fallback = "运行 Pupu 桥的程序"
+    // -2 是 RTLD_DEFAULT。
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else {
+        return fallback
+    }
+    let pid = unsafeBitCast(symbol, to: Responsible.self)(getpid())
+    var buffer = [CChar](repeating: 0, count: 4096)
+    guard pid > 0, proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return fallback }
+    let path = String(cString: buffer)
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    if let index = parts.firstIndex(where: { $0.hasSuffix(".app") }) {
+        let bundle = Bundle(path: parts[...index].joined(separator: "/"))
+        let name = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") ?? bundle?.object(forInfoDictionaryKey: "CFBundleName")
+        return (name as? String) ?? String(parts[index].dropLast(4))
+    }
+    return "\((path as NSString).lastPathComponent)（\(path)）"
+}
+
 func requireAccessibility() {
     if !trusted() {
-        fail("没有辅助功能权限。到系统设置 → 隐私与安全性 → 辅助功能，允许 pupu-computer-use，然后重开桥。")
+        fail("没有辅助功能权限。到系统设置 → 隐私与安全性 → 辅助功能，允许「\(grantee())」。允许了还不行，把它退出再打开。")
     }
 }
 
@@ -67,7 +89,7 @@ func screenshot(to path: String) async {
         config.showsCursor = true
         image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     } catch {
-        fail("没有屏幕录制权限，或者截不到主屏幕。到系统设置 → 隐私与安全性 → 屏幕录制，允许 pupu-computer-use，然后重开桥。")
+        fail("没有屏幕录制权限，或者截不到主屏幕。到系统设置 → 隐私与安全性 → 屏幕录制，允许「\(grantee())」。允许了还不行，把它退出再打开。")
     }
     let screenW = image.width
     let screenH = image.height
@@ -327,7 +349,7 @@ func pressKey(_ spec: String) {
 guard let command = args.first else { fail("缺少动作。") }
 switch command {
 case "permissions":
-    succeed(["accessibility": trusted(), "screen": CGPreflightScreenCaptureAccess()])
+    succeed(["accessibility": trusted(), "screen": CGPreflightScreenCaptureAccess(), "grantee": grantee()])
 case "screenshot":
     guard args.count >= 2 else { fail("缺少截图路径。") }
     let output = args[1]

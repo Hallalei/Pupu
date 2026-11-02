@@ -153,7 +153,7 @@ export function menubarState(input: {
             : "没连上 Pupu";
   } else if (input.pending.length > 0) {
     status = "waiting";
-    title = `等你在手机上批准（${input.pending.length} 件）`;
+    title = `等你在手机或网页上批准（${input.pending.length} 件）`;
   } else if (input.screenActive) {
     status = "screen";
     title = "Pupu 正在操作屏幕";

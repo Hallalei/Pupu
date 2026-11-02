@@ -44,11 +44,12 @@ export async function performComputer(
     const result = await run(bin, ["permissions"]);
     const access = result.accessibility === true ? "辅助功能已允许" : "辅助功能还没允许";
     const screen = result.screen === true ? "屏幕录制已允许" : "屏幕录制还没允许";
+    const grantee = typeof result.grantee === "string" ? result.grantee : "运行 Pupu 桥的程序";
     host.send({
       type: "data",
       requestId,
       bytes: Buffer.byteLength(`${access}。${screen}。`),
-      text: `pupu-computer-use：${access}。${screen}。没允许的话，到系统设置 → 隐私与安全性里打开，然后重开桥。`
+      text: `权限记在「${grantee}」名下：${access}。${screen}。没允许的话，到系统设置 → 隐私与安全性里给它打开，开了还不行就把它退出再打开。`
     });
     return;
   }

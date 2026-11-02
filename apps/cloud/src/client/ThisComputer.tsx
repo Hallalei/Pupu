@@ -3,7 +3,7 @@ import { useState } from "react";
 import { desktop, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
 
 const SWITCHES: readonly (readonly [DesktopSwitch, string, string])[] = [
-  ["allowCommands", "允许跑命令和写文件", "关掉后，手机上批准了也不做。"],
+  ["allowCommands", "允许跑命令和写文件", "关掉后，批准了也不做。"],
   ["allowScreen", "允许操作屏幕", "关掉时顺手收回屏幕授权。"]
 ];
 

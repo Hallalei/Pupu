@@ -59,11 +59,11 @@ export function localRefusal(
     if (!switches.allowScreen) {
       return "这台电脑上关掉了「允许操作屏幕」，没有做。要用的话，在这台电脑菜单栏的 Pupu 图标里打开。";
     }
-    if (!approved) return "操作屏幕要先在手机上批准，这台电脑没收到批准，没有做。";
+    if (!approved) return "操作屏幕要先在手机或网页上批准，这台电脑没收到批准，没有做。";
   }
   const risk = classifyAction(action, home);
   if (risk.level === "high" && !approved) {
-    return `这一步风险高（${risk.reason}），要先在手机上批准。这台电脑没收到批准，没有做。`;
+    return `这一步风险高（${risk.reason}），要先在手机或网页上批准。这台电脑没收到批准，没有做。`;
   }
   return null;
 }

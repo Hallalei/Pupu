@@ -150,7 +150,7 @@ final class SettingsViewController: UICollectionViewController {
             cell.accessories = selected ? [.checkmark()] : []
         case .abilities:
             content.text = nil
-            content.secondaryText = "跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕时，系统会要求允许 pupu-computer-use 的屏幕录制和辅助功能。"
+            content.secondaryText = "跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。"
         case .device(let device):
             content.text = device.current ? "\(device.name) · 这台手机" : device.name
             content.secondaryText = device.label
