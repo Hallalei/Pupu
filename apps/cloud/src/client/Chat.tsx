@@ -1,4 +1,4 @@
-import { Button, Dropdown, Label } from "@heroui/react";
+import { Button, Dropdown, Label, Spinner } from "@heroui/react";
 import {
   useEffect,
   useLayoutEffect,
@@ -9,24 +9,36 @@ import {
   type ReactNode
 } from "react";
 import { Streamdown } from "streamdown";
-import { parseHandoff, parseQuote, quotedMessage } from "../messages";
+import type { ApprovalView } from "../bridge/approvals";
+import type { ComputerView } from "../bridge/protocol";
+import { quotedMessage } from "../messages";
 import type { Project } from "../projects";
-import type { TranscriptMessage, TranscriptPart } from "../protocol";
+import { buildRows, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
+import { Composer } from "./Composer";
 import {
-  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CloseIcon,
   CopyIcon,
+  CursorIcon,
+  FileIcon,
   FolderIcon,
+  KeyboardIcon,
+  PencilIcon,
   ReplyIcon,
-  StopIcon
+  ScreenshotIcon,
+  StepsIcon,
+  TerminalIcon
 } from "./icons";
 import { usePiSession } from "./use-pi-session";
 
-/** 对话里要用到的项目数据和动作。 */
+/** 对话里要用到的项目、电脑和请示，以及点项目标签的动作。 */
 export type ChatContext = {
   readonly projects: ReadonlyMap<string, Project>;
   /** 只有聊天里才在回复上方画项目标签；项目会话里不建也不转交项目。 */
   readonly projectTags: boolean;
+  readonly computers: readonly ComputerView[];
+  readonly approvals: readonly ApprovalView[];
   readonly onOpenProject: (projectId: string) => void;
   readonly onProjectsChanged: () => void;
 };
@@ -39,11 +51,13 @@ type ChatProps = {
   readonly empty: ReactNode;
   readonly placeholder: string;
   readonly starters?: readonly string[];
+  /** 在主页输入栏里发的话，连上以后替用户发出去。 */
+  readonly pending?: string | null;
+  readonly onPendingSent?: () => void;
 };
 
-const coarsePointer =
-  typeof window !== "undefined" &&
-  window.matchMedia("(pointer: coarse)").matches;
+/** 离底部这么近就算在底部，新内容来了跟着滚。 */
+const STICK_DISTANCE = 80;
 
 export function Chat({
   session,
@@ -51,35 +65,40 @@ export function Chat({
   top,
   empty,
   placeholder,
-  starters = []
+  starters = [],
+  pending = null,
+  onPendingSent
 }: ChatProps) {
   const pi = usePiSession(session, context.onProjectsChanged);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
+  /** 用户往上翻了：右下角出现「回到底部」。 */
+  const [away, setAway] = useState(false);
   /** 长按或右键的那条消息的文字；菜单挂在 menuAnchor 上。 */
   const [menuText, setMenuText] = useState<string | null>(null);
   const menuAnchor = useRef<HTMLElement | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
+  const sentPending = useRef<string | null>(null);
 
-  const messages = pi.messages.filter(isVisible);
-  const live = pi.live && isVisible(pi.live) ? pi.live : null;
-  const thinking = pi.running && !hasText(live);
+  const rows = buildRows(pi, { ...context, toggled });
 
   // 在底部时跟着新内容往下滚；用户往上翻了就不打扰。
   useLayoutEffect(() => {
     const node = scroller.current;
     if (node && stick.current) node.scrollTop = node.scrollHeight;
-  }, [messages.length, live, thinking]);
+  }, [rows.length, pi.live, pi.running]);
 
   useEffect(() => {
-    const node = input.current;
-    if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
-    node.style.overflowY = node.scrollHeight > 160 ? "auto" : "hidden";
-  }, [draft]);
+    if (!pending || pi.status !== "open" || sentPending.current === pending) return;
+    if (pi.submit(pending)) {
+      sentPending.current = pending;
+      stick.current = true;
+      onPendingSent?.();
+    }
+  }, [pending, pi, onPendingSent]);
 
   function send(text = draft) {
     const value = text.trim();
@@ -90,6 +109,22 @@ export function Chat({
       setQuote(null);
       stick.current = true;
     }
+  }
+
+  function toggle(id: string) {
+    setToggled((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  function toBottom() {
+    const node = scroller.current;
+    if (!node) return;
+    stick.current = true;
+    setAway(false);
+    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
   }
 
   function openMenu(anchor: HTMLElement, text: string) {
@@ -107,68 +142,61 @@ export function Chat({
     setMenuText(null);
   }
 
-  const isEmpty = messages.length === 0 && !live && !pi.running;
+  const isEmpty = rows.length === 0 && !pi.running;
   const canSend = Boolean(draft.trim()) && pi.status === "open";
 
   return (
     <div className="relative flex h-full flex-col">
-      {top && (
-        <div className="relative z-10 flex shrink-0 justify-center px-4 pb-2">{top}</div>
-      )}
-      <div
-        ref={scroller}
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          stick.current =
-            node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-        }}
-        className="min-h-0 flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 px-4 pt-2 pb-4">
-          {isEmpty ? (
-            <div className="my-auto flex flex-col items-center gap-5 py-10">
-              {empty}
-              {starters.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {starters.map((starter) => (
-                    <button
-                      key={starter}
-                      type="button"
-                      onClick={() => send(starter)}
-                      className="glass rounded-full px-3.5 py-1.5 text-sm"
-                    >
-                      {starter}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : null}
-          {messages.map((message) => (
-            <Message
-              key={message.id}
-              message={message}
-              context={context}
-              onMenu={openMenu}
-            />
-          ))}
-          {live && <Message message={live} context={context} onMenu={openMenu} />}
-          {thinking && (
-            <div className="flex items-center gap-2 px-1 text-sm text-(--on-sky)">
-              <span className="inline-flex gap-1">
-                <Dot delay="0ms" />
-                <Dot delay="150ms" />
-                <Dot delay="300ms" />
-              </span>
-              {pi.retry ? "模型忙，正在重试…" : "Pupu 在想…"}
-            </div>
-          )}
-          {pi.error && (
-            <div className="glass-strong rounded-2xl px-4 py-2.5 text-sm text-danger">
-              出错了：{pi.error}
-            </div>
-          )}
+      {top && <div className="relative z-10 flex shrink-0 justify-center px-4 pb-3">{top}</div>}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scroller}
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < STICK_DISTANCE;
+            if (away === stick.current) setAway(!stick.current);
+          }}
+          className="h-full overflow-y-auto"
+        >
+          <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pt-2 pb-4 lg:px-6">
+            {isEmpty && (
+              <div className="my-auto flex flex-col items-center gap-5 py-8">
+                {empty}
+                {starters.length > 0 && (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {starters.map((starter) => (
+                      <button
+                        key={starter}
+                        type="button"
+                        onClick={() => send(starter)}
+                        className="soft rounded-full px-3.5 py-2 text-subheadline"
+                      >
+                        {starter}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {rows.map((row) => (
+              <div key={row.id} className={row.gap === 12 ? "mt-3" : row.gap === 8 ? "mt-2" : ""}>
+                <Row row={row} context={context} onMenu={openMenu} onToggle={toggle} />
+              </div>
+            ))}
+          </div>
         </div>
+        {away && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 mx-auto flex max-w-2xl justify-end px-4 lg:px-6">
+            <button
+              type="button"
+              aria-label="回到底部"
+              onClick={toBottom}
+              className="glass pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
+            >
+              <ChevronDownIcon />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 引用回复时把对话虚化，只留被引用的那条在输入框上面。 */}
@@ -182,86 +210,44 @@ export function Chat({
       )}
 
       <div className="pb-safe relative z-30 shrink-0">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
           {quote !== null && (
             <div className="flex items-start gap-2">
-              <div className="glass-strong bubble max-w-[85%] rounded-3xl px-4 py-2.5 text-[15px] leading-6">
+              <div className="strong bubble max-w-[85%] rounded-bubble px-4 py-2.5 text-message">
                 <div className="line-clamp-4 whitespace-pre-wrap">{quote}</div>
               </div>
               <Button
                 isIconOnly
-                size="sm"
                 variant="ghost"
                 aria-label="取消回复"
                 onPress={() => setQuote(null)}
-                className="glass rounded-full"
+                className="glass size-9 min-w-9 rounded-full"
               >
                 <CloseIcon />
               </Button>
             </div>
           )}
           {pi.status !== "open" && (
-            <div className="text-center text-xs text-(--on-sky)">
+            <div className="text-center text-footnote text-ink-sky-muted">
               {pi.status === "connecting" ? "正在连接 Pupu…" : "连接断开，正在重连…"}
             </div>
           )}
           {pi.queued > 0 && (
-            <div className="text-center text-xs text-(--on-sky)">
+            <div className="text-center text-footnote text-ink-sky-muted">
               还有 {pi.queued} 条消息排着队，Pupu 说完这轮就处理
             </div>
           )}
-          <form
-            className="glass-strong bubble flex items-end gap-2 rounded-[26px] py-1.5 pr-1.5 pl-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              send();
-            }}
-          >
-            <textarea
-              ref={input}
-              value={draft}
-              rows={1}
-              placeholder={quote !== null ? "回复消息" : placeholder}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && quote !== null) {
-                  setQuote(null);
-                  return;
-                }
-                // 手机上回车换行、点按钮发送；电脑上回车发送，Shift+回车换行。输入法选词时不发送。
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !coarsePointer &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  event.preventDefault();
-                  send();
-                }
-              }}
-              className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-6 text-foreground outline-none placeholder:text-muted"
-            />
-            {pi.running && !draft.trim() ? (
-              <Button
-                isIconOnly
-                aria-label="停止"
-                onPress={() => pi.abort()}
-                className="size-9 min-w-9 rounded-full bg-foreground text-background"
-              >
-                <StopIcon />
-              </Button>
-            ) : (
-              <Button
-                isIconOnly
-                type="submit"
-                aria-label={pi.running ? "排队发送" : "发送"}
-                isDisabled={!canSend}
-                className="size-9 min-w-9 rounded-full bg-foreground text-base text-background"
-              >
-                <ArrowUpIcon />
-              </Button>
-            )}
-          </form>
+          <Composer
+            value={draft}
+            onChange={setDraft}
+            onSend={() => send()}
+            placeholder={quote !== null ? "回复消息" : placeholder}
+            canSend={canSend}
+            sendLabel={pi.running ? "排队发送" : "发送"}
+            onStop={pi.running && !draft.trim() ? () => pi.abort() : undefined}
+            onEscape={quote !== null ? () => setQuote(null) : undefined}
+            inputRef={input}
+          />
         </div>
       </div>
 
@@ -272,10 +258,7 @@ export function Chat({
         }}
       >
         <Dropdown.Popover triggerRef={menuAnchor} placement="bottom">
-          <Dropdown.Menu
-            aria-label="消息操作"
-            onAction={(key) => onMenuAction(String(key))}
-          >
+          <Dropdown.Menu aria-label="消息操作" onAction={(key) => onMenuAction(String(key))}>
             <Dropdown.Item id="copy" textValue="复制">
               <CopyIcon />
               <Label>复制</Label>
@@ -289,41 +272,6 @@ export function Chat({
       </Dropdown>
     </div>
   );
-}
-
-function Dot({ delay }: { delay: string }) {
-  return (
-    <span
-      className="size-1.5 animate-pulse rounded-full bg-current"
-      style={{ animationDelay: delay }}
-    />
-  );
-}
-
-function hasText(message: TranscriptMessage | null): boolean {
-  return Boolean(
-    message?.parts.some((part) => part.type === "text" && part.text.trim())
-  );
-}
-
-function textOf(message: TranscriptMessage): string {
-  return message.parts
-    .map((part) => (part.type === "text" ? part.text : ""))
-    .join("");
-}
-
-/** 工具结果和系统记录不单独显示：项目标签已经在工具调用那里画出来了。 */
-function isVisible(message: TranscriptMessage): boolean {
-  if (message.role === "tool") return false;
-  if (message.role === "notice") return message.parts.length > 0;
-  // 思考过程不显示，跟聊天软件一样只看回复；只有思考的那条整条不出现。
-  if (message.role === "assistant") {
-    return (
-      Boolean(message.error) ||
-      message.parts.some((part) => part.type === "tool-call" || (part.type === "text" && part.text.trim()))
-    );
-  }
-  return true;
 }
 
 /** 手机上长按、电脑上右键，都打开消息菜单。 */
@@ -368,55 +316,78 @@ function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
 
 type MenuOpener = (anchor: HTMLElement, text: string) => void;
 
-function Message({
-  message,
+function Row({
+  row,
   context,
-  onMenu
+  onMenu,
+  onToggle
 }: {
-  message: TranscriptMessage;
+  row: ChatRow;
   context: ChatContext;
   onMenu: MenuOpener;
+  onToggle: (id: string) => void;
 }) {
-  if (message.role === "user") {
-    const text = textOf(message);
-    const task = parseHandoff(text);
-    if (task !== null) return <Handoff task={task} />;
-    return <UserMessage text={text} onMenu={onMenu} />;
-  }
-  if (message.role === "notice") {
-    return (
-      <div className="text-center text-xs text-(--on-sky)">
-        {message.parts.map((part) => (part.type === "text" ? part.text : "")).join(" ")}
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col items-start gap-2">
-      {message.parts.map((part, index) => (
-        <Part key={index} part={part} context={context} onMenu={onMenu} />
-      ))}
-      {message.error && (
-        <div className="glass-strong rounded-2xl px-4 py-2 text-sm text-danger">
-          模型出错：{message.error}
+  switch (row.kind) {
+    case "user":
+      return <UserMessage body={row.body} quote={row.quote} onMenu={onMenu} />;
+    case "assistant":
+      return <AssistantText text={row.text} onMenu={onMenu} />;
+    case "typing":
+      return <Typing retrying={row.retrying} />;
+    case "project-tag":
+      return <ProjectTag name={row.name} projectId={row.projectId} context={context} />;
+    case "tool":
+      return <ToolCard step={row.step} onToggle={() => onToggle(row.id)} />;
+    case "tool-group":
+      return (
+        <StepCard
+          icon={<StepsIcon />}
+          title={row.title}
+          status={row.status}
+          failures={row.failures}
+          expanded={row.expanded}
+          onToggle={() => onToggle(row.id)}
+        />
+      );
+    case "notice":
+      return (
+        <div className="flex justify-center">
+          <div className="soft max-w-[85%] rounded-row px-3 py-2 text-center text-footnote text-muted">
+            {row.text}
+          </div>
         </div>
-      )}
-    </div>
-  );
+      );
+    case "handoff":
+      return (
+        <div className="flex justify-center">
+          <div className="soft flex max-w-[85%] flex-col gap-0.5 rounded-row px-3 py-2 text-center">
+            <span className="text-footnote text-muted">从聊天转来</span>
+            <span className="text-subheadline whitespace-pre-wrap">{row.text}</span>
+          </div>
+        </div>
+      );
+    case "error":
+      return (
+        <div className="strong w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
+          {row.text}
+        </div>
+      );
+  }
 }
 
-function UserMessage({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
-  const { quote, body } = parseQuote(text);
+function UserMessage({ body, quote, onMenu }: { body: string; quote: string | null; onMenu: MenuOpener }) {
   const press = usePressMenu((anchor) => onMenu(anchor, body));
   return (
     <div className="flex flex-col items-end gap-1">
       {quote && (
-        <div className="line-clamp-2 max-w-[75%] border-r-2 border-(--on-sky) pr-2 text-right text-[13px] leading-5 text-(--on-sky)">
-          {quote}
+        <div className="soft flex max-w-[85%] gap-2 rounded-row px-3 py-2">
+          <span className="w-0.5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+          <span className="line-clamp-2 text-footnote">{quote}</span>
         </div>
       )}
       <div
         {...press}
-        className="pressable max-w-[85%] rounded-3xl bg-(--bubble-user) px-4 py-2.5 text-[15px] leading-6 whitespace-pre-wrap backdrop-blur-xl"
+        className="pressable max-w-[85%] rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap backdrop-blur-xl"
       >
         {body}
       </div>
@@ -424,93 +395,170 @@ function UserMessage({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
   );
 }
 
-/** 项目会话里，从聊天转过来的事。 */
-function Handoff({ task }: { task: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1 py-1">
-      <div className="text-xs text-(--on-sky)">从聊天转来</div>
-      <div className="glass max-w-[85%] rounded-2xl px-4 py-2 text-[13px] leading-5 whitespace-pre-wrap text-muted">
-        {task}
-      </div>
-    </div>
-  );
-}
-
-function Part({
-  part,
-  context,
-  onMenu
-}: {
-  part: TranscriptPart;
-  context: ChatContext;
-  onMenu: MenuOpener;
-}) {
-  switch (part.type) {
-    case "text":
-      return part.text.trim() ? (
-        <AssistantText text={part.text} onMenu={onMenu} />
-      ) : null;
-    case "tool-call":
-      return <ToolCall part={part} context={context} />;
-    default:
-      return null;
-  }
-}
-
 function AssistantText({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
   const press = usePressMenu((anchor) => onMenu(anchor, text));
   return (
-    <div
-      {...press}
-      className="pressable glass-strong bubble max-w-[85%] rounded-3xl px-4 py-2.5"
-    >
-      <Streamdown className="sd-theme text-[15px] leading-6" controls={false}>
+    <div {...press} className="pressable strong bubble w-fit max-w-[85%] rounded-bubble px-4 py-2.5">
+      <Streamdown className="sd-theme text-message" controls={false}>
         {text}
       </Streamdown>
     </div>
   );
 }
 
-type ToolCallPart = Extract<TranscriptPart, { type: "tool-call" }>;
-
-/** 建项目、转交项目画成项目标签；其余工具调用不显示。 */
-function ToolCall({ part, context }: { part: ToolCallPart; context: ChatContext }) {
-  if (!context.projectTags) return null;
-  const args = (part.arguments ?? {}) as Record<string, unknown>;
-  if (part.name === "create_project") {
-    const name = String(args.name ?? "");
-    const project = [...context.projects.values()].find(
-      (candidate) => candidate.name === name
-    );
-    return <ProjectTag name={name} project={project} context={context} />;
-  }
-  if (part.name === "hand_off_to_project") {
-    const project = context.projects.get(String(args.project_id ?? ""));
-    if (!project) return null;
-    return <ProjectTag name={project.name} project={project} context={context} />;
-  }
-  return null;
+/** Pupu 还没出字：一个只有三个点的气泡。 */
+function Typing({ retrying }: { retrying: boolean }) {
+  return (
+    <div
+      role="status"
+      aria-label={retrying ? "模型忙，正在重试" : "Pupu 在想"}
+      className="strong bubble flex w-fit items-center gap-2 rounded-bubble px-4 py-[13px] text-muted"
+    >
+      <span className="inline-flex gap-1">
+        {["0ms", "150ms", "300ms"].map((delay) => (
+          <span
+            key={delay}
+            className="size-1.5 animate-pulse rounded-full bg-current"
+            style={{ animationDelay: delay }}
+          />
+        ))}
+      </span>
+      {retrying && <span className="text-subheadline">模型忙，正在重试…</span>}
+    </div>
+  );
 }
 
 /** 回复上方的项目标签：这件事交给了哪个项目，点一下过去。 */
 function ProjectTag({
   name,
-  project,
+  projectId,
   context
 }: {
   name: string;
-  project: Project | undefined;
+  projectId: string | null;
   context: ChatContext;
 }) {
   return (
     <button
       type="button"
-      disabled={!project}
-      onClick={() => project && context.onOpenProject(project.id)}
-      className="glass-strong bubble flex items-center gap-2 rounded-xl px-3 py-1.5 text-[13px] font-medium"
+      disabled={!projectId}
+      onClick={() => projectId && context.onOpenProject(projectId)}
+      className="strong bubble flex h-8 items-center gap-2 rounded-tag px-3 text-footnote pointer-fine:h-7"
     >
-      <FolderIcon className="text-[15px]" />
+      <FolderIcon className="text-[15px] pointer-fine:text-[13px]" />
       {name}
     </button>
   );
+}
+
+const STEP_ICONS: Record<StepIcon, ReactNode> = {
+  terminal: <TerminalIcon />,
+  keyboard: <KeyboardIcon />,
+  file: <FileIcon />,
+  pencil: <PencilIcon />,
+  folder: <FolderIcon />,
+  screenshot: <ScreenshotIcon />,
+  cursor: <CursorIcon />
+};
+
+/** 一步操作：收起时一行，点开看输出。只能看，不能操作。 */
+function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
+  return (
+    <StepCard
+      icon={STEP_ICONS[step.icon]}
+      title={step.title}
+      status={step.status}
+      failures={0}
+      expanded={step.expanded}
+      onToggle={step.output ? onToggle : undefined}
+    >
+      {step.output && (
+        <pre className="mx-3 mb-3 max-h-58 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
+          {step.output}
+        </pre>
+      )}
+      {step.outputPath && (
+        <div className="mx-3 mb-3 -mt-1 text-caption break-all text-muted">
+          完整输出在 <span className="font-mono">{step.outputPath}</span>
+        </div>
+      )}
+    </StepCard>
+  );
+}
+
+function StepCard({
+  icon,
+  title,
+  status,
+  failures,
+  expanded,
+  onToggle,
+  children
+}: {
+  icon: ReactNode;
+  title: string;
+  status: StepStatus;
+  failures: number;
+  expanded: boolean;
+  onToggle?: () => void;
+  children?: ReactNode;
+}) {
+  const header = (
+    <>
+      <span className="shrink-0 text-[16px] pointer-fine:text-[14px]">{icon}</span>
+      <span className="min-w-0 flex-1 text-left text-subheadline break-words">{title}</span>
+      <StepStatusMark status={status} failures={failures} />
+      {onToggle && (
+        <span className="shrink-0 text-[14px] text-muted pointer-fine:text-[12px]">
+          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        </span>
+      )}
+    </>
+  );
+  return (
+    <div className={`strong max-w-[85%] rounded-row ${expanded && children ? "w-full" : "w-fit"}`}>
+      {onToggle ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+          className="flex min-h-10 w-full items-center gap-2 px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="flex min-h-10 items-center gap-2 px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2">
+          {header}
+        </div>
+      )}
+      {expanded && children}
+    </div>
+  );
+}
+
+function StepStatusMark({ status, failures }: { status: StepStatus; failures: number }) {
+  switch (status) {
+    case "waiting":
+      return (
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+          等你批准
+        </span>
+      );
+    case "running":
+      return <Spinner size="sm" aria-label="在做" className="shrink-0" />;
+    case "done":
+      return <span className="shrink-0 text-caption text-muted">完成</span>;
+    case "failed":
+      return (
+        <span className="shrink-0 text-caption text-danger-ink">
+          {failures > 1 ? `${failures} 件没成` : "失败"}
+        </span>
+      );
+    case "denied":
+      return <span className="shrink-0 text-caption text-muted">已拒绝</span>;
+    case "expired":
+      return <span className="shrink-0 text-caption text-muted">没人批，作废了</span>;
+    case "unfinished":
+      return <span className="shrink-0 text-caption text-muted">没做完</span>;
+  }
 }

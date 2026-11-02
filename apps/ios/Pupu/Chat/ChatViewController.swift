@@ -36,9 +36,15 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private let scrim = UIView()
     private let empty = UIStackView()
     private let flow = FlowView()
+    /// 往上翻了才出现：右下角的玻璃圆按钮，点了回到最新的消息。
+    private let jump = UIButton(configuration: .glass())
 
     private var quote: String?
-    private var stick = true
+    private var stick = true {
+        didSet { if stick != oldValue { updateJump() } }
+    }
+    /// 主页输入栏发的话：连上了就发，没连上先记着，连上再发。
+    private var pending: String?
     private var renderScheduled = false
     private var width: CGFloat = 0
     private var storeToken: StoreToken?
@@ -74,6 +80,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         setUpEmpty()
         setUpOverlay()
         setUpBottom()
+        setUpJump()
         storeToken = Store.shared.observe { [weak self] in self?.scheduleRender() }
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: ChatViewController, _: UITraitCollection) in
             Markdown.reset()
@@ -288,7 +295,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         socket.onStatus = { [weak self] next in
             guard let self else { return }
             self.status = next
-            if next == .open { self.opened = true }
+            if next == .open {
+                self.opened = true
+                self.flushPending()
+            }
             self.scheduleRender()
         }
         socket.onEvents = { [weak self] events in self?.receive(events) }
@@ -493,6 +503,56 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     }
 
     /// 高度是估的，滚到底以后量出真实高度，内容可能又变长了，所以再对一次。
+    private func setUpJump() {
+        jump.configuration?.image = UIImage(systemName: "chevron.down")
+        jump.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        jump.configuration?.baseForegroundColor = Theme.ink
+        jump.configuration?.cornerStyle = .capsule
+        jump.configuration?.contentInsets = .zero
+        jump.accessibilityLabel = "回到底部"
+        jump.isHidden = true
+        jump.alpha = 0
+        jump.addAction(UIAction { [weak self] _ in self?.jumpToBottom() }, for: .primaryActionTriggered)
+        jump.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(jump, belowSubview: overlay)
+        NSLayoutConstraint.activate([
+            jump.widthAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
+            jump.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
+            jump.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Theme.Space.s4),
+            jump.bottomAnchor.constraint(equalTo: bottom.topAnchor, constant: -Theme.Space.s3)
+        ])
+    }
+
+    private func updateJump() {
+        let hidden = stick
+        if !hidden { jump.isHidden = false }
+        UIView.animate(withDuration: 0.2) {
+            self.jump.alpha = hidden ? 0 : 1
+        } completion: { _ in
+            if self.stick { self.jump.isHidden = true }
+        }
+    }
+
+    private func jumpToBottom() {
+        stick = true
+        collectionView.layoutIfNeeded()
+        let inset = collectionView.adjustedContentInset
+        let y = max(-inset.top, collectionView.contentSize.height + inset.bottom - collectionView.bounds.height)
+        collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    func deliver(_ text: String) {
+        pending = text
+        flushPending()
+    }
+
+    private func flushPending() {
+        guard let text = pending, status == .open, let socket, socket.submit(text) else { return }
+        pending = nil
+        stick = true
+        scrollToBottom()
+    }
+
     private func scrollToBottom() {
         for _ in 0..<3 {
             collectionView.layoutIfNeeded()
@@ -505,6 +565,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+        stick = distanceFromBottom < Self.stickDistance
+    }
+
+    /// 点状态栏回到顶上，不算拖动，也要记下已经不在底部。
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
         stick = distanceFromBottom < Self.stickDistance
     }
 

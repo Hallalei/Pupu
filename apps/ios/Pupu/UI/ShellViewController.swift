@@ -1,7 +1,8 @@
 import UIKit
 
-/// 主界面：顶栏的三段切换（主页、聊天、项目），右边设置，项目页左边是项目切换。
-/// 等你批准的请示挂在顶栏下方，哪一页都在。
+/// 主界面：顶栏的三段切换（主页、聊天、项目），右边设置。
+/// 顶栏下方从上往下：等你批准的请示（哪一页都在）、项目页的项目名胶囊（点开切换项目）。
+/// 这两样出现时把页面内容往下挤，不盖住对话。
 final class ShellViewController: UIViewController {
     private enum Section: Int {
         case home, chat, projects
@@ -12,12 +13,19 @@ final class ShellViewController: UIViewController {
     private let segments = SectionSwitch(titles: ["主页", "聊天", "项目"], selected: Section.chat.rawValue)
     private let container = UIView()
     private let approvals = ApprovalStackView()
+    private let pill = ProjectPill()
+    private let pillRow = PassThroughView()
+    private let top = PassThroughStackView()
+    /// 顶栏下方那一叠占的高度，加给当前页面的安全区。
+    private var topInset: CGFloat = 0
     private var section: Section = .chat
     private var storeToken: StoreToken?
 
     private lazy var home = HomeViewController(
         openProject: { [weak self] project in self?.open(project) },
-        openSettings: { [weak self] in self?.openSettings() }
+        openAllProjects: { [weak self] in self?.openSwitcher() },
+        openSettings: { [weak self] in self?.openSettings() },
+        send: { [weak self] text in self?.sendFromHome(text) }
     )
     private lazy var chat = ChatViewController(
         session: "1",
@@ -56,12 +64,27 @@ final class ShellViewController: UIViewController {
         view.addSubview(container)
         container.pin(to: view)
 
-        approvals.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(approvals)
+        pill.addAction(UIAction { [weak self] _ in self?.openSwitcher() }, for: .touchUpInside)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pillRow.addSubview(pill)
         NSLayoutConstraint.activate([
-            approvals.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Theme.Space.s2),
-            approvals.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.Space.s4),
-            approvals.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Theme.Space.s4)
+            pill.topAnchor.constraint(equalTo: pillRow.topAnchor),
+            pill.bottomAnchor.constraint(equalTo: pillRow.bottomAnchor),
+            pill.centerXAnchor.constraint(equalTo: pillRow.centerXAnchor),
+            pill.widthAnchor.constraint(lessThanOrEqualTo: pillRow.widthAnchor, multiplier: Theme.Size.bubbleMax)
+        ])
+        approvals.isHidden = true
+        pillRow.isHidden = true
+        top.axis = .vertical
+        top.spacing = Theme.Space.s3
+        top.addArrangedSubview(approvals)
+        top.addArrangedSubview(pillRow)
+        top.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(top)
+        NSLayoutConstraint.activate([
+            top.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Theme.Space.s2),
+            top.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
+            top.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Theme.Space.s4)
         ])
 
         storeToken = Store.shared.observe { [weak self] in self?.storeChanged() }
@@ -69,8 +92,17 @@ final class ShellViewController: UIViewController {
         show(.chat)
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let height = top.arrangedSubviews.contains { !$0.isHidden } ? top.bounds.height + Theme.Space.s3 : 0
+        guard abs(height - topInset) > 0.5 else { return }
+        topInset = height
+        shown?.additionalSafeAreaInsets.top = height
+    }
+
     private func storeChanged() {
         approvals.update(Store.shared.approvals)
+        approvals.isHidden = Store.shared.approvals.isEmpty
         if section == .projects { showProjects() }
     }
 
@@ -79,18 +111,12 @@ final class ShellViewController: UIViewController {
         segments.select(next.rawValue, animated: true)
         switch next {
         case .home:
-            navigationItem.leftBarButtonItem = nil
+            pillRow.isHidden = true
             display(home)
         case .chat:
-            navigationItem.leftBarButtonItem = nil
+            pillRow.isHidden = true
             display(chat)
         case .projects:
-            let switcher = UIBarButtonItem(
-                image: UIImage(systemName: "line.3.horizontal"),
-                primaryAction: UIAction { [weak self] _ in self?.openSwitcher() }
-            )
-            switcher.accessibilityLabel = "切换项目"
-            navigationItem.leftBarButtonItem = switcher
             showProjects()
         }
     }
@@ -100,10 +126,13 @@ final class ShellViewController: UIViewController {
         let projects = Store.shared.projects
         let last = UserDefaults.standard.string(forKey: Self.lastProjectKey)
         guard let project = projects.first(where: { $0.id == last }) ?? projects.first else {
+            pillRow.isHidden = true
             noProject.loaded = Store.shared.loaded
             display(noProject)
             return
         }
+        pill.name = project.name
+        pillRow.isHidden = false
         UserDefaults.standard.set(project.id, forKey: Self.lastProjectKey)
         if projectChat?.session != project.session {
             projectChat = ChatViewController(
@@ -134,8 +163,16 @@ final class ShellViewController: UIViewController {
             previous?.view.alpha = 1
         }
         next.didMove(toParent: self)
+        next.additionalSafeAreaInsets.top = topInset
+        previous?.additionalSafeAreaInsets.top = 0
         shown = next
         setContentScrollView(next.contentScrollView(for: .top), for: .top)
+    }
+
+    /// 主页输入栏发的话：切到聊天，由聊天连上以后发出去。
+    private func sendFromHome(_ text: String) {
+        show(.chat)
+        chat.deliver(text)
     }
 
     private func open(_ project: Project) {
@@ -244,5 +281,67 @@ final class NoProjectViewController: UIViewController {
         label.text = loaded
             ? "还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个；也可以自己建。"
             : "加载中…"
+    }
+}
+
+/// 项目页顶栏下方的胶囊：folder、项目名、chevron.down，高 36，点开项目切换的 sheet。
+final class ProjectPill: UIControl {
+    private let glass = GlassView(interactive: true)
+    private let label = UILabel(style: .subheadline)
+
+    var name = "" {
+        didSet {
+            label.text = name
+            accessibilityLabel = "当前项目「\(name)」"
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        glass.isUserInteractionEnabled = false
+        addSubview(glass)
+        glass.pin(to: self)
+        label.font = Theme.font(.subheadline, weight: .semibold)
+        label.lineBreakMode = .byTruncatingTail
+        let folder = UIImageView(image: UIImage(systemName: "folder"))
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.down"))
+        for icon in [folder, chevron] {
+            icon.tintColor = Theme.ink
+            icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .subheadline, scale: .small)
+            icon.setContentHuggingPriority(.required, for: .horizontal)
+            icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let line = UIStackView(arrangedSubviews: [folder, label, chevron])
+        line.spacing = 6
+        line.alignment = .center
+        line.isUserInteractionEnabled = false
+        addSubview(line)
+        line.pin(to: self, insets: UIEdgeInsets(top: 0, left: 14, bottom: 0, right: Theme.Space.s3))
+        heightAnchor.constraint(greaterThanOrEqualToConstant: Theme.Size.controlSmall).isActive = true
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityHint = "切换项目"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 画的是 36 高，点的范围补到 44。
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -(Theme.Size.control - bounds.height) / 2).contains(point)
+    }
+}
+
+/// 自己不接点击、只让子视图接的容器：顶栏下方那一叠的空白处，点到的是下面的内容。
+final class PassThroughView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
+    }
+}
+
+final class PassThroughStackView: UIStackView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 }

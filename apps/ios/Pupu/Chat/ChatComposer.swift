@@ -78,7 +78,7 @@ final class ComposerView: UIView, UITextViewDelegate {
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: Self.inset),
-            button.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -6),
+            button.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
             button.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
             button.widthAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
             button.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall)

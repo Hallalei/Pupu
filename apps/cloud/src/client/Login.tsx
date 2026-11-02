@@ -43,7 +43,7 @@ export function Login() {
     return (
       <div className="flex h-dvh flex-col items-center justify-center px-4">
         <div className="sky" />
-        <div className="glass-strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-[28px] p-6">
+        <div className="strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-panel p-6">
           <div className="flex flex-col gap-1.5">
             <h1 className="text-xl font-semibold">这个窗口没连上 Pupu</h1>
             <p className="text-[15px] leading-6 text-muted">它的授权失效了，多半是在别的设备上吊销了。重新配对一次就好。</p>
@@ -60,7 +60,7 @@ export function Login() {
     <div className="flex h-dvh flex-col items-center justify-center px-4">
       <div className="sky" />
       <form
-        className="glass-strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-[28px] p-6"
+        className="strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-panel p-6"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();

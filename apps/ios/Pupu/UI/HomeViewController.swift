@@ -1,16 +1,30 @@
 import UIKit
 
-/// 主页：一眼看到 Pupu 手上的事。现在有「项目」和「电脑」两块面板。
+/// 主页：一眼看到 Pupu 手上的事。现在有「项目」和「电脑」两块面板；
+/// 「正在做」等云端报上电脑在做什么再加。底下的输入栏发的话进聊天。
 final class HomeViewController: UIViewController {
+    /// 主页上最多列这么多个项目，其余的在项目 sheet 里。
+    private static let projectLimit = 5
+
     private let scroll = UIScrollView()
     private let stack = UIStackView()
+    private let composer = ComposerView()
     private let openProject: (Project) -> Void
+    private let openAllProjects: () -> Void
     private let openSettings: () -> Void
+    private let send: (String) -> Void
     private var token: StoreToken?
 
-    init(openProject: @escaping (Project) -> Void, openSettings: @escaping () -> Void) {
+    init(
+        openProject: @escaping (Project) -> Void,
+        openAllProjects: @escaping () -> Void,
+        openSettings: @escaping () -> Void,
+        send: @escaping (String) -> Void
+    ) {
         self.openProject = openProject
+        self.openAllProjects = openAllProjects
         self.openSettings = openSettings
+        self.send = send
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -19,6 +33,7 @@ final class HomeViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         scroll.alwaysBounceVertical = true
+        scroll.keyboardDismissMode = .interactive
         scroll.topEdgeEffect.style = .soft
         view.addSubview(scroll)
         scroll.pin(to: view)
@@ -41,11 +56,48 @@ final class HomeViewController: UIViewController {
         fill.priority = .defaultHigh
         fill.isActive = true
 
+        composer.placeholder = "给 Pupu 发消息"
+        composer.connected = true
+        composer.onSend = { [weak self] text in
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let self, !value.isEmpty else { return }
+            self.composer.clear()
+            self.composer.textView.resignFirstResponder()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            self.send(value)
+        }
+        composer.onResize = { [weak self] in
+            guard let self, self.view.window != nil else { return }
+            UIView.animate(springDuration: 0.25, bounce: 0) { self.view.layoutIfNeeded() }
+        }
+        composer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer)
+        NSLayoutConstraint.activate([
+            composer.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
+            composer.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Theme.Space.s4),
+            composer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -Theme.Space.s3)
+        ])
+        let edge = UIScrollEdgeElementContainerInteraction()
+        edge.scrollView = scroll
+        edge.edge = .bottom
+        composer.addInteraction(edge)
+
         token = Store.shared.observe { [weak self] in self?.render() }
         render()
     }
 
     override func contentScrollView(for edge: NSDirectionalRectEdge) -> UIScrollView? { scroll }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 输入栏浮在面板上面：滚动区底部留出输入栏（和键盘）占的高度。
+        let covered = view.bounds.height - composer.frame.minY + Theme.Space.s3
+        let inset = max(0, covered - view.safeAreaInsets.bottom)
+        if abs(scroll.contentInset.bottom - inset) > 0.5 {
+            scroll.contentInset.bottom = inset
+            scroll.verticalScrollIndicatorInsets.bottom = inset
+        }
+    }
 
     private func render() {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
@@ -64,7 +116,7 @@ final class HomeViewController: UIViewController {
     }
 
     private func projectRows(_ store: Store) -> [UIView] {
-        store.projects.prefix(6).map { project in
+        var rows: [UIView] = store.projects.prefix(Self.projectLimit).map { project in
             row(
                 title: project.name,
                 detail: project.goal.isEmpty ? nil : project.goal,
@@ -73,6 +125,32 @@ final class HomeViewController: UIViewController {
                 label: "\(project.name)，\(Ago.text(project.updatedAt))"
             ) { [weak self] in self?.openProject(project) }
         }
+        if store.projects.count > Self.projectLimit {
+            rows.append(allProjectsRow(count: store.projects.count))
+        }
+        return rows
+    }
+
+    /// 面板末行「全部 N 个项目」，高 44，点开项目 sheet。
+    private func allProjectsRow(count: Int) -> UIView {
+        let title = UILabel(text: "全部 \(count) 个项目", style: .subheadline)
+        title.font = Theme.font(.subheadline, weight: .medium)
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+        chevron.tintColor = Theme.inkMuted
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .subheadline)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        let line = UIStackView(arrangedSubviews: [title, chevron])
+        line.alignment = .center
+        line.spacing = Theme.Space.s2
+        let container = UIView()
+        container.addSubview(line)
+        line.pin(to: container, insets: UIEdgeInsets(top: 0, left: Theme.Space.s4, bottom: 0, right: Theme.Space.s4))
+        container.heightAnchor.constraint(greaterThanOrEqualToConstant: Theme.Size.control).isActive = true
+        let button = UIButton(primaryAction: UIAction { [weak self] _ in self?.openAllProjects() })
+        container.addSubview(button)
+        button.pin(to: container)
+        button.accessibilityLabel = "全部 \(count) 个项目"
+        return container
     }
 
     private func computerRows(_ store: Store) -> [UIView] {

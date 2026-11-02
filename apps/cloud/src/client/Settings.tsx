@@ -1,5 +1,5 @@
-import { Button, Drawer } from "@heroui/react";
-import { useEffect, useMemo, useState } from "react";
+import { Button, Drawer, Modal } from "@heroui/react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
@@ -44,6 +44,7 @@ export function Settings({
   const [error, setError] = useState<string | null>(null);
   const origin = window.location.origin;
   const thisComputer = useDesktopComputer();
+  const wide = useWide();
 
   async function setPolicy(id: string, policy: ComputerPolicy) {
     setPendingId(id);
@@ -70,203 +71,238 @@ export function Settings({
     }
   }
 
+  const body = (
+    <>
+      {thisComputer && <ThisComputer computer={thisComputer} />}
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium text-muted">电脑</h3>
+        {computers.length === 0 ? (
+          <p className="text-sm leading-6 text-muted">还没有授权的电脑。</p>
+        ) : (
+          computers.map((computer) => (
+            <div
+              key={computer.id}
+              className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className={`size-2 shrink-0 rounded-full ${
+                    computer.online ? "bg-emerald-600" : "bg-foreground/25"
+                  }`}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">
+                    {computer.name}
+                    {computer.id === thisComputer?.computerId && (
+                      <span className="font-normal text-muted"> · 这台电脑</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-muted">
+                    {computerLabel(computer)}
+                    {computer.screen ? " · 屏幕已授权" : ""}
+                  </div>
+                </div>
+                {confirmId !== computer.id && (
+                  <button
+                    type="button"
+                    className="shrink-0 text-sm text-danger"
+                    onClick={() => {
+                      setError(null);
+                      setConfirmId(computer.id);
+                    }}
+                  >
+                    吊销
+                  </button>
+                )}
+              </div>
+              <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col gap-1">
+                {POLICIES.map(([policy, label, hint]) => {
+                  const selected = computer.policy === policy;
+                  return (
+                    <button
+                      key={policy}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={pendingId === computer.id}
+                      onClick={() => {
+                        if (!selected) void setPolicy(computer.id, policy);
+                      }}
+                      className={`flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left ${
+                        selected ? "bg-background" : ""
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`mt-1 size-3.5 shrink-0 rounded-full border-2 ${
+                          selected ? "border-foreground bg-foreground" : "border-foreground/30"
+                        }`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium">{label}</span>
+                        <span className="block text-xs leading-5 text-muted">{hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {confirmId === computer.id && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm leading-6 text-muted">
+                    吊销后「{computer.name}」会断开。要再用，就在那台电脑上重新配对。
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      onPress={() => setConfirmId(null)}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      isPending={pendingId === computer.id}
+                      onPress={() => void revoke(computer.id, "computer")}
+                    >
+                      吊销
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+        {error && <p className="text-sm text-danger">{error}</p>}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium text-muted">这台电脑能做的</h3>
+        <p className="text-sm leading-6">
+          跑命令，读写主目录里的文件，列目录。也能看主屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。
+        </p>
+        <p className="text-sm leading-6 text-muted">
+          电脑菜单栏上有 Pupu 的图标：能看到它在跑什么、是不是在操作屏幕，一键收回屏幕控制，也能在那台电脑上关掉跑命令或操作屏幕。在电脑上关掉的，批准了也不做。
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium text-muted">手机、浏览器和电脑 App</h3>
+        {devices.length === 0 ? (
+          <p className="text-sm leading-6 text-muted">还没有配对的手机、浏览器或电脑 App。</p>
+        ) : (
+          devices.map((device) => (
+            <div
+              key={device.id}
+              className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
+            >
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">
+                    {device.name}
+                    {device.current && (
+                      <span className="font-normal text-muted">
+                        {device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-muted">{deviceLabel(device)}</div>
+                </div>
+                {confirmId !== device.id && (
+                  <button
+                    type="button"
+                    className="shrink-0 text-sm text-danger"
+                    onClick={() => {
+                      setError(null);
+                      setConfirmId(device.id);
+                    }}
+                  >
+                    吊销
+                  </button>
+                )}
+              </div>
+              {confirmId === device.id && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm leading-6 text-muted">
+                    {device.current
+                      ? device.kind === "desktop"
+                        ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
+                        : "吊销后这个浏览器马上退出，要再用就重新配对。"
+                      : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`}
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="tertiary" onPress={() => setConfirmId(null)}>
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      isPending={pendingId === device.id}
+                      onPress={() => void revoke(device.id, "device")}
+                    >
+                      吊销
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </section>
+
+      <PairNew
+        origin={origin}
+        connected={[...devices, ...computers]}
+        onCreate={onCreatePairingCode}
+      />
+    </>
+  );
+
+  // 电脑上是居中的弹窗，宽 560；手机上是从右边滑出的抽屉。
+  if (wide) {
+    return (
+      <Modal>
+        <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
+          <Modal.Container placement="center" scroll="inside">
+            <Modal.Dialog className="max-h-[85dvh] w-[min(92vw,560px)] rounded-panel">
+              <Modal.Header>
+                <Modal.Heading className="text-title">设置</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="flex flex-col gap-6">{body}</Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
+    );
+  }
   return (
     <Drawer>
       <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Drawer.Content placement="right">
           <Drawer.Dialog className="w-[min(88vw,380px)]">
             <Drawer.Header>
-              <Drawer.Heading>设置</Drawer.Heading>
+              <Drawer.Heading className="text-title">设置</Drawer.Heading>
             </Drawer.Header>
-            <Drawer.Body className="flex flex-col gap-6">
-              {thisComputer && <ThisComputer computer={thisComputer} />}
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium text-muted">电脑</h3>
-                {computers.length === 0 ? (
-                  <p className="text-sm leading-6 text-muted">还没有授权的电脑。</p>
-                ) : (
-                  computers.map((computer) => (
-                    <div
-                      key={computer.id}
-                      className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${
-                            computer.online ? "bg-emerald-600" : "bg-foreground/25"
-                          }`}
-                          aria-hidden="true"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">
-                            {computer.name}
-                            {computer.id === thisComputer?.computerId && (
-                              <span className="font-normal text-muted"> · 这台电脑</span>
-                            )}
-                          </div>
-                          <div className="text-sm text-muted">
-                            {computerLabel(computer)}
-                            {computer.screen ? " · 屏幕已授权" : ""}
-                          </div>
-                        </div>
-                        {confirmId !== computer.id && (
-                          <button
-                            type="button"
-                            className="shrink-0 text-sm text-danger"
-                            onClick={() => {
-                              setError(null);
-                              setConfirmId(computer.id);
-                            }}
-                          >
-                            吊销
-                          </button>
-                        )}
-                      </div>
-                      <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col gap-1">
-                        {POLICIES.map(([policy, label, hint]) => {
-                          const selected = computer.policy === policy;
-                          return (
-                            <button
-                              key={policy}
-                              type="button"
-                              role="radio"
-                              aria-checked={selected}
-                              disabled={pendingId === computer.id}
-                              onClick={() => {
-                                if (!selected) void setPolicy(computer.id, policy);
-                              }}
-                              className={`flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left ${
-                                selected ? "bg-background" : ""
-                              }`}
-                            >
-                              <span
-                                aria-hidden="true"
-                                className={`mt-1 size-3.5 shrink-0 rounded-full border-2 ${
-                                  selected ? "border-foreground bg-foreground" : "border-foreground/30"
-                                }`}
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-sm font-medium">{label}</span>
-                                <span className="block text-xs leading-5 text-muted">{hint}</span>
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {confirmId === computer.id && (
-                        <div className="flex flex-col gap-2">
-                          <p className="text-sm leading-6 text-muted">
-                            吊销后「{computer.name}」会断开。要再用，就在那台电脑上重新配对。
-                          </p>
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              size="sm"
-                              variant="tertiary"
-                              onPress={() => setConfirmId(null)}
-                            >
-                              取消
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              isPending={pendingId === computer.id}
-                              onPress={() => void revoke(computer.id, "computer")}
-                            >
-                              吊销
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-                {error && <p className="text-sm text-danger">{error}</p>}
-              </section>
-
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium text-muted">这台电脑能做的</h3>
-                <p className="text-sm leading-6">
-                  跑命令，读写主目录里的文件，列目录。也能看主屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。
-                </p>
-                <p className="text-sm leading-6 text-muted">
-                  电脑菜单栏上有 Pupu 的图标：能看到它在跑什么、是不是在操作屏幕，一键收回屏幕控制，也能在那台电脑上关掉跑命令或操作屏幕。在电脑上关掉的，批准了也不做。
-                </p>
-              </section>
-
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium text-muted">手机、浏览器和电脑 App</h3>
-                {devices.length === 0 ? (
-                  <p className="text-sm leading-6 text-muted">还没有配对的手机、浏览器或电脑 App。</p>
-                ) : (
-                  devices.map((device) => (
-                    <div
-                      key={device.id}
-                      className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">
-                            {device.name}
-                            {device.current && (
-                              <span className="font-normal text-muted">
-                                {device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-muted">{deviceLabel(device)}</div>
-                        </div>
-                        {confirmId !== device.id && (
-                          <button
-                            type="button"
-                            className="shrink-0 text-sm text-danger"
-                            onClick={() => {
-                              setError(null);
-                              setConfirmId(device.id);
-                            }}
-                          >
-                            吊销
-                          </button>
-                        )}
-                      </div>
-                      {confirmId === device.id && (
-                        <div className="flex flex-col gap-2">
-                          <p className="text-sm leading-6 text-muted">
-                            {device.current
-                              ? device.kind === "desktop"
-                                ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
-                                : "吊销后这个浏览器马上退出，要再用就重新配对。"
-                              : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`}
-                          </p>
-                          <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="tertiary" onPress={() => setConfirmId(null)}>
-                              取消
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              isPending={pendingId === device.id}
-                              onPress={() => void revoke(device.id, "device")}
-                            >
-                              吊销
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </section>
-
-              <PairNew
-                origin={origin}
-                connected={[...devices, ...computers]}
-                onCreate={onCreatePairingCode}
-              />
-            </Drawer.Body>
+            <Drawer.Body className="flex flex-col gap-6">{body}</Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
     </Drawer>
+  );
+}
+
+const WIDE = "(min-width: 1024px)";
+
+/** 窗口够不够宽，跟着窗口大小变。 */
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(WIDE);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(WIDE).matches
   );
 }
 

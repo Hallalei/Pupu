@@ -1,6 +1,7 @@
 import UIKit
 
 /// 切换项目的 sheet：第一行「新项目」，下面是全部项目，最近活动的在前。
+/// 每行两行字：名字和目标；右边当前项目打勾，其余写多久前动过。
 final class ProjectSwitcherViewController: UICollectionViewController {
     nonisolated private enum Item: Hashable, Sendable {
         case create
@@ -28,20 +29,34 @@ final class ProjectSwitcherViewController: UICollectionViewController {
         super.viewDidLoad()
         title = "项目"
         let cell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            var content = UIListContentConfiguration.cell()
+            var content: UIListContentConfiguration
             switch item {
             case .create:
+                content = .cell()
                 content.text = "新项目"
                 content.image = UIImage(systemName: "plus")
-                content.textProperties.color = Theme.inkMuted
-                content.imageProperties.tintColor = Theme.inkMuted
+                content.textProperties.font = Theme.font(.body)
+                content.textProperties.color = Theme.ink
+                content.imageProperties.tintColor = Theme.ink
                 cell.accessories = []
             case .project(let project):
+                content = .subtitleCell()
                 content.text = project.name
+                content.secondaryText = project.goal.isBlank ? "没写目标" : project.goal
                 let selected = project.id == self?.current
                 content.textProperties.font = Theme.font(selected ? .headline : .body)
                 content.textProperties.color = Theme.ink
-                cell.accessories = selected ? [.checkmark()] : []
+                content.secondaryTextProperties.font = Theme.font(.subheadline)
+                content.secondaryTextProperties.color = Theme.inkMuted
+                content.secondaryTextProperties.numberOfLines = 1
+                content.textToSecondaryTextVerticalPadding = 2
+                content.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                    top: Theme.Space.s3, leading: 0, bottom: Theme.Space.s3, trailing: 0
+                )
+                let time = UILabel(text: Ago.text(project.updatedAt), style: .caption, color: Theme.inkMuted)
+                cell.accessories = selected
+                    ? [.checkmark()]
+                    : [.customView(configuration: .init(customView: time, placement: .trailing()))]
             }
             content.textProperties.numberOfLines = 1
             cell.contentConfiguration = content

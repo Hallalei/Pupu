@@ -3,7 +3,86 @@
 /* Tailwind 默认不扫 node_modules，Streamdown 的类名要单独引进来。 */
 @source "../../node_modules/streamdown/dist/*.js";
 
-/* 颜色用 HeroUI 的语义变量（background、surface、muted、accent……），这里只补天空背景和玻璃质感。 */
+/*
+ * 尺寸按「Pupu 设计规范」和 2026-11-02 定的界面方案：1 pt = 1 CSS px。
+ * 间距直接用 Tailwind 刻度（数字 × 4 = pt）；字号、圆角、控件尺寸在这里定成 token。
+ * 下面是手机档（iOS 默认字号「大」）；电脑档在文件后面的 pointer: fine 里改写。
+ * 正文色和次要色用 HeroUI 的 foreground、muted，和规范的 ink、ink-muted 是同一个值。
+ */
+@theme {
+  --text-greeting: 28px;
+  --text-greeting--line-height: 34px;
+  --text-greeting--font-weight: 600;
+  --text-title: 20px;
+  --text-title--line-height: 25px;
+  --text-title--font-weight: 600;
+  --text-headline: 17px;
+  --text-headline--line-height: 22px;
+  --text-headline--font-weight: 600;
+  --text-message: 17px;
+  --text-message--line-height: 26px;
+  --text-body: 17px;
+  --text-body--line-height: 22px;
+  --text-subheadline: 15px;
+  --text-subheadline--line-height: 20px;
+  --text-footnote: 13px;
+  --text-footnote--line-height: 18px;
+  --text-footnote--font-weight: 500;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-code: 13px;
+  --text-code--line-height: 18px;
+
+  --radius-tag: 12px;
+  --radius-row: 16px;
+  --radius-bubble: 24px;
+  --radius-composer: 26px;
+  --radius-panel: 28px;
+
+  /* 最小点击区、圆形图标按钮。 */
+  --spacing-control: 44px;
+  --spacing-control-sm: 36px;
+
+  --color-surface-glass: #ffffff9e;
+  --color-surface-strong: #ffffffd1;
+  --color-surface-inset: oklch(94% 0.001 286.375);
+  --color-bubble-user: #d6e0ecb8;
+  --color-line-glass: #ffffff8c;
+  --color-ink-sky: #1c2634;
+  --color-ink-sky-muted: #1c2634bf;
+  --color-on-sky-strong: #ffffffeb;
+  --color-danger-ink: #c01c22;
+  --color-online: #059669;
+  --color-offline: #18181b40;
+}
+
+/* 电脑档：电脑 App 和电脑浏览器用鼠标，字号每档降一级，控件小一号。 */
+@media (pointer: fine) {
+  :root {
+    --text-greeting: 24px;
+    --text-greeting--line-height: 32px;
+    --text-title: 17px;
+    --text-title--line-height: 24px;
+    --text-headline: 15px;
+    --text-headline--line-height: 20px;
+    --text-message: 15px;
+    --text-message--line-height: 24px;
+    --text-body: 15px;
+    --text-body--line-height: 22px;
+    --text-subheadline: 13px;
+    --text-subheadline--line-height: 18px;
+    --text-footnote: 12px;
+    --text-footnote--line-height: 16px;
+    --text-caption: 11px;
+    --text-caption--line-height: 14px;
+    --text-code: 12px;
+    --text-code--line-height: 18px;
+    --radius-panel: 24px;
+    --spacing-control: 32px;
+    --spacing-control-sm: 28px;
+  }
+}
+
 :root {
   --sky: linear-gradient(
     180deg,
@@ -13,22 +92,26 @@
     #e6e5df 76%,
     #d6d0c4 100%
   );
-  --glass: rgb(255 255 255 / 0.62);
-  --glass-strong: rgb(255 255 255 / 0.82);
-  --glass-border: rgb(255 255 255 / 0.55);
-  --bubble-user: rgb(214 224 236 / 0.72);
-  --on-sky: rgb(28 38 52 / 0.55);
-  --on-sky-strong: rgb(255 255 255 / 0.92);
+  --glass-fill: #ffffff59;
+  --glass-rim: #0f172a24;
+  --glass-highlight: #ffffffcc;
 }
 
 .dark {
   --sky: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
-  --glass: rgb(40 44 52 / 0.62);
-  --glass-strong: rgb(36 38 44 / 0.86);
-  --glass-border: rgb(255 255 255 / 0.08);
-  --bubble-user: rgb(255 255 255 / 0.12);
-  --on-sky: rgb(255 255 255 / 0.5);
-  --on-sky-strong: rgb(255 255 255 / 0.9);
+  --color-surface-glass: #282c349e;
+  --color-surface-strong: #24262cdb;
+  --color-surface-inset: oklch(27.4% 0.006 286.033);
+  --color-bubble-user: #ffffff1f;
+  --color-line-glass: #ffffff14;
+  --color-ink-sky: #ffffffe6;
+  --color-ink-sky-muted: #ffffff80;
+  --color-on-sky-strong: #ffffffe6;
+  --color-danger-ink: #ff6b6b;
+  --color-offline: #fcfcfc40;
+  --glass-fill: #ffffff1a;
+  --glass-rim: #00000080;
+  --glass-highlight: #ffffff40;
 }
 
 html,
@@ -56,18 +139,36 @@ body {
   background: var(--sky);
 }
 
-.glass {
-  background: var(--glass);
-  border: 1px solid var(--glass-border);
+/*
+ * 三种材质的 1px 边用往里收的 outline 画，不占尺寸：内边距、高度和规范上的数字一致。
+ */
+
+/* 内容层：面板、开场建议、引用条、转来的事。 */
+.soft {
+  background: var(--color-surface-glass);
+  outline: 1px solid var(--color-line-glass);
+  outline-offset: -1px;
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
-.glass-strong {
-  background: var(--glass-strong);
-  border: 1px solid var(--glass-border);
+/* 内容层更实的底：Pupu 的消息、行、步骤卡、审批卡。 */
+.strong {
+  background: var(--color-surface-strong);
+  outline: 1px solid var(--color-line-glass);
+  outline-offset: -1px;
   backdrop-filter: blur(28px) saturate(1.5);
   -webkit-backdrop-filter: blur(28px) saturate(1.5);
+}
+
+/* 控件层：三段切换、顶栏按钮、输入栏、回到底部。近似 iOS 的 Liquid Glass。 */
+.glass {
+  background: var(--glass-fill);
+  outline: 1px solid var(--glass-rim);
+  outline-offset: -1px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(10px) saturate(1.8);
+  -webkit-backdrop-filter: blur(10px) saturate(1.8);
 }
 
 .bubble {
@@ -99,13 +200,18 @@ body {
 }
 .sd-theme pre {
   overflow-x: auto;
-  background: var(--default);
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-size: 13px;
+  background: var(--color-surface-inset);
+  border-radius: var(--radius-tag);
+  padding: 8px 12px;
+  font-size: var(--text-code);
+  line-height: var(--text-code--line-height);
 }
 .sd-theme code {
   font-size: 0.92em;
+}
+/* 行内代码：Streamdown 的 bg-muted 被 HeroUI 解析成次要文字的灰，字看不清，换成 surface-inset。 */
+.sd-theme :not(pre) > code {
+  background: var(--color-surface-inset);
 }
 .sd-theme > :first-child {
   margin-top: 0;
