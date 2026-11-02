@@ -510,6 +510,8 @@ function setupMenu(): void {
 
 async function boot(): Promise<void> {
   if (background) updateDock();
+  // 开发版跑的是 Electron.app，程序坞里换成 Pupu 的图标；打包后用 App 包里的 icns 和 Assets.car。
+  if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(dist("icons/dock.png"));
   mainLog = openLog("main.log");
   bridgeLog = openLog("bridge.log");
   log(`Pupu ${app.getVersion()} 启动，连 ${origin}，数据在 ${app.getPath("userData")}`);

@@ -68,6 +68,18 @@ open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 
 开发版 Electron 是临时签名，换 Electron 版本后授权要重开。签名、公证、收紧入口（Fuses）、自动更新、开机自启在 M4。
 
+## 图标
+
+全部由 `design/icon/export.py` 生成，别手改。
+
+- **菜单栏**：`static/icons/tray-*.png`，单色模板图。空闲时气泡是空的；忙和看屏幕时气泡里有输入点；等你批准时右上角多一个圆点；离线和没配对时变淡。
+- **程序坞**：开发版跑的是 Electron.app，启动时用 `static/icons/dock.png` 换掉 Electron 的图标。
+- **打包（M4）**：`icons/` 里两份都要放进 App 包。
+  - `icon.icns` 放进 `Contents/Resources`，Info.plist 写 `CFBundleIconFile = icon`，给 macOS 26 以前的系统和 DMG 用。
+  - `Assets.car` 也放进 `Contents/Resources`，写 `CFBundleIconName = AppIcon`，macOS 26 用它，深色、着色模式由系统接管。
+  - electron-builder 的写法：`mac.icon` 指向 icns，`extraResources` 带上 `Assets.car`，`mac.extendInfo` 加 `CFBundleIconName`。Forge 的写法照 comm 的 `desktop/forge.config.cjs`。
+  - 实测（macOS 26.3）：只放 icns 也不会被套灰底，因为图案本身是标准圆角方块。
+
 ## 参考
 
 - Cindy `apps/desktop`（Apache-2.0）：`utilityProcess` 托管 Node 的活、`safeStorage` 存凭据、正式包关 RunAsNode。
