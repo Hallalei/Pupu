@@ -125,7 +125,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
         let users = registration(UserCell.self)
         let assistants = registration(AssistantCell.self)
-        let thinking = registration(ThinkingCell.self)
         let typing = registration(TypingCell.self)
         let tags = registration(TagCell.self)
         let tools = registration(ToolCell.self)
@@ -135,7 +134,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
             case .assistant: return view.dequeueConfiguredReusableCell(using: assistants, for: path, item: id)
-            case .thinking: return view.dequeueConfiguredReusableCell(using: thinking, for: path, item: id)
             case .typing: return view.dequeueConfiguredReusableCell(using: typing, for: path, item: id)
             case .projectTag: return view.dequeueConfiguredReusableCell(using: tags, for: path, item: id)
             case .tool, .toolGroup: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
@@ -369,12 +367,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         switch kind {
         case .user: 0
         case .assistant: 1
-        case .thinking: 2
-        case .typing: 3
-        case .projectTag: 4
-        case .tool, .toolGroup: 5
-        case .notice, .handoff: 6
-        case .error: 7
+        case .typing: 2
+        case .projectTag: 3
+        case .tool, .toolGroup: 4
+        case .notice, .handoff: 5
+        case .error: 6
         }
     }
 
@@ -396,10 +393,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             guard let cell = cell as? AssistantCell else { return }
             cell.configure(text: text, width: width)
             cell.onLink = { url in UIApplication.shared.open(url) }
-        case .thinking(let text, let expanded):
-            guard let cell = cell as? ThinkingCell else { return }
-            cell.configure(text: text, expanded: expanded, width: width)
-            cell.onToggle = { [weak self] in self?.toggle(id) }
         case .typing(let retrying):
             (cell as? TypingCell)?.configure(retrying: retrying)
         case .projectTag(let name, let projectId):
@@ -446,7 +439,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         source.apply(snapshot, animatingDifferences: false)
     }
 
-    /// 点开或收起：思考过程、一步操作的输出、一组操作。
+    /// 点开或收起：一步操作的输出、一组操作。
     /// 点的那一行原地向下展开，不跟着底部走；展开后露出被输入栏挡住的部分。
     private func toggle(_ id: String) {
         if toggled.contains(id) { toggled.remove(id) } else { toggled.insert(id) }

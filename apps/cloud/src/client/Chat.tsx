@@ -316,6 +316,13 @@ function textOf(message: TranscriptMessage): string {
 function isVisible(message: TranscriptMessage): boolean {
   if (message.role === "tool") return false;
   if (message.role === "notice") return message.parts.length > 0;
+  // 思考过程不显示，跟聊天软件一样只看回复；只有思考的那条整条不出现。
+  if (message.role === "assistant") {
+    return (
+      Boolean(message.error) ||
+      message.parts.some((part) => part.type === "tool-call" || (part.type === "text" && part.text.trim()))
+    );
+  }
   return true;
 }
 
@@ -442,15 +449,6 @@ function Part({
     case "text":
       return part.text.trim() ? (
         <AssistantText text={part.text} onMenu={onMenu} />
-      ) : null;
-    case "thinking":
-      return part.text.trim() ? (
-        <details className="max-w-[85%] px-1 text-[13px] text-(--on-sky)">
-          <summary className="cursor-pointer select-none">思考过程</summary>
-          <div className="mt-1 border-l-2 border-current/30 pl-3 whitespace-pre-wrap">
-            {part.text}
-          </div>
-        </details>
       ) : null;
     case "tool-call":
       return <ToolCall part={part} context={context} />;

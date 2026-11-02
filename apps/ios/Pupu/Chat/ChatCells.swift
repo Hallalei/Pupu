@@ -219,57 +219,7 @@ final class CodeScrollView: UIScrollView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
-// MARK: - 思考过程、正在想
-
-final class ThinkingCell: ChatCell {
-    private let toggle = UIButton(configuration: .plain())
-    private let detail = SurfaceView(.glass, radius: Theme.Radius.row)
-    private let label = UILabel(style: .footnote, color: Theme.inkMuted, lines: 0)
-    var onToggle: (() -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        var config = UIButton.Configuration.plain()
-        config.title = "思考过程"
-        config.imagePlacement = .trailing
-        config.imagePadding = Theme.Space.s1
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .caption2)
-        config.baseForegroundColor = Theme.ink
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: Theme.Space.s3, bottom: 6, trailing: Theme.Space.s3)
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-            var attributes = attributes
-            attributes.font = Theme.font(.footnote)
-            return attributes
-        }
-        var background = UIBackgroundConfiguration.clear()
-        background.backgroundColor = Theme.surfaceGlass
-        background.visualEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        background.strokeColor = Theme.lineGlass
-        background.strokeWidth = 1
-        config.background = background
-        config.cornerStyle = .capsule
-        toggle.configuration = config
-        toggle.addAction(UIAction { [weak self] _ in self?.onToggle?() }, for: .primaryActionTriggered)
-
-        detail.contentView.addSubview(label)
-        label.pin(to: detail.contentView, insets: UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s3, bottom: Theme.Space.s2, right: Theme.Space.s3))
-        let stack = UIStackView(arrangedSubviews: [toggle, detail])
-        stack.axis = .vertical
-        stack.alignment = .leading
-        stack.spacing = Theme.Space.s2
-        place(stack, alignment: .left)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(text: String, expanded: Bool, width: CGFloat) {
-        toggle.configuration?.image = UIImage(systemName: expanded ? "chevron.down" : "chevron.right")
-        toggle.accessibilityValue = expanded ? "已展开" : "已收起"
-        label.text = text
-        label.preferredMaxLayoutWidth = width - Theme.Space.s3 * 2
-        detail.isHidden = !expanded
-    }
-}
+// MARK: - 正在想
 
 /// Pupu 还没出字：三个点依次明暗。
 final class TypingCell: ChatCell {

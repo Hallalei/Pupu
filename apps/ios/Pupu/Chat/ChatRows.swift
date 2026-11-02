@@ -1,14 +1,14 @@
 import CoreGraphics
 import Foundation
 
-/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：思考过程、正文、项目标签、电脑上的操作。
+/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：正文、项目标签、电脑上的操作。
+/// 思考过程不显示，跟聊天软件一样只看回复。
 nonisolated struct ChatRow: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         /// 我发的消息；quote 是开头引用的那段。
         case user(body: String, quote: String?)
         /// Pupu 的正文，Markdown。
         case assistant(String)
-        case thinking(String, expanded: Bool)
         /// Pupu 还没出字：一个只有三个点的气泡。
         case typing(retrying: Bool)
         case projectTag(name: String, projectId: String?)
@@ -103,8 +103,6 @@ nonisolated enum ChatRows {
                     switch part {
                     case .text(let text) where !text.isBlank:
                         own.append(ChatRow(id: id, kind: .assistant(text)))
-                    case .thinking(let text) where !text.isBlank:
-                        own.append(ChatRow(id: id, kind: .thinking(text, expanded: context.toggled.contains(id))))
                     case .toolCall(let callId, let name, let arguments):
                         if let row = toolRow(
                             callId: callId,
