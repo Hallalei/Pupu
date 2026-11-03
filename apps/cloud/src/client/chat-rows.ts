@@ -3,9 +3,10 @@ import type { ComputerView } from "../bridge/protocol";
 import { parseHandoff, parseQuote } from "../messages";
 import type { Project } from "../projects";
 import type { SessionView, TranscriptMessage, TranscriptPart } from "../protocol";
+import type { ReportCard } from "../reports";
 
 /**
- * 把一个会话拆成对话里的一行行：正文、项目标签、电脑上的操作。
+ * 把一个会话拆成对话里的一行行：正文、项目标签、电脑上的操作，聊天里还有项目报回来的结果。
  * 和 iOS 的 ChatRows.swift 是同一套规则，两边改的时候一起改。
  */
 
@@ -51,6 +52,7 @@ export type ChatRow = {
     }
   | { readonly kind: "notice"; readonly text: string }
   | { readonly kind: "handoff"; readonly text: string }
+  | { readonly kind: "report"; readonly card: ReportCard }
   | { readonly kind: "error"; readonly text: string }
 );
 
@@ -60,6 +62,8 @@ export type RowContext = {
   readonly projects: ReadonlyMap<string, Project>;
   readonly computers: readonly ComputerView[];
   readonly approvals: readonly ApprovalView[];
+  /** 项目报回聊天的结果，按时间先后。只有聊天里有。 */
+  readonly reports?: readonly ReportCard[];
   /** 用户点开或收起过的行，和默认状态相反。 */
   readonly toggled: ReadonlySet<string>;
 };
@@ -94,8 +98,13 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
   const messages = view.messages.filter(isVisible);
   if (view.live && isVisible(view.live)) messages.push(view.live);
 
+  const reports = [...(context.reports ?? [])];
   let rows: Row[] = [];
   for (const message of messages) {
+    // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
+    while (reports.length > 0 && message.timestamp > 0 && reports[0]!.at <= message.timestamp) {
+      rows.push(reportRow(reports.shift()!));
+    }
     const own: Draft[] = [];
     if (message.role === "user") {
       const text = textOf(message);
@@ -123,6 +132,7 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
     }
     rows.push(...own.map((row, index) => ({ ...row, gap: index === 0 ? 12 : 8 }) as Row));
   }
+  rows.push(...reports.map(reportRow));
   rows = grouped(rows, context);
   if (view.running && !hasText(view.live)) {
     rows.push({ id: "typing", gap: 12, kind: "typing", retrying: view.retry !== null });
@@ -132,6 +142,10 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
   return rows
     .filter((row) => !seen.has(row.id) && Boolean(seen.add(row.id)))
     .map((row, index) => (index === 0 ? { ...row, gap: 0 } : row));
+}
+
+function reportRow(card: ReportCard): Row {
+  return { id: `report:${card.id}`, gap: 12, kind: "report", card };
 }
 
 /** 工具结果和系统记录不单独显示：项目标签和电脑上的操作已经在工具调用那里画出来了。 */

@@ -97,7 +97,7 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
   const handOffToProject = defineTool({
     name: "hand_off_to_project",
     description:
-      "把用户的一件事交给已有项目去做。项目会在自己的会话里接着做，结果也发在那里。project_id 来自「当前的项目」。",
+      "把用户的一件事交给已有项目去做。项目会在自己的会话里接着做，做完、卡住或出错时报回聊天。project_id 来自「当前的项目」。",
     parameters: Type.Object({
       project_id: Type.String({ description: "已有项目的 id" }),
       task: Type.String({
@@ -124,7 +124,7 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
       await actions.handOff(project, args.task, `handoff:${api.callId}`);
       return {
         output: text(
-          `已经交给「${project.name}」，它会在那个项目里做，结果也发在那里。用一两句话告诉用户已经交给「${project.name}」在做了，不要在聊天里自己再做一遍。`
+          `已经交给「${project.name}」，它会在那个项目里做，做完会报回聊天。用一两句话告诉用户已经交给「${project.name}」在做了，不要在聊天里自己再做一遍。`
         ),
         details: { projectId: project.id, name: project.name }
       };

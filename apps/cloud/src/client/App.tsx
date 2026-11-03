@@ -93,7 +93,7 @@ function rememberProject(id: string) {
  */
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, devices, activity, applyActivity, loaded, error, unauthorized, refresh } =
+  const { projects, computers, approvals, devices, activity, applyActivity, reports, loaded, error, unauthorized, refresh } =
     usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -111,11 +111,12 @@ export function App() {
       projectTags: route.kind === "chat",
       computers,
       approvals,
+      reports: route.kind === "chat" ? reports : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
-    [projects, computers, approvals, refresh, applyActivity, go, route.kind]
+    [projects, computers, approvals, reports, refresh, applyActivity, go, route.kind]
   );
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
@@ -130,6 +131,14 @@ export function App() {
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
+
+  // 打开了项目，它报回聊天的结果都算看过；人在项目里时新报回来的也是。
+  const unseenHere = Boolean(project && reports.some((card) => card.projectId === project.id && !card.seen));
+  const projectId = project?.id;
+  useEffect(() => {
+    if (!projectId || !unseenHere) return;
+    api.markProjectSeen(projectId).then(refresh, () => {});
+  }, [projectId, unseenHere, refresh]);
 
   const clearPending = useCallback(() => setPendingChat(null), []);
 

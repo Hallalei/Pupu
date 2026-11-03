@@ -1,6 +1,6 @@
 import Foundation
 
-/// 项目、电脑、待批的请示和配对过的设备。和网页版一样：收到「变了」的通知或者每 5 秒拉一次 /api/state。
+/// 项目、电脑、待批的请示、配对过的设备和项目报回聊天的结果。和网页版一样：收到「变了」的通知或者每 5 秒拉一次 /api/state。
 /// 拿到 401 说明这台手机被吊销了，忘掉凭据回连接页。
 final class Store {
     static let shared = Store()
@@ -11,6 +11,8 @@ final class Store {
     private(set) var devices: [Device] = []
     /// 每台电脑在做什么，顺序和 computers 一样。
     private(set) var activity: [ComputerActivity] = []
+    /// 项目报回聊天的结果，按时间先后。
+    private(set) var reports: [ReportCard] = []
     private(set) var error: String?
     private(set) var loaded = false
 
@@ -78,6 +80,7 @@ final class Store {
                 approvals = state.approvals ?? []
                 devices = state.devices ?? []
                 activity = state.activity ?? []
+                reports = state.reports ?? []
                 error = nil
                 Push.shared.clearDelivered(pending: approvals.map(\.id))
             } catch let failure as APIError where failure.unauthorized {
@@ -107,6 +110,7 @@ final class Store {
         approvals = []
         devices = []
         activity = []
+        reports = []
         error = nil
         loaded = false
         notify()

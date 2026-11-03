@@ -3,6 +3,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
 import type { Project } from "../projects";
+import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
 
 /** 这个浏览器没有凭据，或者凭据被吊销了。页面换成登录。 */
@@ -36,6 +37,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, goal })
     }),
+  /** 打开了这个项目：它报回聊天的结果都算看过。 */
+  markProjectSeen: (id: string) =>
+    request<{ ok: true }>(`/api/projects/${encodeURIComponent(id)}/seen`, { method: "POST" }),
   revokeComputer: (id: string) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
@@ -70,7 +74,7 @@ export const api = {
 };
 
 /**
- * 项目、电脑、请示和设备。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
+ * 项目、电脑、请示、设备和项目报回聊天的结果。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
  * 被拒（没登录或者被吊销）时 `unauthorized` 是 true，接着轮询：别的标签页登录了，这里也会回来。
  */
 export function usePupuState() {
@@ -79,6 +83,7 @@ export function usePupuState() {
   const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);
   const [activity, setActivity] = useState<PupuState["activity"]>([]);
+  const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -91,6 +96,8 @@ export function usePupuState() {
       setApprovals(state.approvals);
       setDevices(state.devices);
       setActivity(state.activity);
+      // 部署新云端之前的老 DO 没有这一项。
+      setReports(state.reports ?? []);
       setError(null);
       setUnauthorized(false);
     } catch (cause) {
@@ -125,6 +132,7 @@ export function usePupuState() {
     devices,
     activity,
     applyActivity: setActivity,
+    reports,
     error,
     unauthorized,
     loaded,

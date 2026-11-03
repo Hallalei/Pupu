@@ -1,12 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
+import { isRetryableAssistantError } from "@earendil-works/pi-ai/utils/retry";
 import { createRegistry, GenerationTask, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { WebSockets } from "agents/websockets";
-import { CallSessions, computerActivity, type ComputerActivity } from "./bridge/activity";
+import { CallSessions, computerActivity, describeWaiting, type ComputerActivity } from "./bridge/activity";
 import { ApprovalStore, type ApprovalView } from "./bridge/approvals";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
@@ -44,8 +47,9 @@ import {
 import { handoffMessage } from "./messages";
 import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
-import { ProjectStore } from "./projects";
+import { progressLine, ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
+import { asksUser, failureSummary, reportCards, ReportStore, type ReportCard } from "./reports";
 import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
 import { ApprovalPusher } from "./push/approvals";
 import { PushStore, type PushTokenType } from "./push/store";
@@ -57,6 +61,9 @@ import { createPupuTools } from "./tools";
  * key 用 `wrangler secret put DEEPSEEK_API_KEY` 设置。之前用的 Workers AI gpt-oss-120b 只认文字。
  */
 const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
+/** 模型出错时自动重试几次。报告要知道重试完了还没回上，才算出错。 */
+const MAX_RETRIES = 5;
+
 /** 记在 meta 里，用来判断已有会话要不要切模型。 */
 const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 
@@ -72,6 +79,8 @@ export type PupuState = {
   readonly devices: readonly DeviceView[];
   /** 每台电脑在做什么，顺序和 `computers` 一样。主页的「正在做」用。 */
   readonly activity: readonly ComputerActivity[];
+  /** 项目报给聊天的结果，按时间先后。聊天里穿插在消息之间。 */
+  readonly reports: readonly ReportCard[];
 };
 
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
@@ -85,6 +94,7 @@ export type PairResult =
  */
 export class Pupu extends DurableObject<Env> {
   readonly store = new ProjectStore(this.ctx.storage.sql);
+  readonly reports = new ReportStore(this.ctx.storage.sql);
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly bridge = new ComputerBridge({
@@ -118,6 +128,11 @@ export class Pupu extends DurableObject<Env> {
   readonly #callSessions = new CallSessions();
   /** 上一次发出去的 activity，没变就不再发。 */
   #sentActivity = "";
+  /**
+   * 每个项目会话正在答的那条用户消息是什么时候的。这之前转交的事归这一轮报，之后的还排在队里。
+   * 只在内存里：DO 重启后 pi 重发请求，会再经过 beforeRequest。
+   */
+  readonly #askedAt = new Map<string, number>();
   readonly registry = createRegistry();
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
@@ -128,7 +143,7 @@ export class Pupu extends DurableObject<Env> {
             key: "pupu",
             tag: false,
             render: (input) =>
-              renderPrompt(String(input.conversationId), this.store, this.bridge.list())
+              renderPrompt(String(input.conversationId), this.store, this.reports, this.bridge.list())
           }
         ],
         tools: [
@@ -148,12 +163,26 @@ export class Pupu extends DurableObject<Env> {
             }
           }),
           hook(GenerationTask, {
-            // 项目里回完一轮，记下最新进展，主页和项目列表上显示。
+            beforeRequest: (request, api) => {
+              this.#rememberAsk(String(api.conversationId), request.messages);
+              return undefined;
+            },
+            afterResponse: (message, api) => this.#reportError(String(api.conversationId), message),
+            // 项目里回完一轮，记下最新进展，主页和项目列表上显示；从聊天转来的事报回聊天。
             onYield: (answer, api) => {
+              const session = String(api.conversationId);
               const reply = answer.content
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n");
-              if (this.store.recordReply(String(api.conversationId), reply)) this.#changed();
+              const progressed = this.store.recordReply(session, reply);
+              const reported = this.reports.settle(
+                session,
+                this.#askedAt.get(session) ?? Date.now(),
+                asksUser(reply) ? "asking" : "done",
+                progressLine(reply),
+                Date.now()
+              );
+              if (progressed || reported) this.#changed();
               return undefined;
             }
           })
@@ -174,7 +203,7 @@ export class Pupu extends DurableObject<Env> {
           registry: this.registry,
           settings: {
             // 每次重试前的等待翻倍：1、2、4、8、16 秒，被限流的模型大约有 30 秒恢复。
-            retry: { enabled: true, maxRetries: 5, baseDelayMs: 1000 }
+            retry: { enabled: true, maxRetries: MAX_RETRIES, baseDelayMs: 1000 }
           },
           onReport: (error) => console.warn("pi report", error)
         },
@@ -235,9 +264,49 @@ export class Pupu extends DurableObject<Env> {
     this.sockets.broadcast({ type: "projects_changed" });
   }
 
+  /** 项目会话这一轮在答的用户消息：取最后一条用户消息的时间。 */
+  #rememberAsk(session: string, messages: readonly Message[]): void {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index]!;
+      if (message.role !== "user") continue;
+      this.#askedAt.set(session, message.timestamp);
+      return;
+    }
+  }
+
+  /** 模型出错，重试完了还没回上：从聊天转来的事报「出错了」。还会重试的只记次数。 */
+  #reportError(session: string, message: AssistantMessage): void {
+    if (message.stopReason !== "error") {
+      this.reports.clearErrors(session);
+      return;
+    }
+    // 上下文太长会先压缩再试，不算出错。
+    if (isContextOverflow(message)) return;
+    const upTo = this.#askedAt.get(session) ?? Date.now();
+    const errors = this.reports.countError(session, upTo);
+    if (isRetryableAssistantError(message) && errors <= MAX_RETRIES) return;
+    const summary = failureSummary(message.errorMessage ?? "");
+    if (this.reports.settle(session, upTo, "failed", summary, Date.now())) this.#changed();
+  }
+
+  /** 项目会话停在一步等批：从聊天转来的事报「卡住了要你定」；批完了改回在做，等这一轮结束再报。 */
+  #syncWaitingReports(): void {
+    const waiting = new Map<string, { summary: string; upTo: number }>();
+    for (const row of this.approvals.pending(Date.now())) {
+      const session = this.#callSessions.of(row.callId);
+      if (!session || waiting.has(session)) continue;
+      waiting.set(session, {
+        summary: `等你批准：${describeWaiting(row)}`,
+        upTo: this.#askedAt.get(session) ?? Date.now()
+      });
+    }
+    if (this.reports.syncWaiting(waiting, Date.now())) this.#changed();
+  }
+
   /** 审批或屏幕授权变了：网页重新拉状态，菜单栏换显示，手机上的通知跟着推或替换。 */
   #approvalsChanged(computerIds: readonly string[]): void {
     this.sockets.broadcast({ type: "approvals_changed" });
+    this.#syncWaitingReports();
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
     this.#activityChanged();
     this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
@@ -295,8 +364,21 @@ export class Pupu extends DurableObject<Env> {
       computers: this.bridge.list(),
       approvals: this.gate.pending(),
       devices: this.devices.list().map((row) => deviceView(row, current)),
-      activity: this.#activity()
+      activity: this.#activity(),
+      reports: this.#reportCards()
     };
+  }
+
+  #reportCards(): ReportCard[] {
+    const names = new Map(this.store.listProjects().map((project) => [project.id, project.name]));
+    return reportCards(this.reports.visible(), (id) => names.get(id));
+  }
+
+  /** 用户打开了这个项目：项目报回聊天的结果都算看过，聊天里那几张卡不再合在一起。 */
+  async markProjectSeen(projectId: string): Promise<boolean> {
+    if (!this.store.getProject(projectId)) return false;
+    if (this.reports.markSeen(projectId, Date.now())) this.#changed();
+    return true;
   }
 
   /** Worker 每个请求都先来这里认设备，认出来返回设备 id。只碰 SQLite，不用把 pi 拉起来。 */
@@ -548,6 +630,11 @@ export class Pupu extends DurableObject<Env> {
     task: string,
     operationId: string
   ): Promise<void> {
+    // 先记报告再提交：报告的时间要早于项目会话里那条消息，这一轮结束时才认得出是它。
+    this.reports.open(
+      { id: operationId, projectId: project.id, session: project.session, task },
+      Date.now()
+    );
     await this.harness.session(project.session).submit(handoffMessage(task), {
       whenBusy: "followUp",
       operationId
@@ -729,6 +816,12 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
       requestId: crypto.randomUUID()
     });
     return Response.json(result);
+  }
+  const seen = pathname.match(/^\/api\/projects\/([^/]+)\/seen$/);
+  if (seen && method === "POST") {
+    const ok = await pupu(env).markProjectSeen(decodeURIComponent(seen[1] ?? ""));
+    if (!ok) return Response.json({ error: "没有这个项目" }, { status: 404 });
+    return Response.json({ ok: true });
   }
   if (pathname === "/api/projects" && method === "POST") {
     const body = await readJson<{ name?: string; goal?: string }>(request);

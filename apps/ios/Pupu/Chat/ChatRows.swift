@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：正文、项目标签、电脑上的操作。
+/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：正文、项目标签、电脑上的操作。聊天里还有项目报回来的结果。
 /// 思考过程不显示，跟聊天软件一样只看回复。
 nonisolated struct ChatRow: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
@@ -17,6 +17,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
         case notice(String)
         /// 项目会话里，从聊天转来的事。
         case handoff(String)
+        /// 聊天里，项目报回来的结果。
+        case report(ReportCard)
         case error(String)
     }
 
@@ -57,6 +59,8 @@ nonisolated struct ChatContext: Sendable {
     var projects: [Project] = []
     var computers: [Computer] = []
     var approvals: [Approval] = []
+    /// 项目报回聊天的结果，按时间先后。只有聊天里有。
+    var reports: [ReportCard] = []
     /// 用户点开或收起过的行，和默认状态相反。
     var toggled: Set<String> = []
 }
@@ -83,8 +87,14 @@ nonisolated enum ChatRows {
         var messages = view.messages.filter(isVisible)
         if let live = view.live, isVisible(live) { messages.append(live) }
 
+        var reports = context.reports[...]
         var rows: [ChatRow] = []
         for message in messages {
+            // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
+            while let report = reports.first, message.timestamp > 0, report.at <= message.timestamp {
+                rows.append(reportRow(report))
+                reports.removeFirst()
+            }
             var own: [ChatRow] = []
             switch message.role {
             case .user:
@@ -128,6 +138,7 @@ nonisolated enum ChatRows {
             for index in own.indices { own[index].gap = index == 0 ? 12 : 8 }
             rows += own
         }
+        rows += reports.map(reportRow)
         rows = grouped(rows, context: context)
         if view.running && !(view.live?.hasText ?? false) {
             rows.append(ChatRow(id: "typing", kind: .typing(retrying: view.retry != nil)))
@@ -138,6 +149,10 @@ nonisolated enum ChatRows {
         if !rows.isEmpty { rows[0].gap = 0 }
         var seen = Set<String>()
         return rows.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func reportRow(_ card: ReportCard) -> ChatRow {
+        ChatRow(id: "report:\(card.id)", kind: .report(card))
     }
 
     /// 工具结果和系统记录不单独显示：项目标签和电脑上的操作已经在工具调用那里画出来了。
