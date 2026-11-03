@@ -142,7 +142,7 @@ final class Push: NSObject {
     }
 
     /// 后台点了按钮却没批上，用一条本地通知说一声，不然用户以为批了。
-    private func tell(title: String, body: String) async {
+    func tell(title: String, body: String) async {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -151,7 +151,7 @@ final class Push: NSObject {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    private func handle(approval id: String, action: String) async {
+    func handle(approval id: String, action: String) async {
         let allow = action == Self.allowAction
         guard let api = Store.shared.api else {
             await tell(title: "没批上", body: "这台手机没连着 Pupu，打开 App 重新配对。")

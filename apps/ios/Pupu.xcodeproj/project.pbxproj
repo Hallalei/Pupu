@@ -6,10 +6,40 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C0DE0000000000000000001D /* PupuWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000013 /* PupuWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C0DE0000000000000000001F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C0DE0000000000000000000A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C0DE00000000000000000016;
+			remoteInfo = PupuWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C0DE0000000000000000001E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C0DE0000000000000000001D /* PupuWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		C0DE00000000000000000001 /* Pupu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pupu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE0000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C0DE00000000000000000012 /* Pupu.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pupu.entitlements; sourceTree = "<group>"; };
+		C0DE00000000000000000013 /* PupuWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PupuWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0DE00000000000000000021 /* PupuWidgets-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "PupuWidgets-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -18,10 +48,27 @@
 			path = Pupu;
 			sourceTree = "<group>";
 		};
+		C0DE00000000000000000014 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		C0DE00000000000000000015 /* PupuWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PupuWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		C0DE00000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0DE00000000000000000018 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -35,7 +82,10 @@
 			isa = PBXGroup;
 			children = (
 				C0DE00000000000000000002 /* Pupu */,
+				C0DE00000000000000000014 /* Shared */,
+				C0DE00000000000000000015 /* PupuWidgets */,
 				C0DE0000000000000000000F /* Info.plist */,
+				C0DE00000000000000000021 /* PupuWidgets-Info.plist */,
 				C0DE00000000000000000012 /* Pupu.entitlements */,
 				C0DE00000000000000000005 /* Products */,
 			);
@@ -45,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				C0DE00000000000000000001 /* Pupu.app */,
+				C0DE00000000000000000013 /* PupuWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -59,13 +110,16 @@
 				C0DE00000000000000000008 /* Sources */,
 				C0DE00000000000000000003 /* Frameworks */,
 				C0DE00000000000000000009 /* Resources */,
+				C0DE0000000000000000001E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C0DE00000000000000000020 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C0DE00000000000000000002 /* Pupu */,
+				C0DE00000000000000000014 /* Shared */,
 			);
 			name = Pupu;
 			packageProductDependencies = (
@@ -73,6 +127,29 @@
 			productName = Pupu;
 			productReference = C0DE00000000000000000001 /* Pupu.app */;
 			productType = "com.apple.product-type.application";
+		};
+		C0DE00000000000000000016 /* PupuWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0DE0000000000000000001A /* Build configuration list for PBXNativeTarget "PupuWidgets" */;
+			buildPhases = (
+				C0DE00000000000000000017 /* Sources */,
+				C0DE00000000000000000018 /* Frameworks */,
+				C0DE00000000000000000019 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C0DE00000000000000000014 /* Shared */,
+				C0DE00000000000000000015 /* PupuWidgets */,
+			);
+			name = PupuWidgets;
+			packageProductDependencies = (
+			);
+			productName = PupuWidgets;
+			productReference = C0DE00000000000000000013 /* PupuWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -85,6 +162,9 @@
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					C0DE00000000000000000006 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					C0DE00000000000000000016 = {
 						CreatedOnToolsVersion = 26.4;
 					};
 				};
@@ -104,12 +184,20 @@
 			projectRoot = "";
 			targets = (
 				C0DE00000000000000000006 /* Pupu */,
+				C0DE00000000000000000016 /* PupuWidgets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		C0DE00000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0DE00000000000000000019 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -126,7 +214,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C0DE00000000000000000017 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C0DE00000000000000000020 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C0DE00000000000000000016 /* PupuWidgets */;
+			targetProxy = C0DE0000000000000000001F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		C0DE0000000000000000000C /* Debug */ = {
@@ -186,6 +289,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pupu;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
@@ -198,6 +302,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "PUPU_APP $(inherited)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -215,6 +320,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pupu;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
@@ -225,6 +331,61 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.leizi.pupu;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "PUPU_APP $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		C0DE0000000000000000001B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PupuWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Pupu;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.leizi.pupu.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C0DE0000000000000000001C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PupuWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Pupu;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.leizi.pupu.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -252,6 +413,15 @@
 			buildConfigurations = (
 				C0DE0000000000000000000C /* Debug */,
 				C0DE0000000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C0DE0000000000000000001A /* Build configuration list for PBXNativeTarget "PupuWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0DE0000000000000000001B /* Debug */,
+				C0DE0000000000000000001C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

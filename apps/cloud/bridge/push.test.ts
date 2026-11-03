@@ -178,6 +178,10 @@ class MemoryPush implements PushDirectory {
     this.rows = this.rows.filter((row) => row.token !== token);
   }
 
+  removeOwn(deviceId: string, token: string) {
+    this.rows = this.rows.filter((row) => !(row.deviceId === deviceId && row.token === token));
+  }
+
   removeDevice(deviceId: string) {
     this.rows = this.rows.filter((row) => row.deviceId !== deviceId);
   }
