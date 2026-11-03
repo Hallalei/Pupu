@@ -3,7 +3,7 @@
  * - 托盘常驻，关掉窗口不退出；从托盘或 ⌘Q 退出，这台电脑就下线；
  * - 用 utilityProcess 托管桥，挂了就重启；
  * - 窗口加载线上网页，开 sandbox 和 contextIsolation，只能在 Pupu 自己的域名里跳转；
- * - 第一次打开时用配对码配对，窗口和桥各拿一份凭据，用 safeStorage 加密存放。
+ * - 第一次打开时用 Google 登录（在系统浏览器里登）或配对码，窗口和桥各拿一份凭据，用 safeStorage 加密存放。
  */
 import { createWriteStream, mkdirSync, renameSync, statSync, type WriteStream } from "node:fs";
 import os from "node:os";
@@ -25,8 +25,9 @@ import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/lo
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import type { DesktopComputer, DesktopSwitch, PrivacyPane } from "../../cloud/src/client/desktop.ts";
 import { credentialsPath, readPairing, writePairing, type Credential, type Pairing } from "./credentials.ts";
-import { desktopStatus, pairComputer, pairDesktop } from "./pairing.ts";
-import { createPairWindow, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
+import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
+import { desktopStatus, googleEnabled, pairComputer, pairDesktop, redeemSignIn } from "./pairing.ts";
+import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
 import type { TrayAction } from "./tray-menu.ts";
@@ -61,6 +62,8 @@ let switches: LocalSwitches = { allowCommands: true, allowScreen: true };
 let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
+/** 正在等浏览器里的 Google 登录。 */
+let signIn: AbortController | null = null;
 let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
@@ -182,7 +185,8 @@ async function pairingInfo(): Promise<PairingInfo> {
   const reason = !pairing.desktop ? (pairing.computer ? "desktop" : "first") : "computer";
   // 只在第一次配对时给：被吊销过的那份可能就是它，再沿用还是会被拒。
   const adoptable = reason === "first" ? ((await cliComputer())?.name ?? null) : null;
-  return { host: new URL(origin).host, codeOptional: isLocalOrigin(origin), reason, adoptable };
+  const google = reason !== "computer" && (await googleEnabled(origin));
+  return { host: new URL(origin).host, codeOptional: isLocalOrigin(origin), reason, adoptable, google };
 }
 
 /** 成功返回 null，失败返回给人看的原因。 */
@@ -208,6 +212,67 @@ async function pair(request: PairingRequest): Promise<string | null> {
     log(`配对没成：${message(error)}`);
     return message(error);
   }
+  await paired(desktop, computer, renewed);
+  return null;
+}
+
+/**
+ * 用 Google 登录：开一个本机回环端口，在系统浏览器里打开 Pupu 的登录地址，登完 Pupu 把一次性的码送回这个端口，
+ * 再拿码和这里留着的 verifier 换凭据。Google 不让在 App 的网页里登录，所以不在配对窗口里登。
+ * 窗口和桥的凭据一次就拿齐；选了沿用命令行桥的授权，就只要窗口的。
+ */
+async function pairWithGoogle(request: GoogleRequest): Promise<string | null> {
+  if (pairing.desktop) return pair({ code: "", adopt: request.adopt });
+  signIn?.abort();
+  const controller = new AbortController();
+  signIn = controller;
+  const verifier = newVerifier();
+  let desktop: Credential;
+  let computer = pairing.computer;
+  try {
+    const code = await receiveCode(
+      (port) => {
+        const start = new URL("/api/auth/google/start", origin);
+        start.search = new URLSearchParams({
+          client: "desktop",
+          port: String(port),
+          challenge: challengeOf(verifier)
+        }).toString();
+        log(`在浏览器里用 Google 登录，回调端口 ${port}。`);
+        // 后台测试时不打开系统浏览器（它会跑到前台），登录地址写进日志，由测试脚本去走。
+        if (background) {
+          log(`后台测试，不开浏览器：${start.toString()}`);
+          return Promise.resolve();
+        }
+        return shell.openExternal(start.toString());
+      },
+      { signal: controller.signal }
+    );
+    const adopted = !computer && request.adopt ? await cliComputer() : null;
+    const result = await redeemSignIn(origin, { code, verifier, name: computerName(), computer: !computer && !adopted });
+    desktop = result.desktop;
+    pairing = { ...pairing, desktop };
+    await savePairing();
+    if (!computer) {
+      computer = adopted ?? result.computer ?? (await pairComputer(origin, desktop.token, computerName()));
+      pairing = { ...pairing, computer };
+      await savePairing();
+    }
+  } catch (error) {
+    log(`Google 登录没成：${message(error)}`);
+    return message(error);
+  } finally {
+    if (signIn === controller) signIn = null;
+  }
+  // 人还在浏览器里，把 Pupu 叫回前台。后台测试时不抢。
+  if (!background) app.focus({ steal: true });
+  // 走到这里说明窗口原来没有凭据，算重新配对。
+  await paired(desktop, computer, true);
+  return null;
+}
+
+/** 两份凭据都齐了：启动桥，关掉配对窗口，打开（或者刷新）主窗口。 */
+async function paired(desktop: Credential, computer: Credential, renewed: boolean): Promise<void> {
   log(`配对好了：窗口「${desktop.name}」（${desktop.id}），电脑「${computer.name}」（${computer.id}）。`);
   startBridge();
   render();
@@ -218,7 +283,6 @@ async function pair(request: PairingRequest): Promise<string | null> {
   } else {
     await openMain();
   }
-  return null;
 }
 
 /** 网页拿到 401：用凭据再问一次云端，确实被吊销了才清掉，换成配对窗口。 */
@@ -389,6 +453,8 @@ function openPairWindow(): void {
   guard(window.webContents, false);
   window.on("closed", () => {
     if (pairWindow === window) pairWindow = null;
+    // 关了配对窗口就不等浏览器了。
+    signIn?.abort();
     updateDock();
   });
 }
@@ -441,6 +507,14 @@ function registerIpc(): void {
     fromPairing(event);
     const value = (request ?? {}) as Partial<PairingRequest>;
     return pair({ code: typeof value.code === "string" ? value.code : "", adopt: value.adopt === true });
+  });
+  ipcMain.handle("pairing:google", (event, request: unknown) => {
+    fromPairing(event);
+    return pairWithGoogle({ adopt: (request as Partial<GoogleRequest> | null)?.adopt === true });
+  });
+  ipcMain.handle("pairing:cancel", (event) => {
+    fromPairing(event);
+    signIn?.abort();
   });
   ipcMain.handle("pupu:computer", (event) => {
     fromMain(event);

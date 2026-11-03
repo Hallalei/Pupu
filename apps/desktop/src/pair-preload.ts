@@ -3,10 +3,14 @@
  * 这几个接口只给它：线上网页拿不到，不能自己触发重新配对。
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { PairingInfo, PairingRequest } from "./pairing-window.ts";
+import type { GoogleRequest, PairingInfo, PairingRequest } from "./pairing-window.ts";
 
 contextBridge.exposeInMainWorld("pupuPairing", {
   info: () => ipcRenderer.invoke("pairing:info") as Promise<PairingInfo>,
   /** 成功返回 null，失败返回给人看的原因。 */
-  pair: (request: PairingRequest) => ipcRenderer.invoke("pairing:pair", request) as Promise<string | null>
+  pair: (request: PairingRequest) => ipcRenderer.invoke("pairing:pair", request) as Promise<string | null>,
+  /** 打开系统浏览器用 Google 登录，等它回来。返回值和 `pair` 一样。 */
+  google: (request: GoogleRequest) => ipcRenderer.invoke("pairing:google", request) as Promise<string | null>,
+  /** 不等浏览器了。正在等的 `google` 返回「已取消。」。 */
+  cancel: () => ipcRenderer.invoke("pairing:cancel") as Promise<void>
 });

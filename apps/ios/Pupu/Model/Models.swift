@@ -43,6 +43,8 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
 
     let id: String
     let name: String
+    /// 主人的成员 id：用谁的账号登录电脑 App 就是谁的。还没主人是 nil。
+    let ownerId: String?
     let online: Bool
     /// 连着，但是心跳停了。
     let stale: Bool
@@ -80,15 +82,19 @@ nonisolated struct Device: Decodable, Sendable, Hashable {
     let name: String
     /// phone、browser 或 desktop（电脑 App 的窗口）。
     let kind: String
+    /// 是谁的：成员 id 和他的 Google 邮箱。不属于谁是 nil。
+    let memberId: String?
+    let member: String?
     let createdAt: Double
     let lastSeenAt: Double?
     /// 就是这台手机。
     let current: Bool
 
+    /// 比如「手机 · a@gmail.com · 3 分钟前用过」。
     var label: String {
         let kind = kind == "phone" ? "手机" : kind == "desktop" ? "电脑 App" : "浏览器"
-        guard let lastSeenAt else { return kind }
-        return "\(kind) · \(Ago.text(lastSeenAt))用过"
+        let seen = lastSeenAt.map { "\(Ago.text($0))用过" }
+        return [kind, member, seen].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -156,10 +162,30 @@ nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
     var currentState: State { State(rawValue: state) ?? .idle }
 }
 
+/// 一起用这个 Pupu 的人。创建者在前（需求说明 4.7）。
+nonisolated struct Member: Decodable, Sendable, Hashable {
+    let id: String
+    let email: String
+    /// creator 或 member。
+    let role: String
+    /// 第一次登录的时间。邀请了还没登录过是 nil。
+    let joinedAt: Double?
+    /// 这台手机是他的。
+    let current: Bool
+
+    var isCreator: Bool { role == "creator" }
+
+    var label: String {
+        if isCreator { return "创建者" }
+        return joinedAt == nil ? "成员 · 还没登录过" : "成员"
+    }
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
     let computers: [Computer]
     let approvals: [Approval]?
     let devices: [Device]?
     let activity: [ComputerActivity]?
+    let members: [Member]?
 }

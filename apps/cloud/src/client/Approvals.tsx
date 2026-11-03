@@ -84,7 +84,10 @@ export function Approvals({
             )}
           </div>
           <div className="text-headline">{approval.title}</div>
-          {approval.detail && (
+          {approval.detail && approval.kind === "sign_in" && (
+            <p className="m-0 text-subheadline whitespace-pre-line">{approval.detail}</p>
+          )}
+          {approval.detail && approval.kind !== "sign_in" && (
             <pre className="m-0 max-h-40 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
               {approval.detail}
             </pre>

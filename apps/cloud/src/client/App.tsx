@@ -1,5 +1,6 @@
 import { Button, Drawer, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { actorOf } from "../members";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
@@ -93,8 +94,19 @@ function rememberProject(id: string) {
  */
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, devices, activity, applyActivity, loaded, error, unauthorized, refresh } =
-    usePupuState();
+  const {
+    projects,
+    computers,
+    approvals,
+    devices,
+    activity,
+    members,
+    applyActivity,
+    loaded,
+    error,
+    unauthorized,
+    refresh
+  } = usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -333,8 +345,18 @@ export function App() {
           await refresh();
         }}
         devices={devices}
+        members={members}
+        actor={actorOf(current ?? null, members)}
         onRevokeDevice={async (id) => {
           await api.revokeDevice(id);
+          await refresh();
+        }}
+        onInviteMember={async (email) => {
+          await api.inviteMember(email);
+          await refresh();
+        }}
+        onRemoveMember={async (id) => {
+          await api.removeMember(id);
           await refresh();
         }}
         onCreatePairingCode={api.createPairingCode}

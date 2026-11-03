@@ -8,6 +8,8 @@ import { DEFAULT_POLICY, isComputerPolicy, type ComputerPolicy } from "./policy.
 export type ComputerRow = {
   readonly id: string;
   readonly name: string;
+  /** 这台电脑是谁的：用谁的账号登录电脑 App、谁的设备生成的配对码，就是谁的。还没主人是 null。 */
+  readonly ownerId: string | null;
   readonly tokenHash: string;
   readonly localRoot: string;
   readonly terminalsFolder: string;
@@ -23,7 +25,7 @@ export type ComputerRow = {
 export interface ComputerDirectory {
   byTokenHash(hash: string): ComputerRow | undefined;
   list(): ComputerRow[];
-  insert(input: { name: string; tokenHash: string }): ComputerRow;
+  insert(input: { name: string; tokenHash: string; ownerId?: string | null }): ComputerRow;
   revoke(id: string): ComputerRow | undefined;
   markSeen(
     id: string,
@@ -39,6 +41,7 @@ function toRow(row: Row): ComputerRow {
   return {
     id: String(row.id),
     name: String(row.name),
+    ownerId: row.owner_id === null || row.owner_id === undefined ? null : String(row.owner_id),
     tokenHash: String(row.token_hash),
     localRoot: String(row.local_root),
     terminalsFolder: String(row.terminals_folder),
@@ -71,7 +74,7 @@ export class ComputerStore implements ComputerDirectory {
         last_seen_at INTEGER
       )`);
       // 后加的列。已经有了的话 ALTER 会报错，忽略就行。
-      for (const column of [`policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`, "screen_until INTEGER"]) {
+      for (const column of [`policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`, "screen_until INTEGER", "owner_id TEXT"]) {
         try {
           this.#sql.exec(`ALTER TABLE pupu_computers ADD COLUMN ${column}`);
         } catch {
@@ -98,15 +101,16 @@ export class ComputerStore implements ComputerDirectory {
       .map(toRow);
   }
 
-  insert(input: { name: string; tokenHash: string }): ComputerRow {
+  insert(input: { name: string; tokenHash: string; ownerId?: string | null }): ComputerRow {
     const now = Date.now();
     const id = crypto.randomUUID();
     this.#db().exec(
       `INSERT INTO pupu_computers
-        (id, name, token_hash, local_root, terminals_folder, created_at, revoked_at, last_seen_at)
-       VALUES (?, ?, ?, '', '', ?, NULL, NULL)`,
+        (id, name, owner_id, token_hash, local_root, terminals_folder, created_at, revoked_at, last_seen_at)
+       VALUES (?, ?, ?, ?, '', '', ?, NULL, NULL)`,
       id,
       input.name,
+      input.ownerId ?? null,
       input.tokenHash,
       now
     );
@@ -152,6 +156,11 @@ export class ComputerStore implements ComputerDirectory {
     if (!row) return false;
     this.#db().exec("UPDATE pupu_computers SET policy = ? WHERE id = ?", policy, id);
     return true;
+  }
+
+  /** 还没有主人的电脑都归这个成员。创建者第一次登录时用。 */
+  claimUnowned(ownerId: string): void {
+    this.#db().exec("UPDATE pupu_computers SET owner_id = ? WHERE owner_id IS NULL", ownerId);
   }
 
   setScreenUntil(id: string, until: number | null): void {

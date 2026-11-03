@@ -8,7 +8,15 @@ Electron 做的电脑端（技术方案 5.3、5.4，第一版是 M2）。它做�
 
 ## 配对和凭据
 
-第一次打开时弹配对窗口，填一个配对码（在已经连上的手机或浏览器的设置里生成）：
+第一次打开时弹配对窗口。云端开了 Google 登录时，先给「用 Google 登录」：
+
+1. App 在 `127.0.0.1` 上临时开一个端口（`src/loopback.ts`），生成一个 PKCE verifier，在系统浏览器里打开 Pupu 的登录地址；
+2. 在浏览器里登完 Google，Pupu 把一次性的码送回这个端口；
+3. App 拿码和 verifier 去换，窗口的 `desktop` 凭据和桥的 `computer` 凭据一次拿齐。窗口凭据和这台电脑都挂在登录的那个人名下：电脑的审批只推到他的手机上，放宽分级也只认他的手机。
+
+Google 不让在 App 内嵌的网页里登录，所以不在配对窗口里登。本机别的程序往那个端口塞假码也没用，没有 verifier 换不出凭据。关掉配对窗口或者点「取消」就不等了，5 分钟没登完也作废。
+
+也能点「用配对码」，填一个配对码（在已经连上的手机或浏览器的设置里生成）：
 
 1. 码换窗口的 `desktop` 设备凭据；
 2. 窗口凭据再要一个码，换桥的 `computer` 凭据。
@@ -49,6 +57,8 @@ open -g -n -a "$PWD/node_modules/electron/dist/Electron.app" \
 curl -s http://127.0.0.1:9333/json   # 找到页面，用它的 webSocketDebuggerUrl 发 Runtime.evaluate、Page.captureScreenshot
 ```
 
+`PUPU_BACKGROUND=1` 时点「用 Google 登录」不开系统浏览器（它会跑到前台），登录地址写进 `~/Library/Logs/Pupu Dev/main.log`（「后台测试，不开浏览器：…」那一行），用 curl 带着 cookie 走完它就行，配合 `apps/cloud/dev/fake-google.mjs`。
+
 `PUPU_USER_DATA` 换一份 App 数据（凭据、cookie），`PUPU_DIR` 换一份桥的数据（代替 `~/.pupu`），这样能同时跑两套，也不碰正在用的配对。这几个环境变量只在开发版里认，正式包不认 `PUPU_BACKGROUND`、`PUPU_URL`、`PUPU_USER_DATA`。配对、吊销、桥重启、开关、退出这些主进程的事，尽量用 CDP 调 `window.pupuPairing` / `window.pupuDesktop`，或者对本机 wrangler dev 发请求来验，不开窗口给人看。
 
 ### 系统授权
@@ -84,6 +94,7 @@ open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 
 - Cindy `apps/desktop`（Apache-2.0）：`utilityProcess` 托管 Node 的活、`safeStorage` 存凭据、正式包关 RunAsNode。
 - Paseo `packages/desktop`（Apache-2.0）：sandbox 里的 preload 只能 `require("electron")`，要打成单个文件；窗口的跳转拦截。
+- VS Code `extensions/github-authentication`（MIT）：在系统浏览器里登录、回调送到本机回环端口（`listen(0, "127.0.0.1")`）再跳一个本地结果页的写法（RFC 8252）。
 - deepchat `src/main`（Apache-2.0）：`utilityProcess` 宿主的拉起、消息和退出重启（`scheduler/schedulerProcessManager.ts`），托盘模板图。
 
 都是看思路自己写的，没搬代码。

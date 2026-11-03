@@ -1,12 +1,13 @@
 import UIKit
 
-/// 设置：授权的电脑、每台电脑的权限分级、通知、配对过的手机和浏览器、给新设备生成配对码、连的是哪个 Pupu。
+/// 设置：授权的电脑、每台电脑的权限分级、通知、成员、配对过的手机和浏览器、给新设备生成配对码、连的是哪个 Pupu。
 final class SettingsViewController: UICollectionViewController {
     nonisolated private enum Section: Hashable, Sendable {
         case computers
         case policy(computerId: String, name: String)
         case abilities
         case notifications
+        case members
         case devices
         case pair
         case connection
@@ -18,6 +19,8 @@ final class SettingsViewController: UICollectionViewController {
         case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case abilities
         case notifications(Push.Status, busy: Bool)
+        case member(Member, removable: Bool)
+        case invite
         case device(Device)
         case noDevice
         case newCode(note: String, busy: Bool)
@@ -84,7 +87,8 @@ final class SettingsViewController: UICollectionViewController {
         case .policy(_, let name): "「\(name)」的权限分级"
         case .abilities: "这台电脑能做的"
         case .notifications: "通知"
-        case .devices: "手机和浏览器"
+        case .members: "成员"
+        case .devices: "手机、浏览器和电脑 App"
         case .pair: "连接新设备"
         case .connection: "连接"
         }
@@ -102,9 +106,20 @@ final class SettingsViewController: UICollectionViewController {
                 .policy(computerId: computer.id, policy: $0, selected: computer.currentPolicy == $0)
             }, toSection: section)
         }
-        snapshot.appendSections([.abilities, .notifications, .devices, .pair, .connection])
+        snapshot.appendSections([.abilities, .notifications])
         snapshot.appendItems([.abilities], toSection: .abilities)
         snapshot.appendItems([.notifications(Push.shared.status, busy: testing)], toSection: .notifications)
+        // 没开 Google 登录、还没有创建者时没有成员，这一节不显示。
+        if !store.members.isEmpty {
+            let me = store.members.first(where: \.current)
+            snapshot.appendSections([.members])
+            snapshot.appendItems(store.members.map {
+                .member($0, removable: me?.isCreator == true && !$0.isCreator)
+            }, toSection: .members)
+            // 邀请只有创建者在手机上能做（云端 members.ts 的 mayInvite）。
+            if me?.isCreator == true { snapshot.appendItems([.invite], toSection: .members) }
+        }
+        snapshot.appendSections([.devices, .pair, .connection])
         snapshot.appendItems(store.devices.isEmpty ? [.noDevice] : store.devices.map(Item.device), toSection: .devices)
         let base = Connection.shared.endpoint?.base.absoluteString ?? ""
         noticeJoined(store)
@@ -142,7 +157,7 @@ final class SettingsViewController: UICollectionViewController {
         switch item {
         case .computer(let computer):
             content.text = computer.name
-            content.secondaryText = computer.label
+            content.secondaryText = [computer.label, email(of: computer.ownerId)].compactMap { $0 }.joined(separator: " · ")
             content.image = UIImage(systemName: "circle.fill")
             content.imageProperties.tintColor = computer.online ? Theme.online : Theme.offline
             content.imageProperties.maximumSize = CGSize(width: 8, height: 8)
@@ -150,7 +165,9 @@ final class SettingsViewController: UICollectionViewController {
                 self?.confirmRevoke(computer)
             })
             revoke.configuration?.baseForegroundColor = Theme.dangerInk
-            cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+            if mayRevoke(owner: computer.ownerId) {
+                cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+            }
         case .noComputer:
             content.text = "还没有授权的电脑"
             content.secondaryText = "在电脑上配对桥之后，这里会显示它在不在线。"
@@ -177,6 +194,20 @@ final class SettingsViewController: UICollectionViewController {
                 content.secondaryText = "点一下去系统设置里打开。关着的话，只有打开 App 才看得到要批准的事。"
             }
             content.textProperties.font = Theme.font(.body, weight: .semibold)
+        case .member(let member, let removable):
+            content.text = member.current ? "\(member.email) · 你" : member.email
+            content.secondaryText = member.label
+            if removable {
+                let remove = UIButton(configuration: .plain(), primaryAction: UIAction(title: "移除") { [weak self] _ in
+                    self?.confirmRemove(member)
+                })
+                remove.configuration?.baseForegroundColor = Theme.dangerInk
+                cell.accessories = [.customView(configuration: .init(customView: remove, placement: .trailing()))]
+            }
+        case .invite:
+            content.text = "邀请成员"
+            content.textProperties.font = Theme.font(.body, weight: .semibold)
+            content.secondaryText = "填他的 Google 邮箱。他用这个账号登录就能一起用 Pupu；他的第一台手机要一台已经连上的手机点「允许」。"
         case .device(let device):
             content.text = device.current ? "\(device.name) · 这台手机" : device.name
             content.secondaryText = device.label
@@ -184,7 +215,9 @@ final class SettingsViewController: UICollectionViewController {
                 self?.confirmRevoke(device)
             })
             revoke.configuration?.baseForegroundColor = Theme.dangerInk
-            cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+            if mayRevoke(owner: device.memberId) {
+                cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+            }
         case .noDevice:
             content.text = "还没有配对的手机或浏览器"
         case .newCode(let note, let busy):
@@ -217,7 +250,7 @@ final class SettingsViewController: UICollectionViewController {
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
-        case .policy, .notifications, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .policy, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
         default: false
         }
     }
@@ -247,6 +280,8 @@ final class SettingsViewController: UICollectionViewController {
             default:
                 testPush()
             }
+        case .invite:
+            askInvite()
         case .newCode:
             createCode()
         case .code(let pairing):
@@ -360,6 +395,67 @@ final class SettingsViewController: UICollectionViewController {
                         self?.dismiss(animated: true) { Connection.shared.forget() }
                         return
                     }
+                } catch {
+                    self?.show(error.localizedDescription)
+                }
+                Store.shared.refresh()
+            }
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(sheet, animated: true)
+    }
+
+    /// 成员 id 对应的邮箱。
+    private func email(of member: String?) -> String? {
+        guard let member else { return nil }
+        return Store.shared.members.first { $0.id == member }?.email
+    }
+
+    /// 和云端 members.ts 的 mayRevoke 一样：自己名下的自己能吊销，创建者能吊销所有人的。
+    /// 还没有成员（没开 Google 登录）时都能吊销，和以前一样。
+    private func mayRevoke(owner: String?) -> Bool {
+        let members = Store.shared.members
+        guard !members.isEmpty else { return true }
+        guard let me = members.first(where: \.current) else { return false }
+        return me.isCreator || owner == me.id
+    }
+
+    private func askInvite() {
+        let alert = UIAlertController(title: "邀请成员", message: "填他的 Google 邮箱。", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "name@gmail.com"
+            field.keyboardType = .emailAddress
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+            field.textContentType = .emailAddress
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "邀请", style: .default) { [weak self, weak alert] _ in
+            let email = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !email.isEmpty, let api = Store.shared.api else { return }
+            Task {
+                do {
+                    try await api.invite(email: email)
+                } catch {
+                    self?.show(error.localizedDescription)
+                }
+                Store.shared.refresh()
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    private func confirmRemove(_ member: Member) {
+        let sheet = UIAlertController(
+            title: nil,
+            message: "移除后 \(member.email) 不能再登录，他名下的手机、浏览器、电脑 App 和电脑马上断开。",
+            preferredStyle: .actionSheet
+        )
+        sheet.addAction(UIAlertAction(title: "移除 \(member.email)", style: .destructive) { [weak self] _ in
+            guard let api = Store.shared.api else { return }
+            Task {
+                do {
+                    try await api.remove(member: member.id)
                 } catch {
                     self?.show(error.localizedDescription)
                 }

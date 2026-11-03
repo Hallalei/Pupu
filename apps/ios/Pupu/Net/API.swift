@@ -54,12 +54,46 @@ nonisolated struct API: Sendable {
         return try await API(endpoint: Endpoint(base: base, token: nil)).send("api/pair", method: "POST", body: body)
     }
 
+    /// 换凭据的结果：拿到了，或者还在等已有手机点允许。
+    nonisolated enum Redeemed: Sendable {
+        case paired(Paired)
+        case waiting(expiresAt: Double)
+    }
+
+    private struct RedeemBody: Decodable {
+        let status: String
+        let device: Paired?
+        let expiresAt: Double?
+    }
+
+    /// 用 Google 登录回来的一次性 code，加上这台手机留着的 verifier，换凭据。见 src/auth/routes.ts 的 /api/auth/redeem。
+    static func redeemSignIn(base: URL, code: String, verifier: String, name: String) async throws -> Redeemed {
+        let body: RedeemBody = try await API(endpoint: Endpoint(base: base, token: nil)).send(
+            "api/auth/redeem",
+            method: "POST",
+            body: ["code": code, "verifier": verifier, "name": name]
+        )
+        if body.status == "waiting", let expiresAt = body.expiresAt { return .waiting(expiresAt: expiresAt) }
+        guard let device = body.device else { throw APIError(message: "Pupu 给的凭据不完整。") }
+        return .paired(device)
+    }
+
     func createPairingCode() async throws -> PairingCode {
         try await send("api/pairing-codes", method: "POST", body: [:])
     }
 
     func revoke(device id: String) async throws {
         let _: Done = try await send("api/devices/\(id)/revoke", method: "POST", body: [:])
+    }
+
+    /// 邀请成员。只有创建者在手机上能邀请（云端 members.ts 的 mayInvite）。
+    func invite(email: String) async throws {
+        let _: Done = try await send("api/members", method: "POST", body: ["email": email])
+    }
+
+    /// 移除成员：他名下的设备和电脑一起吊销。只有创建者能做。
+    func remove(member id: String) async throws {
+        let _: Done = try await send("api/members/\(id)/remove", method: "POST", body: [:])
     }
 
     private struct Done: Decodable {}

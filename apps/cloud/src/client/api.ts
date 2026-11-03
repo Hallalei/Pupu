@@ -29,8 +29,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+
 export const api = {
   state: () => request<PupuState>("/api/state"),
+  /** 开没开 Google 登录。见 src/auth/routes.ts。 */
+  googleEnabled: async () => (await request<{ enabled: boolean }>("/api/auth/google")).enabled,
   createProject: (name: string, goal: string) =>
     request<Project>("/api/projects", {
       method: "POST",
@@ -66,7 +69,12 @@ export const api = {
   revokeDevice: (id: string) =>
     request<{ ok: true }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
-    })
+    }),
+  /** 邀请成员。只有创建者在手机 App 上能邀请，网页上调会被拒（见 members.ts 的 `mayInvite`）。 */
+  inviteMember: (email: string) =>
+    request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email }) }),
+  removeMember: (id: string) =>
+    request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" })
 };
 
 /**
@@ -79,6 +87,7 @@ export function usePupuState() {
   const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);
   const [activity, setActivity] = useState<PupuState["activity"]>([]);
+  const [members, setMembers] = useState<PupuState["members"]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -91,6 +100,7 @@ export function usePupuState() {
       setApprovals(state.approvals);
       setDevices(state.devices);
       setActivity(state.activity);
+      setMembers(state.members);
       setError(null);
       setUnauthorized(false);
     } catch (cause) {
@@ -124,6 +134,7 @@ export function usePupuState() {
     approvals,
     devices,
     activity,
+    members,
     applyActivity: setActivity,
     error,
     unauthorized,

@@ -9,4 +9,11 @@ interface Env {
   readonly APNS_KEY_ID?: string;
   /** 苹果开发者团队 ID，10 位。 */
   readonly APNS_TEAM_ID?: string;
+  /** Google Cloud 里「Web 应用」类型的 OAuth 客户端。三个都设了才开 Google 登录。 */
+  readonly GOOGLE_CLIENT_ID?: string;
+  readonly GOOGLE_CLIENT_SECRET?: string;
+  /** 创建者的 Google 邮箱。还没有创建者时，只有它能第一个登录、成为创建者，之后不再起作用。见 src/members.ts。 */
+  readonly CREATOR_EMAIL?: string;
+  /** 只在本机开发用：假的 Google（授权、换 token、公钥都在这个地址下），不用真去 Google 建客户端。线上不要设。 */
+  readonly GOOGLE_OIDC_DEV_BASE?: string;
 }

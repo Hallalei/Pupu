@@ -148,6 +148,8 @@ export type UpFrame =
 export type ComputerView = {
   readonly id: string;
   readonly name: string;
+  /** 主人的成员 id（见 apps/cloud/src/members.ts）。还没主人是 null。 */
+  readonly ownerId: string | null;
   readonly online: boolean;
   /** 连着，但是心跳停了。界面上算离线，工具会说明是心跳。 */
   readonly stale: boolean;

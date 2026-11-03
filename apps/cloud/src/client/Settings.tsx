@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
-import type { DeviceView } from "../devices";
+import { mayChangePolicy, type DeviceView } from "../devices";
+import { mayInvite, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
 import { useDesktopComputer } from "./desktop";
 import { ago, computerLabel } from "./Home";
 import { ThisComputer } from "./ThisComputer";
@@ -18,7 +19,7 @@ type PairingCode = { readonly code: string; readonly expiresAt: number };
 
 /**
  * 这一版的设置：管已经连上的电脑、手机和浏览器，每台电脑上 Pupu 什么时候要先问你，
- * 以及给新设备生成配对码。
+ * 成员名单，以及给新设备生成配对码。
  */
 export function Settings({
   isOpen,
@@ -27,7 +28,11 @@ export function Settings({
   onRevoke,
   onSetPolicy,
   devices,
+  members,
+  actor,
   onRevokeDevice,
+  onInviteMember,
+  onRemoveMember,
   onCreatePairingCode
 }: {
   isOpen: boolean;
@@ -36,7 +41,12 @@ export function Settings({
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
   devices: readonly DeviceView[];
+  members: readonly MemberView[];
+  /** 发请求的是谁（见 members.ts 的 `actorOf`），按钮灰不灰和接口的规则对得上；本机开发没设访问口令时是 null。 */
+  actor: Actor | null | undefined;
   onRevokeDevice: (id: string) => Promise<void>;
+  onInviteMember: (email: string) => Promise<void>;
+  onRemoveMember: (id: string) => Promise<void>;
   onCreatePairingCode: () => Promise<PairingCode>;
 }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -58,11 +68,13 @@ export function Settings({
     }
   }
 
-  async function revoke(id: string, kind: "computer" | "device") {
+  const emails = new Map(members.map((member) => [member.id, member.email]));
+
+  async function revoke(id: string, kind: "computer" | "device" | "member") {
     setPendingId(id);
     setError(null);
     try {
-      await (kind === "computer" ? onRevoke(id) : onRevokeDevice(id));
+      await (kind === "computer" ? onRevoke(id) : kind === "device" ? onRevokeDevice(id) : onRemoveMember(id));
       setConfirmId(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -98,12 +110,13 @@ export function Settings({
                       <span className="font-normal text-muted"> · 这台电脑</span>
                     )}
                   </div>
-                  <div className="text-sm text-muted">
+                  <div className="truncate text-sm text-muted">
                     {computerLabel(computer)}
+                    {computer.ownerId && emails.has(computer.ownerId) ? ` · ${emails.get(computer.ownerId)}` : ""}
                     {computer.screen ? " · 屏幕已授权" : ""}
                   </div>
                 </div>
-                {confirmId !== computer.id && (
+                {confirmId !== computer.id && mayRevoke(actor, computer.ownerId) && (
                   <button
                     type="button"
                     className="shrink-0 text-sm text-danger"
@@ -119,19 +132,20 @@ export function Settings({
               <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col gap-1">
                 {POLICIES.map(([policy, label, hint]) => {
                   const selected = computer.policy === policy;
+                  const locked = !mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
                   return (
                     <button
                       key={policy}
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      disabled={pendingId === computer.id}
+                      disabled={pendingId === computer.id || locked}
                       onClick={() => {
                         if (!selected) void setPolicy(computer.id, policy);
                       }}
                       className={`flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left ${
                         selected ? "bg-background" : ""
-                      }`}
+                      } ${locked ? "opacity-60" : ""}`}
                     >
                       <span
                         aria-hidden="true"
@@ -140,7 +154,10 @@ export function Settings({
                         }`}
                       />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium">{label}</span>
+                        <span className="block text-sm font-medium">
+                          {label}
+                          {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
+                        </span>
                         <span className="block text-xs leading-5 text-muted">{hint}</span>
                       </span>
                     </button>
@@ -187,6 +204,19 @@ export function Settings({
         </p>
       </section>
 
+      <Members
+        members={members}
+        actor={actor}
+        confirmId={confirmId}
+        pendingId={pendingId}
+        onConfirm={(id) => {
+          setError(null);
+          setConfirmId(id);
+        }}
+        onRemove={(id) => void revoke(id, "member")}
+        onInvite={onInviteMember}
+      />
+
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium text-muted">手机、浏览器和电脑 App</h3>
         {devices.length === 0 ? (
@@ -207,9 +237,9 @@ export function Settings({
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-muted">{deviceLabel(device)}</div>
+                  <div className="truncate text-sm text-muted">{deviceLabel(device)}</div>
                 </div>
-                {confirmId !== device.id && (
+                {confirmId !== device.id && mayRevoke(actor, device.memberId) && (
                   <button
                     type="button"
                     className="shrink-0 text-sm text-danger"
@@ -308,9 +338,117 @@ function useWide(): boolean {
 
 const DEVICE_KINDS: Record<DeviceView["kind"], string> = { phone: "手机", browser: "浏览器", desktop: "电脑 App" };
 
+/**
+ * 成员名单：创建者在前。创建者能移除别人；邀请要在手机 App 上做（加人等于放宽权限，见 `mayInvite`），
+ * 所以网页上只有本机开发没带凭据时才有邀请框。
+ */
+function Members({
+  members,
+  actor,
+  confirmId,
+  pendingId,
+  onConfirm,
+  onRemove,
+  onInvite
+}: {
+  members: readonly MemberView[];
+  actor: Actor | null | undefined;
+  confirmId: string | null;
+  pendingId: string | null;
+  onConfirm: (id: string | null) => void;
+  onRemove: (id: string) => void;
+  onInvite: (email: string) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (members.length === 0) return null;
+
+  async function invite() {
+    setInviting(true);
+    setError(null);
+    try {
+      await onInvite(email.trim());
+      setEmail("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium text-muted">成员</h3>
+      {members.map((member) => (
+        <div key={member.id} className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">
+                {member.email}
+                {member.current && <span className="font-normal text-muted"> · 你</span>}
+              </div>
+              <div className="text-sm text-muted">
+                {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
+              </div>
+            </div>
+            {confirmId !== member.id && mayRemoveMember(actor, member) && (
+              <button type="button" className="shrink-0 text-sm text-danger" onClick={() => onConfirm(member.id)}>
+                移除
+              </button>
+            )}
+          </div>
+          {confirmId === member.id && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm leading-6 text-muted">
+                移除后 {member.email} 不能再登录，他名下的手机、浏览器、电脑 App 和电脑马上断开。
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="tertiary" onPress={() => onConfirm(null)}>
+                  取消
+                </Button>
+                <Button size="sm" variant="danger" isPending={pendingId === member.id} onPress={() => onRemove(member.id)}>
+                  移除
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      {mayInvite(actor) ? (
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void invite();
+          }}
+        >
+          <input
+            type="email"
+            aria-label="要邀请的 Google 邮箱"
+            placeholder="要邀请的 Google 邮箱"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="min-w-0 flex-1 rounded-xl bg-default px-3 py-2 text-sm"
+          />
+          <Button size="sm" type="submit" isPending={inviting} isDisabled={!email.trim()}>
+            邀请
+          </Button>
+        </form>
+      ) : (
+        actor?.role === "creator" && (
+          <p className="text-sm leading-6 text-muted">邀请新成员要在手机 App 的设置里做：加一个人等于放宽权限。</p>
+        )
+      )}
+      {error && <p className="text-sm text-danger">{error}</p>}
+    </section>
+  );
+}
+
+/** 比如「手机 · a@gmail.com · 3 分钟前用过」。邮箱是这台设备属于的成员。 */
 function deviceLabel(device: DeviceView): string {
-  const kind = DEVICE_KINDS[device.kind];
-  return device.lastSeenAt ? `${kind} · ${ago(device.lastSeenAt)}用过` : kind;
+  const seen = device.lastSeenAt ? `${ago(device.lastSeenAt)}用过` : null;
+  return [DEVICE_KINDS[device.kind], device.member, seen].filter(Boolean).join(" · ");
 }
 
 /**

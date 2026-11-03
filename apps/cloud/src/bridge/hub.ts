@@ -514,6 +514,7 @@ export class ComputerBridge {
     return {
       id: row.id,
       name: link?.ready ? link.name : row.name,
+      ownerId: row.ownerId,
       online: alive,
       stale,
       lastSeenAt: lastBeat ?? row.lastSeenAt,

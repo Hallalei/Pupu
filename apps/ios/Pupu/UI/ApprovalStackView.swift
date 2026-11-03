@@ -73,7 +73,10 @@ final class ApprovalCardView: SurfaceView {
 
         let title = UILabel(text: approval.title, style: .headline, lines: 0)
         var rows: [UIView] = [top, title]
-        if !approval.detail.isEmpty {
+        if approval.kind == "sign_in" {
+            // 新手机登录：账号和登录地点，不是命令，不用等宽字。
+            rows.append(UILabel(text: approval.detail, style: .subheadline, lines: 0))
+        } else if !approval.detail.isEmpty {
             rows.append(CodeBlockView(text: approval.detail))
         }
         let minutes = max(1, Int((approval.expiresAt - Date.now.timeIntervalSince1970 * 1000) / 60_000))

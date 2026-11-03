@@ -11,5 +11,5 @@
     "types": ["node"]
   },
   "include": ["./**/*.ts"],
-  "exclude": ["./**/*.test.ts"]
+  "exclude": ["./**/*.test.ts", "./sql-memory.ts"]
 }

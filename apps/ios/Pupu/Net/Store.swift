@@ -9,6 +9,8 @@ final class Store {
     private(set) var computers: [Computer] = []
     private(set) var approvals: [Approval] = []
     private(set) var devices: [Device] = []
+    /// 一起用这个 Pupu 的人，创建者在前。没开 Google 登录、还没有创建者时是空的。
+    private(set) var members: [Member] = []
     /// 每台电脑在做什么，顺序和 computers 一样。
     private(set) var activity: [ComputerActivity] = []
     private(set) var error: String?
@@ -77,6 +79,7 @@ final class Store {
                 computers = state.computers
                 approvals = state.approvals ?? []
                 devices = state.devices ?? []
+                members = state.members ?? []
                 activity = state.activity ?? []
                 error = nil
                 Push.shared.clearDelivered(pending: approvals.map(\.id))
@@ -106,6 +109,7 @@ final class Store {
         computers = []
         approvals = []
         devices = []
+        members = []
         activity = []
         error = nil
         loaded = false
