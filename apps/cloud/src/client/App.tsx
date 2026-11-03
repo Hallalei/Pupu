@@ -101,6 +101,9 @@ export function App() {
   /** 在主页输入栏里发的话：切到聊天，连上以后发出去。 */
   const [pendingChat, setPendingChat] = useState<string | null>(null);
   const thisComputer = useDesktopComputer();
+  // 审批的允许只认手机 App。本机开发没设访问口令时没有「这台设备」，照常能点。
+  const current = devices.find((device) => device.current);
+  const canAllow = !current || current.kind === "phone";
 
   const chat: ChatContext = useMemo(
     () => ({
@@ -279,6 +282,8 @@ export function App() {
         )}
         <Approvals
           approvals={approvals}
+          canAllow={canAllow}
+          phonePaired={devices.some((device) => device.kind === "phone")}
           onDecide={async (id, decision) => {
             await api.decideApproval(id, decision);
             await refresh();

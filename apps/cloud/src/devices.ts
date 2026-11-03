@@ -152,6 +152,26 @@ export function deviceView(row: DeviceRow, current: string | null): DeviceView {
   };
 }
 
+/**
+ * 审批只认手机 App 的「允许」：电脑 App 和浏览器的窗口就开在 Pupu 能操作的电脑上，它能自己点。
+ * 拒绝哪儿都能点，挡住的只是 Pupu 自己的请求。
+ * `kind` 是 null 说明请求没带设备凭据（本机开发没设访问口令），照常放行；
+ * undefined 是带了凭据却查不到这台设备（刚被吊销），不放行。
+ */
+export function mayDecide(decision: "allow" | "deny", kind: DeviceKind | null | undefined): boolean {
+  return decision === "deny" || kind === null || kind === "phone";
+}
+
+/**
+ * 新手机只能用已有手机生成的配对码：电脑上浏览器和电脑 App 的凭据 Pupu 拿得到，
+ * 不然它能自己生成个码、配成「手机」，再批准自己。
+ * 从没配过手机时哪儿生成的码都行，不然第一台连不上；吊销过的也算配过，免得先吊销真手机再钻这个空子。
+ * 手机全丢了用访问口令配，不走这里。
+ */
+export function mayPair(kind: DeviceKind | "computer", codeByPhone: boolean, hadPhone: boolean): boolean {
+  return kind !== "phone" || codeByPhone || !hadPhone;
+}
+
 export class DeviceStore {
   readonly #sql: SqlStorage;
   #ready = false;
@@ -173,8 +193,14 @@ export class DeviceStore {
       )`);
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_pairing_codes (
         code_hash TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
+        expires_at INTEGER NOT NULL,
+        by_phone INTEGER NOT NULL DEFAULT 0
       )`);
+      // 早先建的表没有 by_phone 这一列，补上。
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_pairing_codes)").toArray();
+      if (!columns.some((column) => column.name === "by_phone")) {
+        this.#sql.exec("ALTER TABLE pupu_pairing_codes ADD COLUMN by_phone INTEGER NOT NULL DEFAULT 0");
+      }
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_pairing_attempts (
         id INTEGER PRIMARY KEY,
         bucket TEXT NOT NULL,
@@ -196,6 +222,11 @@ export class DeviceStore {
       .exec("SELECT * FROM pupu_devices WHERE revoked_at IS NULL ORDER BY created_at DESC")
       .toArray()
       .map(toRow);
+  }
+
+  /** 配过手机没有，吊销了的也算。 */
+  hadPhone(): boolean {
+    return this.#db().exec("SELECT 1 FROM pupu_devices WHERE kind = 'phone' LIMIT 1").toArray().length > 0;
   }
 
   insert(input: { name: string; kind: DeviceKind; tokenHash: string }): DeviceRow {
@@ -232,27 +263,28 @@ export class DeviceStore {
     this.#db().exec("UPDATE pupu_devices SET last_seen_at = ? WHERE id = ?", now, row.id);
   }
 
-  /** 撞上一个还没过期的同样的码就不写，返回 false，换一个再来。 */
-  addCode(hash: string, expiresAt: number, now: number): boolean {
+  /** 撞上一个还没过期的同样的码就不写，返回 false，换一个再来。`byPhone` 记下是不是手机生成的，见 `mayPair`。 */
+  addCode(hash: string, expiresAt: number, now: number, byPhone: boolean): boolean {
     this.#db().exec("DELETE FROM pupu_pairing_codes WHERE expires_at <= ?", now);
     const inserted = this.#db()
       .exec(
-        "INSERT OR IGNORE INTO pupu_pairing_codes (code_hash, expires_at) VALUES (?, ?) RETURNING code_hash",
+        "INSERT OR IGNORE INTO pupu_pairing_codes (code_hash, expires_at, by_phone) VALUES (?, ?, ?) RETURNING code_hash",
         hash,
-        expiresAt
+        expiresAt,
+        byPhone ? 1 : 0
       )
       .toArray();
     return inserted.length > 0;
   }
 
-  /** 码对、没过期就删掉它并返回 true：一个码只能换一次凭据。 */
-  takeCode(hash: string, now: number): boolean {
+  /** 码对、没过期就删掉它，返回它是不是手机生成的：一个码只能换一次凭据。不对返回 undefined。 */
+  takeCode(hash: string, now: number): { byPhone: boolean } | undefined {
     const [row] = this.#db()
-      .exec("SELECT code_hash FROM pupu_pairing_codes WHERE code_hash = ? AND expires_at > ?", hash, now)
+      .exec("SELECT by_phone FROM pupu_pairing_codes WHERE code_hash = ? AND expires_at > ?", hash, now)
       .toArray();
-    if (!row) return false;
+    if (!row) return undefined;
     this.#db().exec("DELETE FROM pupu_pairing_codes WHERE code_hash = ?", hash);
-    return true;
+    return { byPhone: Number(row.by_phone) === 1 };
   }
 
   /** 这一桶最近失败了几次。顺手清掉窗口外的。 */

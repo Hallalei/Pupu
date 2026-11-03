@@ -315,6 +315,7 @@ function deviceLabel(device: DeviceView): string {
 
 /**
  * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑填码。
+ * 连过手机以后，网页生成的码配不了新手机（见 `mayPair`），要在旧手机上生成。
  * 用这个码的设备连上了，或者码过期了，就收起来。
  */
 function PairNew({
@@ -385,7 +386,9 @@ function PairNew({
             </div>
           </div>
           <ul className="flex flex-col gap-1.5 text-sm leading-6">
-            <li>手机：用相机扫二维码，在 Pupu App 里打开；或者在 App 的连接页填这个码。</li>
+            <li>
+              手机：用相机扫二维码，在 Pupu App 里打开；或者在 App 的连接页填这个码。连过手机的，新手机要用旧手机设置里生成的码。
+            </li>
             <li>浏览器：打开 {origin}，填这个码。</li>
             <li>电脑：打开 Pupu 电脑 App，填这个码。还没装 App 的，在 apps/cloud 目录里运行</li>
           </ul>

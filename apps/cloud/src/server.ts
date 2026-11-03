@@ -29,6 +29,8 @@ import {
   DeviceStore,
   deviceTag,
   deviceView,
+  mayDecide,
+  mayPair,
   newPairingCode,
   normalizePairingCode,
   PAIRING_TTL_MS,
@@ -75,7 +77,7 @@ export type PupuState = {
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
 export type PairResult =
   | { readonly ok: true; readonly id: string; readonly name: string; readonly token: string }
-  | { readonly ok: false; readonly status: 400 | 401 | 429; readonly error: string };
+  | { readonly ok: false; readonly status: 400 | 401 | 403 | 429; readonly error: string };
 
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
@@ -305,13 +307,17 @@ export class Pupu extends DurableObject<Env> {
     return row.id;
   }
 
-  /** 已经连上的设备要一个配对码，给新设备用。明文只在这一次返回。 */
-  async createPairingCode(): Promise<{ code: string; expiresAt: number }> {
+  /**
+   * 已经连上的设备要一个配对码，给新设备用。明文只在这一次返回。
+   * `device` 是要码的设备，记下它是不是手机（见 `mayPair`）；本机开发不带设备，当手机算。
+   */
+  async createPairingCode(device: string | null = null): Promise<{ code: string; expiresAt: number }> {
+    const byPhone = device === null || this.devices.list().find((row) => row.id === device)?.kind === "phone";
     const now = Date.now();
     const expiresAt = now + PAIRING_TTL_MS;
     for (;;) {
       const code = newPairingCode();
-      if (this.devices.addCode(await tokenHash(code.replace("-", "")), expiresAt, now)) {
+      if (this.devices.addCode(await tokenHash(code.replace("-", "")), expiresAt, now, byPhone)) {
         return { code, expiresAt };
       }
     }
@@ -347,13 +353,19 @@ export class Pupu extends DurableObject<Env> {
       return { ok: false, status: 429, error: "访问口令试错的次数太多了。过 10 分钟再试，或者用配对码。" };
     }
     const attempt = this.devices.addAttempt(code ? [source] : [source, TOKEN_BUCKET], now);
-    const matched = code
-      ? this.devices.takeCode(await tokenHash(code), now)
-      : await this.#isAccessToken(input.accessToken ?? "");
+    const taken = code ? this.devices.takeCode(await tokenHash(code), now) : undefined;
+    const matched = code ? taken !== undefined : await this.#isAccessToken(input.accessToken ?? "");
     if (!matched) {
       return { ok: false, status: 401, error: code ? "配对码不对，或者已经用过、过期了。" : "访问口令不对。" };
     }
     this.devices.forgive(attempt);
+    if (taken && !mayPair(input.kind, taken.byPhone, this.devices.hadPhone())) {
+      return {
+        ok: false,
+        status: 403,
+        error: "新手机要用已经连上的手机生成的配对码：在那台手机的设置里点「生成配对码」。"
+      };
+    }
     return this.#issue(input);
   }
 
@@ -394,12 +406,14 @@ export class Pupu extends DurableObject<Env> {
     return true;
   }
 
-  /** 用户在手机上点了允许或拒绝。`device` 是点的那台设备。 */
+  /** 用户在手机上点了允许或拒绝。`device` 是点的那台设备；不是手机的「允许」不收，见 `mayDecide`。 */
   async decideApproval(
     id: string,
     decision: "allow" | "deny",
     device: string | null = null
-  ): Promise<"ok" | "missing" | "settled"> {
+  ): Promise<"ok" | "missing" | "settled" | "phone_only"> {
+    const kind = device === null ? null : this.devices.list().find((row) => row.id === device)?.kind;
+    if (!mayDecide(decision, kind)) return "phone_only";
     // 等着的那次调用可能在 DO 被回收时断了。先把 pi 拉起来，它会重跑那次调用，读到这里的决定。
     await this.lifecycle.start();
     if (device) this.pusher.decidedBy(id, device);
@@ -641,7 +655,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     return Response.json(await pupu(env).state(caller.device));
   }
   if (pathname === "/api/pairing-codes" && method === "POST") {
-    return Response.json(await pupu(env).createPairingCode());
+    return Response.json(await pupu(env).createPairingCode(caller.device));
   }
   const device = pathname.match(/^\/api\/devices\/([^/]+)\/revoke$/);
   if (device && method === "POST") {
@@ -668,6 +682,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     const result = await pupu(env).decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision, caller.device);
     if (result === "missing") return Response.json({ error: "没有这条请示" }, { status: 404 });
     if (result === "settled") return Response.json({ error: "这条请示已经处理过或过期了" }, { status: 409 });
+    if (result === "phone_only") return Response.json({ error: "要在手机 App 上批准" }, { status: 403 });
     return Response.json({ ok: true });
   }
   if (pathname === "/api/push-tokens" && method === "POST") {
