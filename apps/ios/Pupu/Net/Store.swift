@@ -9,6 +9,8 @@ final class Store {
     private(set) var computers: [Computer] = []
     private(set) var approvals: [Approval] = []
     private(set) var devices: [Device] = []
+    /// 每台电脑在做什么，顺序和 computers 一样。
+    private(set) var activity: [ComputerActivity] = []
     private(set) var error: String?
     private(set) var loaded = false
 
@@ -75,6 +77,7 @@ final class Store {
                 computers = state.computers
                 approvals = state.approvals ?? []
                 devices = state.devices ?? []
+                activity = state.activity ?? []
                 error = nil
                 Push.shared.clearDelivered(pending: approvals.map(\.id))
             } catch let failure as APIError where failure.unauthorized {
@@ -91,11 +94,19 @@ final class Store {
         }
     }
 
+    /// 会话连接上收到的 activity 帧：整份换掉，不用重新拉。
+    func apply(activity next: [ComputerActivity]) {
+        guard next != activity else { return }
+        activity = next
+        notify()
+    }
+
     private func reset() {
         projects = []
         computers = []
         approvals = []
         devices = []
+        activity = []
         error = nil
         loaded = false
         notify()

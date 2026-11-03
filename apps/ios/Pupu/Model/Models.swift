@@ -110,9 +110,48 @@ nonisolated struct Paired: Decodable, Sendable {
     let token: String
 }
 
+/// 一台电脑现在在干什么。主页的「正在做」和锁屏的实时活动用这一份，云端 src/bridge/activity.ts 算出来。
+nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
+    enum State: String, Sendable {
+        /// 没连上，或者心跳停了。
+        case offline
+        /// 有请示等你批，Pupu 停在那一步。
+        case waiting
+        /// 正在电脑上做事。
+        case working
+        /// 连着，闲着。
+        case idle
+    }
+
+    struct ProjectRef: Decodable, Sendable, Hashable {
+        let id: String
+        let name: String
+    }
+
+    let computerId: String
+    let computerName: String
+    let state: String
+    /// 一句话：在做什么，或者停在哪一步等你批。闲着和离线是 nil。
+    let doing: String?
+    /// 等批的那一步为什么算高风险。
+    let reason: String?
+    /// 这件事是哪个项目里的。主对话里的是 nil。
+    let project: ProjectRef?
+    let since: Double?
+    /// 几条请示在等批。
+    let pending: Int
+    /// 同时在跑几件事。
+    let running: Int
+    /// 屏幕授权还有效。
+    let screen: Bool
+
+    var currentState: State { State(rawValue: state) ?? .idle }
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
     let computers: [Computer]
     let approvals: [Approval]?
     let devices: [Device]?
+    let activity: [ComputerActivity]?
 }

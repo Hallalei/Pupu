@@ -9,6 +9,7 @@ import {
   type ReactNode
 } from "react";
 import { Streamdown } from "streamdown";
+import type { ComputerActivity } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
 import { quotedMessage } from "../messages";
@@ -41,6 +42,8 @@ export type ChatContext = {
   readonly approvals: readonly ApprovalView[];
   readonly onOpenProject: (projectId: string) => void;
   readonly onProjectsChanged: () => void;
+  /** 收到电脑在做什么的更新。 */
+  readonly onActivity?: (activity: readonly ComputerActivity[]) => void;
 };
 
 type ChatProps = {
@@ -69,7 +72,7 @@ export function Chat({
   pending = null,
   onPendingSent
 }: ChatProps) {
-  const pi = usePiSession(session, context.onProjectsChanged);
+  const pi = usePiSession(session, context.onProjectsChanged, context.onActivity);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());

@@ -1,3 +1,4 @@
+import { describeWaiting } from "./activity.ts";
 import type { ApprovalDirectory, ApprovalRow, ApprovalView } from "./approvals.ts";
 import {
   DEFAULT_POLICY,
@@ -151,11 +152,8 @@ export class ComputerGate {
     const pending = this.#options.approvals
       .pending(now)
       .filter((row) => row.computerId === computerId)
-      .map((row) => {
-        const detail = row.detail.replace(/\s+/g, " ").trim();
-        const short = detail.length > 60 ? `${detail.slice(0, 60)}…` : detail;
-        return row.kind === "screen" ? "操作屏幕" : `${stripComputer(row.title)}：${short}`;
-      });
+      // 菜单栏就在那台电脑上，不用再说是哪台。
+      .map(describeWaiting);
     return { pending, screen: this.screenActive(computerId) };
   }
 
@@ -253,9 +251,4 @@ export class ComputerGate {
   #row(computerId: string): ComputerRow | undefined {
     return this.#options.directory.list().find((row) => row.id === computerId);
   }
-}
-
-/** 菜单栏就在那台电脑上，标题里的「在「名字」上」去掉。 */
-function stripComputer(title: string): string {
-  return title.replace(/^在「[^」]*」上/, "");
 }

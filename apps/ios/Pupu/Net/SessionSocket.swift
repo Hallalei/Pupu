@@ -14,6 +14,8 @@ final class SessionSocket {
     var onEvents: (([JSON]) -> Void)?
     /// 项目、电脑、请示或设备变了，该重新拉一次状态。这台手机被吊销时也调，拉状态会拿到 401。
     var onChanged: (() -> Void)?
+    /// 电脑在做的事变了，带着整份新的。
+    var onActivity: (([ComputerActivity]) -> Void)?
     var onError: ((String) -> Void)?
 
     private(set) var status: Status = .closed
@@ -112,6 +114,11 @@ final class SessionSocket {
             onEvents?(message["events"]?.array ?? [])
         case "projects_changed", "computers_changed", "approvals_changed", "devices_changed":
             onChanged?()
+        case "activity":
+            struct Frame: Decodable { let activity: [ComputerActivity] }
+            if let frame = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) {
+                onActivity?(frame.activity)
+            }
         case "error":
             onError?(message["message"]?.string ?? "出错了")
         default:

@@ -6,6 +6,7 @@ import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { WebSockets } from "agents/websockets";
+import { CallSessions, computerActivity, type ComputerActivity } from "./bridge/activity";
 import { ApprovalStore, type ApprovalView } from "./bridge/approvals";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
@@ -67,6 +68,8 @@ export type PupuState = {
   readonly approvals: readonly ApprovalView[];
   /** 配对过的手机和浏览器，新连上的在前。 */
   readonly devices: readonly DeviceView[];
+  /** 每台电脑在做什么，顺序和 `computers` 一样。主页的「正在做」用。 */
+  readonly activity: readonly ComputerActivity[];
 };
 
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
@@ -109,6 +112,10 @@ export class Pupu extends DurableObject<Env> {
     now: () => Date.now(),
     onChange: (computerIds) => this.#approvalsChanged(computerIds)
   });
+  /** 电脑上的调用是哪个会话发的，「正在做」靠它说出是哪个项目。 */
+  readonly #callSessions = new CallSessions();
+  /** 上一次发出去的 activity，没变就不再发。 */
+  #sentActivity = "";
   readonly registry = createRegistry();
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
@@ -133,7 +140,10 @@ export class Pupu extends DurableObject<Env> {
         ],
         hooks: [
           hook(ToolTask, {
-            beforeTool: (call, _api, context) => this.gate.beforeTool(call, context.abortSignal)
+            beforeTool: (call, api, context) => {
+              this.#callSessions.remember(call.id, String(api.conversationId));
+              return this.gate.beforeTool(call, context.abortSignal);
+            }
           })
         ]
       });
@@ -191,7 +201,11 @@ export class Pupu extends DurableObject<Env> {
   async onStart(): Promise<void> {
     // 心跳是固定字符串，运行时直接回 pong，不把这个对象叫醒。
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(BRIDGE_PING, BRIDGE_PONG));
-    this.bridge.onChange = () => this.sockets.broadcast({ type: "computers_changed" });
+    this.bridge.onChange = () => {
+      this.sockets.broadcast({ type: "computers_changed" });
+      this.#activityChanged();
+    };
+    this.bridge.onActivity = () => this.#activityChanged();
     await this.#syncModel();
     await this.sockets.reattach();
   }
@@ -213,7 +227,29 @@ export class Pupu extends DurableObject<Env> {
   #approvalsChanged(computerIds: readonly string[]): void {
     this.sockets.broadcast({ type: "approvals_changed" });
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
+    this.#activityChanged();
     this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
+  }
+
+  #activity(): ComputerActivity[] {
+    return computerActivity({
+      computers: this.bridge.list(),
+      running: this.bridge.running(),
+      pending: this.approvals.pending(Date.now()),
+      projectOf: (callId) => {
+        const session = this.#callSessions.of(callId);
+        const project = session ? this.store.projectBySession(session) : undefined;
+        return project ? { id: project.id, name: project.name } : null;
+      }
+    });
+  }
+
+  #activityChanged(): void {
+    const activity = this.#activity();
+    const sent = JSON.stringify(activity);
+    if (sent === this.#sentActivity) return;
+    this.#sentActivity = sent;
+    this.sockets.broadcast({ type: "activity", activity });
   }
 
   #apnsClient(): Apns | null {
@@ -246,7 +282,8 @@ export class Pupu extends DurableObject<Env> {
       projects: this.store.listProjects(),
       computers: this.bridge.list(),
       approvals: this.gate.pending(),
-      devices: this.devices.list().map((row) => deviceView(row, current))
+      devices: this.devices.list().map((row) => deviceView(row, current)),
+      activity: this.#activity()
     };
   }
 

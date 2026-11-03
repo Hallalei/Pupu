@@ -1,3 +1,4 @@
+import type { RunningCall } from "./activity.ts";
 import {
   ALREADY_CONNECTED_CODE,
   BRIDGE_PING,
@@ -85,7 +86,11 @@ export class ComputerBridge {
   readonly #now: () => number;
   readonly #heartbeatAt: (socket: BridgeSocket) => number | null;
   readonly #waiters = new Map<string, Waiter>();
+  /** 已经发给电脑、还没回完的调用。只在内存里：DO 重启后这些调用也作废了。 */
+  readonly #running = new Map<string, RunningCall>();
   onChange: () => void = () => {};
+  /** 有调用开始或者结束了。 */
+  onActivity: () => void = () => {};
   /** 桥 hello 完、可以收活了。 */
   onReady: (computerId: string) => void = () => {};
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
@@ -107,6 +112,10 @@ export class ComputerBridge {
       if (a.online !== b.online) return a.online ? -1 : 1;
       return (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0);
     });
+  }
+
+  running(): RunningCall[] {
+    return [...this.#running.values()];
   }
 
   async onConnect(socket: BridgeSocket, request: Request): Promise<void> {
@@ -217,10 +226,19 @@ export class ComputerBridge {
       };
     }
 
+    this.#running.set(input.requestId, {
+      callId: input.requestId,
+      computerId: computer.id,
+      action: input.action,
+      startedAt: this.#now()
+    });
+    this.onActivity();
     try {
       return await this.#collect(input, computer, waiter);
     } finally {
       this.#waiters.delete(input.requestId);
+      this.#running.delete(input.requestId);
+      this.onActivity();
     }
   }
 

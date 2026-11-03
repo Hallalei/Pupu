@@ -1,6 +1,7 @@
 // 改编自 Cloudflare agents 仓库的 examples/next/harnesses/pi（MIT 协议，见 licenses/）。
 import { useAgent } from "agents/react";
 import { useCallback, useRef, useState } from "react";
+import type { ComputerActivity } from "../bridge/activity";
 import { REVOKED_CLOSE_CODE, type ClientMessage, type ServerMessage, type SessionView } from "../protocol";
 import { EMPTY_VIEW, reduceEvents } from "../view";
 
@@ -13,13 +14,19 @@ type State = SessionView & { readonly status: ConnectionStatus };
  * `reduceEvents` 折叠成界面状态。重连时会拿到新快照，所以不需要续传。
  * 换会话时请给使用它的组件换 `key`，让连接整个重建。
  */
-export function usePiSession(session: string, onProjectsChanged: () => void) {
+export function usePiSession(
+  session: string,
+  onProjectsChanged: () => void,
+  onActivity?: (activity: readonly ComputerActivity[]) => void
+) {
   const [state, setState] = useState<State>({
     ...EMPTY_VIEW,
     status: "connecting"
   });
   const changed = useRef(onProjectsChanged);
   changed.current = onProjectsChanged;
+  const activity = useRef(onActivity);
+  activity.current = onActivity;
 
   const agent = useAgent({
     agent: "pupu",
@@ -50,6 +57,9 @@ export function usePiSession(session: string, onProjectsChanged: () => void) {
         case "approvals_changed":
         case "devices_changed":
           changed.current();
+          return;
+        case "activity":
+          activity.current?.(message.activity);
           return;
         case "error":
           setState((current) => ({ ...current, error: message.message }));

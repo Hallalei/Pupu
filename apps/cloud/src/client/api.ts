@@ -73,6 +73,7 @@ export function usePupuState() {
   const [computers, setComputers] = useState<PupuState["computers"]>([]);
   const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);
+  const [activity, setActivity] = useState<PupuState["activity"]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -84,6 +85,7 @@ export function usePupuState() {
       setComputers(state.computers);
       setApprovals(state.approvals);
       setDevices(state.devices);
+      setActivity(state.activity);
       setError(null);
       setUnauthorized(false);
     } catch (cause) {
@@ -110,5 +112,17 @@ export function usePupuState() {
     };
   }, [refresh]);
 
-  return { projects, computers, approvals, devices, error, unauthorized, loaded, refresh };
+  /** 每台电脑在做什么。会话连接上收到 `activity` 帧时用 `applyActivity` 直接换掉，不用等下一次拉取。 */
+  return {
+    projects,
+    computers,
+    approvals,
+    devices,
+    activity,
+    applyActivity: setActivity,
+    error,
+    unauthorized,
+    loaded,
+    refresh
+  };
 }

@@ -261,6 +261,35 @@ test("前台命令把输出收回来；多台在线要指定", async () => {
   assert.match(ambiguous.text, /请指定 computer_id/);
 });
 
+test("发出去的调用记在 running 里，回完就清掉", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
+  let changes = 0;
+  env.hub.onActivity = () => {
+    changes += 1;
+  };
+  let reply: (() => void) | null = null;
+  socket.send = (data: string) => {
+    socket.sent.push(data);
+    const frame = JSON.parse(data) as { type?: string; requestId?: string };
+    if (frame.type !== "exec" || !frame.requestId) return;
+    const requestId = frame.requestId;
+    reply = () => void env.hub.onMessage(socket, JSON.stringify({ type: "listed", requestId, entries: [], truncated: false }));
+  };
+  const listing = env.hub.exec({ requestId: "list-1", action: { kind: "list", path: "" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(env.hub.running(), [
+    { callId: "list-1", computerId: env.row.id, action: { kind: "list", path: "" }, startedAt: env.now() }
+  ]);
+  assert.equal(changes, 1);
+  assert.ok(reply);
+  (reply as () => void)();
+  await listing;
+  assert.deepEqual(env.hub.running(), []);
+  assert.equal(changes, 2);
+});
+
 test("取消和没回应都会停掉这次请求", async () => {
   const env = await harness();
   const socket = await env.connect();

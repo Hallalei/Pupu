@@ -93,7 +93,8 @@ function rememberProject(id: string) {
  */
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, devices, loaded, error, unauthorized, refresh } = usePupuState();
+  const { projects, computers, approvals, devices, applyActivity, loaded, error, unauthorized, refresh } =
+    usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -108,9 +109,10 @@ export function App() {
       computers,
       approvals,
       onOpenProject: (id) => go({ kind: "project", id }),
-      onProjectsChanged: () => void refresh()
+      onProjectsChanged: () => void refresh(),
+      onActivity: applyActivity
     }),
-    [projects, computers, approvals, refresh, go, route.kind]
+    [projects, computers, approvals, refresh, applyActivity, go, route.kind]
   );
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。

@@ -2,6 +2,7 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { AgentEvent, UserInput } from "@earendil-works/pi-durable";
 import type { PiSessionId, PiWhenBusy } from "agents/harness/pi";
+import type { ComputerActivity } from "./bridge/activity";
 
 /**
  * 浏览器和 Pupu 之间的 WebSocket 协议。每条连接跟随一个 pi 会话（`?session=`）：
@@ -44,6 +45,11 @@ export type ServerMessage =
   | { readonly type: "approvals_changed" }
   /** 有设备配对上或者被吊销了，客户端重新拉一次 /api/state。 */
   | { readonly type: "devices_changed" }
+  /**
+   * 电脑在做的事变了：开始或做完一步、有请示要批、连上或断开。整份带上，替换 /api/state 里的
+   * `activity`，不用重新拉。只在内容变了的时候发。
+   */
+  | { readonly type: "activity"; readonly activity: readonly ComputerActivity[] }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };
 

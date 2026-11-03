@@ -303,6 +303,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         }
         socket.onEvents = { [weak self] events in self?.receive(events) }
         socket.onChanged = { Store.shared.refresh() }
+        socket.onActivity = { Store.shared.apply(activity: $0) }
         socket.onError = { [weak self] message in
             self?.state.error = message
             self?.scheduleRender()
