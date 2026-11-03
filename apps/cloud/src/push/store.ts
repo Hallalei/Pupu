@@ -5,8 +5,11 @@
 
 import type { ApnsEnv } from "./apns.ts";
 
-/** alert：普通通知的设备 token。start：实时活动的 push-to-start token。 */
-export type PushTokenType = "alert" | "start";
+/**
+ * alert：普通通知的设备 token。start：实时活动的 push-to-start token。
+ * activity：手机上正开着的那个实时活动自己的 token，一台手机只留一个。
+ */
+export type PushTokenType = "alert" | "start" | "activity";
 
 export type PushTokenRow = {
   readonly token: string;
@@ -25,6 +28,8 @@ export interface PushDirectory {
   /** 一台设备每种只留一个 token：换了新的，旧的删掉。同一个 token 换了设备（重新配对）就挂到新设备上。 */
   save(input: { deviceId: string; token: string; type: PushTokenType; env: ApnsEnv }, now: number): void;
   remove(token: string): void;
+  /** 只删这台设备自己的。 */
+  removeOwn(deviceId: string, token: string): void;
   removeDevice(deviceId: string): void;
   approvalState(approvalId: string): ApprovalPushState | undefined;
   markApproval(approvalId: string, state: ApprovalPushState, now: number): void;
@@ -39,7 +44,7 @@ type Row = Record<string, SqlStorageValue>;
 function toRow(row: Row): PushTokenRow {
   return {
     token: String(row.token),
-    type: row.type === "start" ? "start" : "alert",
+    type: row.type === "start" || row.type === "activity" ? row.type : "alert",
     deviceId: String(row.device_id),
     env: row.env === "production" ? "production" : "sandbox",
     createdAt: Number(row.created_at),
@@ -107,6 +112,10 @@ export class PushStore implements PushDirectory {
 
   remove(token: string): void {
     this.#db().exec("DELETE FROM pupu_push_tokens WHERE token = ?", token);
+  }
+
+  removeOwn(deviceId: string, token: string): void {
+    this.#db().exec("DELETE FROM pupu_push_tokens WHERE device_id = ? AND token = ?", deviceId, token);
   }
 
   removeDevice(deviceId: string): void {

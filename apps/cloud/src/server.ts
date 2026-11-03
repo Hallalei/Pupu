@@ -4,7 +4,7 @@ import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { createRegistry, GenerationTask, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
-import { Lifecycle } from "agents/lifecycle";
+import { Lifecycle, type LifecycleJobContext } from "agents/lifecycle";
 import { WebSockets } from "agents/websockets";
 import { googleClientFrom, randomToken } from "./auth/oidc";
 import { AUTH_PREFIX, handleAuth, type RedeemResult, type SignInCredential, type SignInGrant } from "./auth/routes";
@@ -71,6 +71,7 @@ import { ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
 import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
 import { ApprovalPusher } from "./push/approvals";
+import { LivePusher, liveDue, type LiveInput } from "./push/live";
 import { PushStore, type PushTokenType } from "./push/store";
 import { PiSessionSockets } from "./sockets";
 import { createPupuTools } from "./tools";
@@ -82,6 +83,8 @@ import { createPupuTools } from "./tools";
 const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
 /** 记在 meta 里，用来判断已有会话要不要切模型。 */
 const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
+/** 灵动岛到点重新看一眼：命令跑满 30 秒、屏幕授权到期。 */
+const LIVE_JOB = "live-activity";
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
 export const PUPU_INSTANCE = "me";
@@ -148,6 +151,15 @@ export class Pupu extends DurableObject<Env> {
     now: () => Date.now(),
     log: (message) => console.warn(message)
   });
+  readonly live = new LivePusher({
+    store: this.push,
+    apns: () => this.#apnsClient(),
+    state: { get: () => this.store.meta("live.state"), set: (value) => this.store.setMeta("live.state", value) },
+    now: () => Date.now(),
+    log: (message) => console.warn(message)
+  });
+  /** 灵动岛下次要重新看一眼的时间，排在 Lifecycle 的任务队列里。 */
+  #liveDue: number | null = null;
   readonly gate = new ComputerGate({
     computers: () => this.bridge.list(),
     directory: this.computers,
@@ -298,11 +310,37 @@ export class Pupu extends DurableObject<Env> {
   }
 
   #activityChanged(): void {
+    this.#liveChanged();
     const activity = this.#activity();
     const sent = JSON.stringify(activity);
     if (sent === this.#sentActivity) return;
     this.#sentActivity = sent;
     this.sockets.broadcast({ type: "activity", activity });
+  }
+
+  /** 灵动岛：对一遍账，再排好下次该看的时候。 */
+  #liveChanged(): void {
+    const now = Date.now();
+    const input: LiveInput = {
+      computers: this.bridge.list(),
+      running: this.bridge.running(),
+      pending: this.approvals.pending(now),
+      screenUntil: (id) => this.computers.list().find((row) => row.id === id)?.screenUntil ?? null
+    };
+    this.ctx.waitUntil(this.live.sync(input).catch((error) => console.warn("实时活动推送失败", error)));
+    const due = liveDue(input, now);
+    if (due === this.#liveDue) return;
+    this.#liveDue = due;
+    const { jobs } = this.lifecycle;
+    const scheduled = due === null ? jobs.cancel(LIVE_JOB) : jobs.push({ id: LIVE_JOB, fn: LIVE_JOB, time: due + 500 });
+    this.ctx.waitUntil(scheduled.then(() => undefined, (error) => console.warn("灵动岛的定时排不上", error)));
+  }
+
+  /** Lifecycle 的任务队列到点了。 */
+  onJob({ job }: LifecycleJobContext): void {
+    if (job.fn !== LIVE_JOB) return;
+    this.#liveDue = null;
+    this.#activityChanged();
   }
 
   #apnsClient(): Apns | null {
@@ -651,9 +689,19 @@ export class Pupu extends DurableObject<Env> {
     const row = this.devices.list().find((device) => device.id === input.device);
     if (row?.kind !== "phone") return "not_phone";
     this.push.save({ deviceId: input.device, token: input.token, type: input.type, env: input.env }, Date.now());
-    // 登记之前就在等的审批，这台手机也该收到。已经推过的不会再推。
-    this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
+    if (input.type === "alert") {
+      // 登记之前就在等的审批，这台手机也该收到。已经推过的不会再推。
+      this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
+    } else {
+      // 能开实时活动了，或者活动开起来报上了 token：照现在的样子开、补一条更新或者结束。
+      this.#liveChanged();
+    }
     return "ok";
+  }
+
+  /** 手机上的实时活动结束或被划掉了，它的 token 用不着了。 */
+  async removePushToken(device: string, token: string): Promise<void> {
+    this.push.removeOwn(device, token);
   }
 
   /** 给这台设备发一条测试通知，把 APNs 的回答原样带回来，排查密钥、topic 和环境用。 */
@@ -969,14 +1017,20 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (!/^[0-9a-f]{64,400}$/.test(token)) {
       return Response.json({ error: "token 是 APNs 给的十六进制字符串" }, { status: 400 });
     }
-    if (body.type !== "alert" && body.type !== "start") {
-      return Response.json({ error: "type 只能是 alert 或 start" }, { status: 400 });
+    if (body.type !== "alert" && body.type !== "start" && body.type !== "activity") {
+      return Response.json({ error: "type 只能是 alert、start 或 activity" }, { status: 400 });
     }
     if (body.env !== "sandbox" && body.env !== "production") {
       return Response.json({ error: "env 只能是 sandbox 或 production" }, { status: 400 });
     }
     const result = await pupu(env).savePushToken({ device: caller.device, token, type: body.type, env: body.env });
     if (result === "not_phone") return Response.json({ error: "只有手机 App 能登记推送" }, { status: 403 });
+    return Response.json({ ok: true });
+  }
+  const pushToken = pathname.match(/^\/api\/push-tokens\/([0-9a-f]{64,400})$/);
+  if (pushToken && method === "DELETE") {
+    if (!caller.device) return Response.json({ error: "要先配对" }, { status: 400 });
+    await pupu(env).removePushToken(caller.device, pushToken[1] ?? "");
     return Response.json({ ok: true });
   }
   if (pathname === "/api/push-tokens/test" && method === "POST") {

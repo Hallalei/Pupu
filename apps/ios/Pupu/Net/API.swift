@@ -36,9 +36,15 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/approvals/\(id)", method: "POST", body: ["decision": allow ? "allow" : "deny"])
     }
 
-    /// 把这台手机的推送 token 交给 Pupu。type：alert 是普通通知，start 是实时活动的 push-to-start。
+    /// 把这台手机的推送 token 交给 Pupu。type：alert 是普通通知，start 是实时活动的 push-to-start，
+    /// activity 是正开着的那个实时活动自己的。
     func registerPush(token: String, type: String, env: String) async throws {
         let _: Done = try await send("api/push-tokens", method: "POST", body: ["token": token, "type": type, "env": env])
+    }
+
+    /// 实时活动结束或被划掉了，它的 token 用不着了。
+    func unregisterPush(token: String) async throws {
+        let _: Done = try await send("api/push-tokens/\(token)", method: "DELETE")
     }
 
     /// 让 Pupu 给这台手机发一条测试通知，带回 APNs 的回答。
