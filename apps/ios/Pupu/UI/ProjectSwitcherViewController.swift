@@ -42,7 +42,7 @@ final class ProjectSwitcherViewController: UICollectionViewController {
             case .project(let project):
                 content = .subtitleCell()
                 content.text = project.name
-                content.secondaryText = project.goal.isBlank ? "没写目标" : project.goal
+                content.secondaryText = project.summary ?? "没写目标"
                 let selected = project.id == self?.current
                 content.textProperties.font = Theme.font(selected ? .headline : .body)
                 content.textProperties.color = Theme.ink

@@ -11,11 +11,40 @@ export type Project = {
   readonly goal: string;
   /** 建项目时从聊天带过去的背景。 */
   readonly background: string;
+  /** 最新进展一句：Pupu 在这个项目里最后一次回复的第一行。还没回复过是空串。 */
+  readonly progress: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 };
 
 type Row = Record<string, SqlStorageValue>;
+
+/** 列表里一行放得下的长度。 */
+const PROGRESS_CHARS = 80;
+
+/**
+ * Pupu 的一段回复取成「最新进展一句」：代码块和表格以外第一行有字的，去掉 Markdown 的标题、列表、
+ * 引用、粗体、行内代码和链接记号，太长就截断。没有字时是空串。
+ */
+export function progressLine(reply: string): string {
+  let fenced = false;
+  for (const raw of reply.split("\n")) {
+    if (/^\s*(`{3,}|~{3,})/.test(raw)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || /^\s*(\||-{3,}\s*$)/.test(raw)) continue;
+    const line = raw
+      .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/(\*\*|\*|`)(\S(?:.*?\S)?)\1/g, "$2")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!line) continue;
+    return line.length > PROGRESS_CHARS ? `${line.slice(0, PROGRESS_CHARS)}…` : line;
+  }
+  return "";
+}
 
 function toProject(row: Row): Project {
   return {
@@ -24,6 +53,7 @@ function toProject(row: Row): Project {
     name: String(row.name),
     goal: String(row.goal),
     background: String(row.background),
+    progress: String(row.progress ?? ""),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
@@ -45,9 +75,15 @@ export class ProjectStore {
         name TEXT NOT NULL,
         goal TEXT NOT NULL,
         background TEXT NOT NULL DEFAULT '',
+        progress TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )`);
+      // 早先建的表没有 progress 这一列，补上。
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_projects)").toArray();
+      if (!columns.some((column) => column.name === "progress")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN progress TEXT NOT NULL DEFAULT ''");
+      }
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -114,6 +150,22 @@ export class ProjectStore {
       now
     );
     return this.getProject(id)!;
+  }
+
+  /**
+   * Pupu 在项目会话里回完一轮时调用：记下最新进展，项目也算刚动过。
+   * 不是项目的会话（主对话）返回 false。
+   */
+  recordReply(session: string, reply: string): boolean {
+    const progress = progressLine(reply);
+    if (!progress || !this.projectBySession(session)) return false;
+    this.#db().exec(
+      "UPDATE pupu_projects SET progress = ?, updated_at = ? WHERE session = ?",
+      progress,
+      Date.now(),
+      session
+    );
+    return true;
   }
 
   /** 项目会话里有新消息时调用，项目列表按最近活跃排序。 */

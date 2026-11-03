@@ -23,6 +23,11 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/computers/\(id)/revoke", method: "POST", body: [:])
     }
 
+    /// 收回这台电脑的屏幕控制，和电脑菜单栏上的收回一样。
+    func takeback(computer id: String) async throws {
+        let _: Done = try await send("api/computers/\(id)/takeback", method: "POST", body: [:])
+    }
+
     func setPolicy(_ policy: Computer.Policy, computer id: String) async throws {
         let _: Done = try await send("api/computers/\(id)/policy", method: "POST", body: ["policy": policy.rawValue])
     }

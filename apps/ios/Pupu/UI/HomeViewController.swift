@@ -1,7 +1,7 @@
 import UIKit
 
-/// 主页：一眼看到 Pupu 手上的事。现在有「项目」和「电脑」两块面板；
-/// 「正在做」等云端报上电脑在做什么再加。底下的输入栏发的话进聊天。
+/// 主页：一眼看到 Pupu 手上的事。最上面「正在做」，下面是「项目」和「电脑」。
+/// 底下的输入栏发的话进聊天。
 final class HomeViewController: UIViewController {
     /// 主页上最多列这么多个项目，其余的在项目 sheet 里。
     private static let projectLimit = 5
@@ -10,18 +10,25 @@ final class HomeViewController: UIViewController {
     private let stack = UIStackView()
     private let composer = ComposerView()
     private let openProject: (Project) -> Void
+    private let openChat: () -> Void
     private let openAllProjects: () -> Void
     private let openSettings: () -> Void
     private let send: (String) -> Void
     private var token: StoreToken?
+    /// 正在收回屏幕控制的电脑。收回的请求在路上时按钮转圈，重画面板也不丢。
+    private var takingBack: Set<String> = []
+    /// 上次收回失败的电脑和原因，显示在那一行的第二行。
+    private var takebackErrors: [String: String] = [:]
 
     init(
         openProject: @escaping (Project) -> Void,
+        openChat: @escaping () -> Void,
         openAllProjects: @escaping () -> Void,
         openSettings: @escaping () -> Void,
         send: @escaping (String) -> Void
     ) {
         self.openProject = openProject
+        self.openChat = openChat
         self.openAllProjects = openAllProjects
         self.openSettings = openSettings
         self.send = send
@@ -102,6 +109,8 @@ final class HomeViewController: UIViewController {
     private func render() {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
         let store = Store.shared
+        stack.addArrangedSubview(panel(icon: "waveform.path.ecg", title: "正在做", rows: activityRows(store), empty:
+            store.loaded ? "Pupu 手上没有在跑的事。" : "加载中…"))
         stack.addArrangedSubview(panel(icon: "folder", title: "项目", rows: projectRows(store), empty:
             store.loaded ? "还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个。" : "加载中…"))
         stack.addArrangedSubview(panel(icon: "desktopcomputer", title: "电脑", rows: computerRows(store), empty:
@@ -115,14 +124,102 @@ final class HomeViewController: UIViewController {
         }
     }
 
+    /// 「正在做」列哪些电脑：在做事的、停着等批的，还有闲着但屏幕控制没收回的。
+    private func activityRows(_ store: Store) -> [UIView] {
+        store.activity.compactMap { activity in
+            switch activity.currentState {
+            case .working, .waiting: break
+            case .idle where activity.screen: break
+            default: return nil
+            }
+            return activityRow(activity)
+        }
+    }
+
+    /// 「正在做」的一行：在做什么，第二行是哪台电脑、哪个项目、做了多久。点开去那个项目，主对话里的去聊天。
+    /// 屏幕控制还在时右边带「收回」。
+    private func activityRow(_ activity: ComputerActivity) -> UIView {
+        let state = activity.currentState
+        let mark: UIView
+        if state == .working {
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.startAnimating()
+            mark = spinner
+        } else {
+            mark = dot(state == .waiting ? Theme.warning : Theme.online)
+        }
+        // 转圈和圆点放进同样宽的格子，几行的字对齐。
+        let leading = UIView()
+        leading.addSubview(mark)
+        mark.translatesAutoresizingMaskIntoConstraints = false
+        leading.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            leading.widthAnchor.constraint(equalToConstant: 20),
+            leading.heightAnchor.constraint(equalToConstant: 20),
+            mark.centerXAnchor.constraint(equalTo: leading.centerXAnchor),
+            mark.centerYAnchor.constraint(equalTo: leading.centerYAnchor)
+        ])
+        let title = activity.doing ?? "闲着，屏幕控制还开着"
+        let error = takebackErrors[activity.computerId]
+        let detail = error ?? [activity.computerName, activity.project?.name, activity.since.map { Ago.text($0) }]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        var trailing: [UIView] = []
+        if state == .waiting { trailing.append(WaitingMark()) }
+        var takeback: UIButton?
+        if activity.screen {
+            let button = UIButton.glass(title: "收回")
+            button.configuration?.buttonSize = .small
+            button.configuration?.showsActivityIndicator = takingBack.contains(activity.computerId)
+            button.isEnabled = !takingBack.contains(activity.computerId)
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.addAction(UIAction { [weak self] _ in self?.takeback(activity.computerId) }, for: .touchUpInside)
+            button.accessibilityLabel = "收回「\(activity.computerName)」的屏幕控制"
+            takeback = button
+        }
+        let project = activity.project.flatMap { Store.shared.project(id: $0.id) }
+        return row(
+            title: title,
+            detail: detail,
+            detailColor: error == nil ? Theme.inkMuted : Theme.dangerInk,
+            leading: leading,
+            trailing: trailing,
+            accessory: takeback,
+            label: "\(title)，\(detail)\(state == .waiting ? "，等你批准" : "")"
+        ) { [weak self] in
+            if let project { self?.openProject(project) } else { self?.openChat() }
+        }
+    }
+
+    private func takeback(_ computerId: String) {
+        guard let api = Store.shared.api, !takingBack.contains(computerId) else { return }
+        takingBack.insert(computerId)
+        takebackErrors[computerId] = nil
+        render()
+        Task {
+            do {
+                try await api.takeback(computer: computerId)
+            } catch {
+                takebackErrors[computerId] = "没收回：\(error.localizedDescription)"
+            }
+            takingBack.remove(computerId)
+            render()
+            Store.shared.refresh()
+        }
+    }
+
     private func projectRows(_ store: Store) -> [UIView] {
+        // 停在哪些项目里等你批。一台电脑只带得出最早那条请示的项目。
+        let waiting = Set(store.activity.compactMap { $0.currentState == .waiting ? $0.project?.id : nil })
         var rows: [UIView] = store.projects.prefix(Self.projectLimit).map { project in
-            row(
+            let isWaiting = waiting.contains(project.id)
+            let when = Ago.text(project.updatedAt)
+            return row(
                 title: project.name,
-                detail: project.goal.isEmpty ? nil : project.goal,
-                trailing: Ago.text(project.updatedAt),
-                dot: nil,
-                label: "\(project.name)，\(Ago.text(project.updatedAt))"
+                detail: project.summary,
+                trailing: [isWaiting ? WaitingMark() : caption(when)],
+                label: "\(project.name)，\(isWaiting ? "等你批准" : when)"
             ) { [weak self] in self?.openProject(project) }
         }
         if store.projects.count > Self.projectLimit {
@@ -158,8 +255,7 @@ final class HomeViewController: UIViewController {
             row(
                 title: computer.name,
                 detail: computer.label,
-                trailing: nil,
-                dot: computer.online ? Theme.online : Theme.offline,
+                leading: dot(computer.online ? Theme.online : Theme.offline),
                 label: "\(computer.name)，\(computer.label)"
             ) { [weak self] in self?.openSettings() }
         }
@@ -191,11 +287,15 @@ final class HomeViewController: UIViewController {
         return panel
     }
 
+    /// 面板里的一行：左边的状态点或转圈、名字和第二行、右边的时间或标记。
+    /// accessory 是行里另一个能点的按钮（「收回」），整行的点按区域让开它。
     private func row(
         title: String,
         detail: String?,
-        trailing: String?,
-        dot: UIColor?,
+        detailColor: UIColor = Theme.inkMuted,
+        leading: UIView? = nil,
+        trailing: [UIView] = [],
+        accessory: UIView? = nil,
         label: String,
         tap: @escaping () -> Void
     ) -> UIView {
@@ -204,24 +304,13 @@ final class HomeViewController: UIViewController {
         let text = UIStackView(arrangedSubviews: [name])
         text.axis = .vertical
         text.spacing = 2
-        if let detail { text.addArrangedSubview(UILabel(text: detail, style: .subheadline, color: Theme.inkMuted)) }
+        if let detail { text.addArrangedSubview(UILabel(text: detail, style: .subheadline, color: detailColor)) }
+        // 放不下时字先截断，右边的时间、标记和按钮保持完整。
+        for label in text.arrangedSubviews {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
 
-        var items: [UIView] = []
-        if let dot {
-            let mark = UIView()
-            mark.backgroundColor = dot
-            mark.layer.cornerRadius = 4
-            mark.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([mark.widthAnchor.constraint(equalToConstant: 8), mark.heightAnchor.constraint(equalToConstant: 8)])
-            items.append(mark)
-        }
-        items.append(text)
-        if let trailing {
-            let time = UILabel(text: trailing, style: .caption, color: Theme.inkMuted)
-            time.setContentHuggingPriority(.required, for: .horizontal)
-            time.setContentCompressionResistancePriority(.required, for: .horizontal)
-            items.append(time)
-        }
+        let items = [leading].compactMap { $0 } + [text] + trailing + [accessory].compactMap { $0 }
         let line = UIStackView(arrangedSubviews: items)
         line.spacing = Theme.Space.s3
         line.alignment = .center
@@ -230,8 +319,34 @@ final class HomeViewController: UIViewController {
 
         let button = UIButton(primaryAction: UIAction { _ in tap() })
         surface.addSubview(button)
-        button.pin(to: surface)
         button.accessibilityLabel = label
+        if let accessory {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
+                button.topAnchor.constraint(equalTo: surface.topAnchor),
+                button.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
+                button.trailingAnchor.constraint(equalTo: accessory.leadingAnchor, constant: -Theme.Space.s1)
+            ])
+        } else {
+            button.pin(to: surface)
+        }
         return surface
+    }
+
+    private func dot(_ color: UIColor) -> UIView {
+        let mark = UIView()
+        mark.backgroundColor = color
+        mark.layer.cornerRadius = 4
+        mark.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([mark.widthAnchor.constraint(equalToConstant: 8), mark.heightAnchor.constraint(equalToConstant: 8)])
+        return mark
+    }
+
+    private func caption(_ text: String) -> UILabel {
+        let label = UILabel(text: text, style: .caption, color: Theme.inkMuted)
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return label
     }
 }

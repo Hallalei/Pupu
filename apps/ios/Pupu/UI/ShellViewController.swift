@@ -23,6 +23,7 @@ final class ShellViewController: UIViewController {
 
     private lazy var home = HomeViewController(
         openProject: { [weak self] project in self?.open(project) },
+        openChat: { [weak self] in self?.show(.chat) },
         openAllProjects: { [weak self] in self?.openSwitcher() },
         openSettings: { [weak self] in self?.openSettings() },
         send: { [weak self] text in self?.sendFromHome(text) }

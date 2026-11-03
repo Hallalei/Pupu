@@ -93,7 +93,7 @@ function rememberProject(id: string) {
  */
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, devices, applyActivity, loaded, error, unauthorized, refresh } =
+  const { projects, computers, approvals, devices, activity, applyActivity, loaded, error, unauthorized, refresh } =
     usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -145,9 +145,15 @@ export function App() {
       <Home
         projects={projects}
         computers={computers}
+        activity={activity}
         onOpenProject={(id) => go({ kind: "project", id })}
+        onOpenChat={() => go({ kind: "chat" })}
         onOpenAllProjects={() => setDrawerOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onTakeback={async (id) => {
+          await api.takeback(id);
+          await refresh();
+        }}
         onSend={(text) => {
           setPendingChat(text);
           go({ kind: "chat" });
@@ -495,7 +501,9 @@ function ProjectSheet({
                         <span className={`truncate text-body ${project.id === current ? "font-semibold" : ""}`}>
                           {project.name}
                         </span>
-                        <span className="truncate text-subheadline text-muted">{project.goal || "没写目标"}</span>
+                        <span className="truncate text-subheadline text-muted">
+                          {project.progress || project.goal || "没写目标"}
+                        </span>
                       </span>
                       {project.id === current ? (
                         <CheckIcon className="shrink-0 text-[18px]" />

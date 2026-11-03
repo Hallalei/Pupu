@@ -6,8 +6,16 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
     let session: String
     let name: String
     let goal: String
+    /// 最新进展一句：Pupu 在这个项目里最后一次回复的第一行。还没回复过是空串；旧版云端不给。
+    let progress: String?
     let createdAt: Double
     let updatedAt: Double
+
+    /// 列表第二行：有进展说进展，没有说目标。都没有是 nil。
+    var summary: String? {
+        if let progress, !progress.isBlank { return progress }
+        return goal.isBlank ? nil : goal
+    }
 }
 
 nonisolated struct Computer: Decodable, Sendable, Hashable {

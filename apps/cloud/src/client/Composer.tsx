@@ -34,12 +34,24 @@ export function Composer({
   const own = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? own;
 
+  // 字变了、宽度变了都重新量：页面在没显示出来时挂上，量到的宽度是 0，会撑到最高。
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${Math.min(node.scrollHeight, MAX_HEIGHT)}px`;
-    node.style.overflowY = node.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
+    const fit = () => {
+      node.style.height = "auto";
+      node.style.height = `${Math.min(node.scrollHeight, MAX_HEIGHT)}px`;
+      node.style.overflowY = node.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
+    };
+    fit();
+    let width = node.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      fit();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
   }, [value, ref]);
 
   return (

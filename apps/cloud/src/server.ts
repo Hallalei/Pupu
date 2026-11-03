@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
-import { createRegistry, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
+import { createRegistry, GenerationTask, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
@@ -143,6 +143,16 @@ export class Pupu extends DurableObject<Env> {
             beforeTool: (call, api, context) => {
               this.#callSessions.remember(call.id, String(api.conversationId));
               return this.gate.beforeTool(call, context.abortSignal);
+            }
+          }),
+          hook(GenerationTask, {
+            // 项目里回完一轮，记下最新进展，主页和项目列表上显示。
+            onYield: (answer, api) => {
+              const reply = answer.content
+                .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                .join("\n");
+              if (this.store.recordReply(String(api.conversationId), reply)) this.#changed();
+              return undefined;
             }
           })
         ]

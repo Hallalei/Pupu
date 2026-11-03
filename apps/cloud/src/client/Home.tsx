@@ -1,8 +1,10 @@
+import { Button, Spinner } from "@heroui/react";
 import { useState, type ReactNode } from "react";
+import type { ComputerActivity } from "../bridge/activity";
 import type { ComputerView } from "../bridge/protocol";
 import type { Project } from "../projects";
 import { Composer } from "./Composer";
-import { ChevronRightIcon, ComputerIcon, FolderIcon } from "./icons";
+import { ChevronRightIcon, ComputerIcon, FolderIcon, PulseIcon } from "./icons";
 
 /** 主页上最多列这么多个项目，其余的在项目列表里。 */
 const HOME_PROJECTS = 5;
@@ -17,26 +19,36 @@ export function ago(timestamp: number): string {
 }
 
 /**
- * 主页：一眼看到 Pupu 手上的事。现在有项目和电脑两块面板；
- * 「正在做」等云端报上电脑在做什么再加，对话生成的面板接在后面。
+ * 主页：一眼看到 Pupu 手上的事。最上面「正在做」，下面是项目和电脑；对话生成的面板以后接在后面。
  * 底下的输入栏发的话进聊天。
  */
 export function Home({
   projects,
   computers,
+  activity,
   onOpenProject,
+  onOpenChat,
   onOpenAllProjects,
   onOpenSettings,
+  onTakeback,
   onSend
 }: {
   projects: readonly Project[];
   computers: readonly ComputerView[];
+  activity: readonly ComputerActivity[];
   onOpenProject: (id: string) => void;
+  onOpenChat: () => void;
   onOpenAllProjects: () => void;
   onOpenSettings: () => void;
+  onTakeback: (computerId: string) => Promise<void>;
   onSend: (text: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const busy = activity.filter(isBusy);
+  /** 停在哪些项目里等你批。一台电脑只带得出最早那条请示的项目。 */
+  const waiting = new Set(
+    activity.flatMap((row) => (row.state === "waiting" && row.project ? [row.project.id] : []))
+  );
 
   function send() {
     const text = draft.trim();
@@ -49,6 +61,22 @@ export function Home({
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto grid w-full max-w-2xl grid-cols-1 items-start gap-3 px-4 pt-2 pb-8 lg:max-w-240 lg:grid-cols-2 lg:px-6">
+          <Panel icon={<PulseIcon />} title="正在做" className="lg:col-span-2">
+            {busy.length === 0 ? (
+              <p className="text-subheadline text-muted">Pupu 手上没有在跑的事。</p>
+            ) : (
+              <Rows>
+                {busy.map((row) => (
+                  <ActivityRow
+                    key={row.computerId}
+                    activity={row}
+                    onOpen={() => (row.project ? onOpenProject(row.project.id) : onOpenChat())}
+                    onTakeback={() => onTakeback(row.computerId)}
+                  />
+                ))}
+              </Rows>
+            )}
+          </Panel>
           <Panel icon={<FolderIcon />} title="项目">
             {projects.length === 0 ? (
               <p className="text-subheadline text-muted">
@@ -60,8 +88,8 @@ export function Home({
                   <Row
                     key={project.id}
                     title={project.name}
-                    detail={project.goal || null}
-                    trailing={ago(project.updatedAt)}
+                    detail={project.progress || project.goal || null}
+                    trailing={waiting.has(project.id) ? <WaitingChip /> : ago(project.updatedAt)}
                     onPress={() => onOpenProject(project.id)}
                   />
                 ))}
@@ -126,9 +154,91 @@ export function computerLabel(computer: ComputerView): string {
   return "离线";
 }
 
-function Panel({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+/** 「正在做」里列哪些电脑：在做事的、停着等批的，还有闲着但屏幕控制没收回的。 */
+function isBusy(row: ComputerActivity): boolean {
+  if (row.state === "working" || row.state === "waiting") return true;
+  return row.state === "idle" && row.screen;
+}
+
+function WaitingChip() {
   return (
-    <section className="soft bubble flex flex-col gap-3 rounded-panel p-4">
+    <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+      等你批准
+    </span>
+  );
+}
+
+/**
+ * 「正在做」的一行：在做什么，第二行是哪台电脑、哪个项目、做了多久。点开去那个项目，主对话里的去聊天。
+ * 屏幕控制还在时右边带「收回」。
+ */
+function ActivityRow({
+  activity,
+  onOpen,
+  onTakeback
+}: {
+  activity: ComputerActivity;
+  onOpen: () => void;
+  onTakeback: () => Promise<void>;
+}) {
+  const [takingBack, setTakingBack] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const detail = [activity.computerName, activity.project?.name, activity.since ? ago(activity.since) : null]
+    .filter(Boolean)
+    .join(" · ");
+
+  async function takeback() {
+    setTakingBack(true);
+    setError(null);
+    try {
+      await onTakeback();
+    } catch (cause) {
+      setError(`没收回：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setTakingBack(false);
+    }
+  }
+
+  return (
+    <div className="strong flex items-center gap-3 rounded-row px-4 py-3 pointer-fine:px-3 pointer-fine:py-2">
+      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        {activity.state === "working" ? (
+          <Spinner size="sm" aria-label="在做" className="shrink-0" />
+        ) : activity.state === "waiting" ? (
+          <span className="size-2 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+        ) : (
+          <span className="size-2 shrink-0 rounded-full bg-online" aria-hidden="true" />
+        )}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-headline">{activity.doing ?? "闲着，屏幕控制还开着"}</span>
+          <span className={`truncate text-subheadline ${error ? "text-danger-ink" : "text-muted"}`}>
+            {error ?? detail}
+          </span>
+        </span>
+        {activity.state === "waiting" && <WaitingChip />}
+      </button>
+      {activity.screen && (
+        <Button size="sm" variant="secondary" isPending={takingBack} onPress={() => void takeback()}>
+          收回
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function Panel({
+  icon,
+  title,
+  className = "",
+  children
+}: {
+  icon: ReactNode;
+  title: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={`soft bubble flex flex-col gap-3 rounded-panel p-4 ${className}`}>
       <h2 className="m-0 flex items-center gap-2 text-headline">
         <span className="text-[18px] pointer-fine:text-[16px]">{icon}</span>
         {title}
@@ -153,7 +263,7 @@ function Row({
   leading?: ReactNode;
   title: string;
   detail: string | null;
-  trailing?: string;
+  trailing?: ReactNode;
   onPress: () => void;
 }) {
   return (
@@ -167,7 +277,11 @@ function Row({
         <span className="truncate text-headline">{title}</span>
         {detail && <span className="truncate text-subheadline text-muted">{detail}</span>}
       </span>
-      {trailing && <span className="shrink-0 text-caption text-muted">{trailing}</span>}
+      {typeof trailing === "string" ? (
+        <span className="shrink-0 text-caption text-muted">{trailing}</span>
+      ) : (
+        trailing
+      )}
     </button>
   );
 }

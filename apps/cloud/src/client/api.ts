@@ -40,6 +40,11 @@ export const api = {
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
     }),
+  /** 收回这台电脑的屏幕控制，和电脑菜单栏上的收回一样。 */
+  takeback: (id: string) =>
+    request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/takeback`, {
+      method: "POST"
+    }),
   setPolicy: (id: string, policy: ComputerPolicy) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/policy`, {
       method: "POST",
