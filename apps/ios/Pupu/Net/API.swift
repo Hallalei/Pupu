@@ -31,6 +31,16 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/approvals/\(id)", method: "POST", body: ["decision": allow ? "allow" : "deny"])
     }
 
+    /// 把这台手机的推送 token 交给 Pupu。type：alert 是普通通知，start 是实时活动的 push-to-start。
+    func registerPush(token: String, type: String, env: String) async throws {
+        let _: Done = try await send("api/push-tokens", method: "POST", body: ["token": token, "type": type, "env": env])
+    }
+
+    /// 让 Pupu 给这台手机发一条测试通知，带回 APNs 的回答。
+    func testPush() async throws -> PushTest {
+        try await send("api/push-tokens/test", method: "POST", body: [:])
+    }
+
     /// 新手机拿配对码（或访问口令）换自己的凭据。这时还没有凭据，所以不挂在某个 endpoint 上。
     static func pair(base: URL, code: String?, accessToken: String?, name: String) async throws -> Paired {
         var body = ["kind": "phone", "name": name]

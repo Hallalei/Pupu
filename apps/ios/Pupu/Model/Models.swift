@@ -84,6 +84,19 @@ nonisolated struct Device: Decodable, Sendable, Hashable {
     }
 }
 
+/// 测试通知的结果：每个 token 一条 APNs 的回答。
+nonisolated struct PushTest: Decodable, Sendable {
+    struct Result: Decodable, Sendable {
+        let env: String
+        let status: Int
+        let reason: String?
+    }
+
+    let ok: Bool
+    let error: String?
+    let results: [Result]?
+}
+
 /// 给新设备用的配对码，10 分钟内有效，用一次就作废。
 nonisolated struct PairingCode: Decodable, Sendable, Hashable {
     let code: String

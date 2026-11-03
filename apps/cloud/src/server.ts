@@ -43,6 +43,9 @@ import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
 import { ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
+import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
+import { ApprovalPusher } from "./push/approvals";
+import { PushStore, type PushTokenType } from "./push/store";
 import { PiSessionSockets } from "./sockets";
 import { createPupuTools } from "./tools";
 
@@ -89,6 +92,16 @@ export class Pupu extends DurableObject<Env> {
     }
   });
   readonly approvals = new ApprovalStore(this.ctx.storage.sql);
+  readonly push = new PushStore(this.ctx.storage.sql);
+  /** 没配 APNs 密钥是 null。第一次要用时才建。 */
+  #apns: Apns | null | undefined;
+  readonly pusher = new ApprovalPusher({
+    approvals: this.approvals,
+    store: this.push,
+    apns: () => this.#apnsClient(),
+    now: () => Date.now(),
+    log: (message) => console.warn(message)
+  });
   readonly gate = new ComputerGate({
     computers: () => this.bridge.list(),
     directory: this.computers,
@@ -196,10 +209,28 @@ export class Pupu extends DurableObject<Env> {
     this.sockets.broadcast({ type: "projects_changed" });
   }
 
-  /** 审批或屏幕授权变了：网页重新拉状态，菜单栏换显示。 */
+  /** 审批或屏幕授权变了：网页重新拉状态，菜单栏换显示，手机上的通知跟着推或替换。 */
   #approvalsChanged(computerIds: readonly string[]): void {
     this.sockets.broadcast({ type: "approvals_changed" });
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
+    this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
+  }
+
+  #apnsClient(): Apns | null {
+    if (this.#apns === undefined) {
+      const key = apnsKeyFrom(this.env);
+      this.#apns = key
+        ? new Apns({
+            key,
+            cache: {
+              get: () => this.store.meta("apns.jwt"),
+              set: (value) => this.store.setMeta("apns.jwt", value)
+            },
+            now: () => Date.now()
+          })
+        : null;
+    }
+    return this.#apns;
   }
 
   #devicesChanged(): void {
@@ -300,10 +331,11 @@ export class Pupu extends DurableObject<Env> {
     return { ok: true, id: row.id, name: row.name, token };
   }
 
-  /** 吊销手机或浏览器，它开着的连接马上断开。 */
+  /** 吊销手机或浏览器，它开着的连接马上断开，推送 token 一起删掉。 */
   async revokeDevice(id: string): Promise<boolean> {
     const row = this.devices.revoke(id);
     if (!row || row.revokedAt === null) return false;
+    this.push.removeDevice(id);
     for (const socket of this.ctx.getWebSockets(deviceTag(id))) {
       try {
         socket.close(REVOKED_CLOSE_CODE, "设备已吊销");
@@ -315,11 +347,64 @@ export class Pupu extends DurableObject<Env> {
     return true;
   }
 
-  /** 用户在手机上点了允许或拒绝。 */
-  async decideApproval(id: string, decision: "allow" | "deny"): Promise<"ok" | "missing" | "settled"> {
+  /** 用户在手机上点了允许或拒绝。`device` 是点的那台设备。 */
+  async decideApproval(
+    id: string,
+    decision: "allow" | "deny",
+    device: string | null = null
+  ): Promise<"ok" | "missing" | "settled"> {
     // 等着的那次调用可能在 DO 被回收时断了。先把 pi 拉起来，它会重跑那次调用，读到这里的决定。
     await this.lifecycle.start();
+    if (device) this.pusher.decidedBy(id, device);
     return this.gate.decide(id, decision);
+  }
+
+  /** 手机登记推送 token。只收手机的：浏览器和电脑 App 收不到 APNs。 */
+  async savePushToken(input: {
+    device: string;
+    token: string;
+    type: PushTokenType;
+    env: ApnsEnv;
+  }): Promise<"ok" | "not_phone"> {
+    const row = this.devices.list().find((device) => device.id === input.device);
+    if (row?.kind !== "phone") return "not_phone";
+    this.push.save({ deviceId: input.device, token: input.token, type: input.type, env: input.env }, Date.now());
+    // 登记之前就在等的审批，这台手机也该收到。已经推过的不会再推。
+    this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
+    return "ok";
+  }
+
+  /** 给这台设备发一条测试通知，把 APNs 的回答原样带回来，排查密钥、topic 和环境用。 */
+  async testPush(device: string): Promise<
+    | { readonly ok: false; readonly error: string }
+    | { readonly ok: true; readonly results: readonly { env: ApnsEnv; status: number; reason: string | null }[] }
+  > {
+    const apns = this.#apnsClient();
+    if (!apns) return { ok: false, error: "云端还没配 APNs 密钥（APNS_KEY、APNS_KEY_ID、APNS_TEAM_ID）。" };
+    const tokens = this.push.tokens("alert").filter((token) => token.deviceId === device);
+    if (tokens.length === 0) return { ok: false, error: "这台设备还没登记推送 token。" };
+    const results = await Promise.all(
+      tokens.map(async (token) => {
+        const result = await apns.send({
+          token: token.token,
+          env: token.env,
+          type: "alert",
+          priority: 10,
+          payload: { aps: { alert: { title: "Pupu", body: "推送通了。有要批准的事，会这样出现在锁屏上。" }, sound: "default" } }
+        });
+        if (result.gone) this.push.remove(token.token);
+        return { env: token.env, status: result.status, reason: result.reason };
+      })
+    );
+    return { ok: true, results };
+  }
+
+  /** 锁屏上的「收回」：和电脑菜单栏上的收回走同一段逻辑。 */
+  async takeback(computerId: string): Promise<boolean> {
+    await this.lifecycle.start();
+    if (!this.computers.list().some((row) => row.id === computerId)) return false;
+    this.gate.takeback(computerId);
+    return true;
   }
 
   async setComputerPolicy(id: string, policy: string): Promise<boolean> {
@@ -533,9 +618,37 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (body.decision !== "allow" && body.decision !== "deny") {
       return Response.json({ error: "decision 只能是 allow 或 deny" }, { status: 400 });
     }
-    const result = await pupu(env).decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision);
+    const result = await pupu(env).decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision, caller.device);
     if (result === "missing") return Response.json({ error: "没有这条请示" }, { status: 404 });
     if (result === "settled") return Response.json({ error: "这条请示已经处理过或过期了" }, { status: 409 });
+    return Response.json({ ok: true });
+  }
+  if (pathname === "/api/push-tokens" && method === "POST") {
+    if (!caller.device) return Response.json({ error: "要先配对，才能登记推送" }, { status: 400 });
+    const body = await readJson<{ token?: unknown; type?: unknown; env?: unknown }>(request);
+    const token = typeof body.token === "string" ? body.token.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{64,400}$/.test(token)) {
+      return Response.json({ error: "token 是 APNs 给的十六进制字符串" }, { status: 400 });
+    }
+    if (body.type !== "alert" && body.type !== "start") {
+      return Response.json({ error: "type 只能是 alert 或 start" }, { status: 400 });
+    }
+    if (body.env !== "sandbox" && body.env !== "production") {
+      return Response.json({ error: "env 只能是 sandbox 或 production" }, { status: 400 });
+    }
+    const result = await pupu(env).savePushToken({ device: caller.device, token, type: body.type, env: body.env });
+    if (result === "not_phone") return Response.json({ error: "只有手机 App 能登记推送" }, { status: 403 });
+    return Response.json({ ok: true });
+  }
+  if (pathname === "/api/push-tokens/test" && method === "POST") {
+    if (!caller.device) return Response.json({ error: "要先配对" }, { status: 400 });
+    const result = await pupu(env).testPush(caller.device);
+    return Response.json(result, { status: result.ok ? 200 : 409 });
+  }
+  const takeback = pathname.match(/^\/api\/computers\/([^/]+)\/takeback$/);
+  if (takeback && method === "POST") {
+    const ok = await pupu(env).takeback(decodeURIComponent(takeback[1] ?? ""));
+    if (!ok) return Response.json({ error: "没有这台电脑" }, { status: 404 });
     return Response.json({ ok: true });
   }
   const revoke = pathname.match(/^\/api\/computers\/([^/]+)\/revoke$/);

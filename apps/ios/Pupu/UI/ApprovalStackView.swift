@@ -116,6 +116,7 @@ final class ApprovalCardView: SurfaceView {
         Task {
             do {
                 try await api.decide(approval: approval.id, allow: allow)
+                Push.shared.clearDelivered(approval: approval.id)
                 UINotificationFeedbackGenerator().notificationOccurred(allow ? .success : .warning)
             } catch {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)

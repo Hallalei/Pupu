@@ -9,6 +9,7 @@
 /* Begin PBXFileReference section */
 		C0DE00000000000000000001 /* Pupu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pupu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE0000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C0DE00000000000000000012 /* Pupu.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pupu.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +36,7 @@
 			children = (
 				C0DE00000000000000000002 /* Pupu */,
 				C0DE0000000000000000000F /* Info.plist */,
+				C0DE00000000000000000012 /* Pupu.entitlements */,
 				C0DE00000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -178,6 +180,7 @@
 		C0DE00000000000000000010 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Pupu.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -206,6 +209,7 @@
 		C0DE00000000000000000011 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Pupu.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;

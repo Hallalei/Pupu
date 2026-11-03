@@ -76,6 +76,7 @@ final class Store {
                 approvals = state.approvals ?? []
                 devices = state.devices ?? []
                 error = nil
+                Push.shared.clearDelivered(pending: approvals.map(\.id))
             } catch let failure as APIError where failure.unauthorized {
                 // 只忘掉发请求时用的那份凭据；这期间重新配对过的话，新的不动。
                 if Connection.shared.endpoint == api.endpoint {

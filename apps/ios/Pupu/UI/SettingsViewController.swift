@@ -1,11 +1,12 @@
 import UIKit
 
-/// 设置：授权的电脑、每台电脑的权限分级、配对过的手机和浏览器、给新设备生成配对码、连的是哪个 Pupu。
+/// 设置：授权的电脑、每台电脑的权限分级、通知、配对过的手机和浏览器、给新设备生成配对码、连的是哪个 Pupu。
 final class SettingsViewController: UICollectionViewController {
     nonisolated private enum Section: Hashable, Sendable {
         case computers
         case policy(computerId: String, name: String)
         case abilities
+        case notifications
         case devices
         case pair
         case connection
@@ -16,6 +17,7 @@ final class SettingsViewController: UICollectionViewController {
         case noComputer
         case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case abilities
+        case notifications(Push.Status, busy: Bool)
         case device(Device)
         case noDevice
         case newCode(note: String, busy: Bool)
@@ -34,6 +36,8 @@ final class SettingsViewController: UICollectionViewController {
     private var known: Set<String> = []
     private var joined: String?
     private var creating = false
+    private var testing = false
+    private var pushToken: NSObjectProtocol?
 
     init() {
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
@@ -67,6 +71,10 @@ final class SettingsViewController: UICollectionViewController {
             view.dequeueConfiguredReusableSupplementary(using: header, for: path)
         }
         token = Store.shared.observe { [weak self] in self?.render() }
+        pushToken = NotificationCenter.default.addObserver(forName: Push.changed, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
+        }
+        Push.shared.register()
         render()
     }
 
@@ -75,6 +83,7 @@ final class SettingsViewController: UICollectionViewController {
         case .computers: "电脑"
         case .policy(_, let name): "「\(name)」的权限分级"
         case .abilities: "这台电脑能做的"
+        case .notifications: "通知"
         case .devices: "手机和浏览器"
         case .pair: "连接新设备"
         case .connection: "连接"
@@ -93,8 +102,9 @@ final class SettingsViewController: UICollectionViewController {
                 .policy(computerId: computer.id, policy: $0, selected: computer.currentPolicy == $0)
             }, toSection: section)
         }
-        snapshot.appendSections([.abilities, .devices, .pair, .connection])
+        snapshot.appendSections([.abilities, .notifications, .devices, .pair, .connection])
         snapshot.appendItems([.abilities], toSection: .abilities)
+        snapshot.appendItems([.notifications(Push.shared.status, busy: testing)], toSection: .notifications)
         snapshot.appendItems(store.devices.isEmpty ? [.noDevice] : store.devices.map(Item.device), toSection: .devices)
         let base = Connection.shared.endpoint?.base.absoluteString ?? ""
         noticeJoined(store)
@@ -151,6 +161,22 @@ final class SettingsViewController: UICollectionViewController {
         case .abilities:
             content.text = nil
             content.secondaryText = "跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。"
+        case .notifications(let status, let busy):
+            switch status {
+            case .on:
+                content.text = busy ? "正在发…" : "发一条测试通知"
+                content.secondaryText = "Pupu 要你批准的事会推到这台手机上。锁屏上长按通知就能批，「允许」要先解锁。"
+            case .registering, .unknown:
+                content.text = busy ? "正在发…" : "发一条测试通知"
+                content.secondaryText = "通知已打开，正在把这台手机登记到 Pupu。"
+            case .notAsked:
+                content.text = "打开通知"
+                content.secondaryText = "打开以后，Pupu 要你批准的事会推到锁屏上，不用盯着 App。"
+            case .off:
+                content.text = "通知已关闭"
+                content.secondaryText = "点一下去系统设置里打开。关着的话，只有打开 App 才看得到要批准的事。"
+            }
+            content.textProperties.font = Theme.font(.body, weight: .semibold)
         case .device(let device):
             content.text = device.current ? "\(device.name) · 这台手机" : device.name
             content.secondaryText = device.label
@@ -191,7 +217,7 @@ final class SettingsViewController: UICollectionViewController {
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
-        case .policy, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .policy, .notifications, .newCode, .code, .bridgeCommand, .disconnect: true
         default: false
         }
     }
@@ -209,6 +235,17 @@ final class SettingsViewController: UICollectionViewController {
                     self.show(error.localizedDescription)
                 }
                 Store.shared.refresh()
+            }
+        case .notifications(let status, _):
+            switch status {
+            case .notAsked:
+                Push.shared.register()
+            case .off:
+                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            default:
+                testPush()
             }
         case .newCode:
             createCode()
@@ -278,6 +315,28 @@ final class SettingsViewController: UICollectionViewController {
                 joined = nil
                 copied = nil
                 pairing = code
+            } catch {
+                show(error.localizedDescription)
+            }
+        }
+    }
+
+    private func testPush() {
+        guard !testing, let api = Store.shared.api else { return }
+        testing = true
+        render()
+        Task {
+            defer {
+                testing = false
+                render()
+            }
+            do {
+                let test = try await api.testPush()
+                let failed = (test.results ?? []).filter { $0.status != 200 }
+                if !failed.isEmpty {
+                    let reasons = failed.map { "\($0.env)：\($0.status) \($0.reason ?? "")" }.joined(separator: "\n")
+                    show("APNs 没收：\n\(reasons)")
+                }
             } catch {
                 show(error.localizedDescription)
             }
