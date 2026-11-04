@@ -2,6 +2,11 @@ import UIKit
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    /// 只有远程桌面能横过来，别的页面都竖着。
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        RemoteDesktopViewController.isOpen ? .allButUpsideDown : .portrait
+    }
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?

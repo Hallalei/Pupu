@@ -20,6 +20,7 @@ import {
   type Session,
   type WebContents
 } from "electron";
+import { CaptureHost } from "./capture.ts";
 import { configPath, readConfig } from "../../cloud/bridge/config.ts";
 import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/local.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
@@ -62,6 +63,7 @@ let switches: LocalSwitches = { allowCommands: true, allowScreen: true };
 let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
+let capture: CaptureHost | null = null;
 /** 正在等浏览器里的 Google 登录。 */
 let signIn: AbortController | null = null;
 let mainLog: WriteStream | null = null;
@@ -109,9 +111,13 @@ const supervisor = new BridgeSupervisor(dist("bridge.mjs"), {
   onRejected() {
     void computerRejected();
   },
+  onCapture(command) {
+    capture?.command(command);
+  },
   onCrash(code, delay) {
     log(`桥退出了（${code}），${Math.round(delay / 1000)} 秒后重启。`);
     bridgeState = null;
+    capture?.stop();
     render();
   },
   log(line) {
@@ -593,6 +599,13 @@ async function boot(): Promise<void> {
   setupWindowSession();
   registerIpc();
   tray = new PupuTray(onTray);
+  capture = new CaptureHost({
+    preload: dist("capture-preload.cjs"),
+    page: dist("capture.html"),
+    onEvent: (event) => supervisor.capture(event),
+    log,
+    fake: !app.isPackaged && process.env.PUPU_FAKE_SCREEN === "1"
+  });
   switches = await readLocal();
   pairing = await loadPairing();
   startBridge();
@@ -614,6 +627,7 @@ if (!app.requestSingleInstanceLock()) {
     if (quitting) return;
     quitting = true;
     log("退出：先停桥。");
+    capture?.stop();
     void supervisor.stop().finally(() => {
       tray?.destroy();
       log("已退出。");

@@ -42,7 +42,14 @@ function start(blocked: readonly string[]): void {
         }
       };
     },
-    blocked
+    blocked,
+    capture(command) {
+      post({ type: "capture", command });
+    },
+    // 假画面时输入只记日志，不动这台电脑的真鼠标。
+    ...(process.env.PUPU_FAKE_SCREEN === "1"
+      ? { inputSink: { send: (event) => console.log(`假输入：${JSON.stringify(event)}`), stop() {} } }
+      : {})
   });
 }
 
@@ -63,6 +70,8 @@ port.on("message", (event) => {
     if (!bridge) start(message.blocked);
   } else if (message.type === "action") {
     onAction?.(message.action);
+  } else if (message.type === "capture") {
+    bridge?.fromCapture(message.event);
   } else if (message.type === "stop") {
     void stop();
   }

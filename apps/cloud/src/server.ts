@@ -20,6 +20,7 @@ import {
 } from "./auth/sign-ins";
 import { CallSessions, computerActivity, describeWaiting, type ComputerActivity } from "./bridge/activity";
 import { ApprovalStore, type ApprovalRow, type ApprovalView } from "./bridge/approvals";
+import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop } from "./bridge/desktop";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
 import { isComputerPolicy } from "./bridge/policy";
@@ -301,18 +302,40 @@ export class Pupu extends DurableObject<Env> {
     },
     defaults: { model: MODEL, thinkingLevel: "low" }
   });
+  readonly desktop = new RemoteDesktopHub({
+    sockets: () => this.ctx.getWebSockets(DESKTOP_TAG),
+    deviceOf: (request) => request.headers.get(DEVICE_HEADER),
+    toBridge: (computerId, session, message) => this.bridge.sendDesktop(computerId, session, message),
+    mayView: (device, computerId) => mayViewDesktop(this.#actor(device), this.#ownerOf(computerId)),
+    iceServers: () => iceServersFrom(this.env),
+    deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的手机",
+    newSession: () => crypto.randomUUID()
+  });
   readonly sockets = new PiSessionSockets(
     this.harness,
     (tag) => this.ctx.getWebSockets(tag),
     (socket) => this.ctx.getTags(socket),
     (session) => this.store.touchSession(session),
-    {
-      tag: BRIDGE_TAG,
-      isRequest: isBridgeRequest,
-      onConnect: (socket, request) => this.bridge.onConnect(socket, request),
-      onMessage: (socket, message) => this.bridge.onMessage(socket, message),
-      onClose: (socket) => this.bridge.onClose(socket)
-    }
+    [
+      {
+        tag: BRIDGE_TAG,
+        isRequest: isBridgeRequest,
+        onConnect: (socket, request) => this.bridge.onConnect(socket, request),
+        onMessage: (socket, message) => this.bridge.onMessage(socket, message),
+        onClose: (socket) => this.bridge.onClose(socket)
+      },
+      {
+        tag: DESKTOP_TAG,
+        isRequest: (request) => this.desktop.isRequest(request),
+        tags: (request) => {
+          const device = request.headers.get(DEVICE_HEADER);
+          return device ? [deviceTag(device)] : [];
+        },
+        onConnect: (socket, request) => this.desktop.onConnect(socket, request),
+        onMessage: (socket, message) => this.desktop.onMessage(socket, message),
+        onClose: (socket) => this.desktop.onClose(socket)
+      }
+    ]
   );
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
@@ -325,6 +348,8 @@ export class Pupu extends DurableObject<Env> {
     this.bridge.approvedFor = (input) => this.gate.approved(input);
     this.bridge.onReady = (computerId) => this.bridge.sendStatus(computerId, this.gate.statusFor(computerId));
     this.bridge.onTakeback = (computerId) => this.gate.takeback(computerId);
+    this.bridge.onDesktop = (computerId, session, message) => this.desktop.fromBridge(computerId, session, message);
+    this.bridge.onGone = (computerId) => this.desktop.bridgeGone(computerId);
   }
 
   /** 宿主启动，harness 已经打开 pi 之后。 */
@@ -1442,6 +1467,17 @@ export default {
 
       const caller = await authenticate(request, env);
       if (!caller) return new Response("Unauthorized", { status: 401 });
+
+      // 远程桌面的信令：能不能看这台电脑由 Durable Object 按设备判断。客户端自己带的设备头不算数。
+      if (computerIdOfPath(url.pathname) !== null) {
+        if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+          return new Response("远程桌面要用 WebSocket 连接。", { status: 426 });
+        }
+        const forwarded = new Request(request);
+        forwarded.headers.delete(DEVICE_HEADER);
+        if (caller.device) forwarded.headers.set(DEVICE_HEADER, caller.device);
+        return pupu(env).fetch(forwarded);
+      }
 
       if (url.pathname.startsWith("/api/")) {
         return await handleApi(request, env, url, caller);
