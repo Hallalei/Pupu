@@ -19,6 +19,11 @@ nonisolated struct API: Sendable {
         try await send("api/projects", method: "POST", body: ["name": name, "goal": goal])
     }
 
+    /// 打开了这个项目：它报回聊天的结果都算看过。
+    func markSeen(project id: String) async throws {
+        let _: Done = try await send("api/projects/\(id)/seen", method: "POST", body: [:])
+    }
+
     func revoke(computer id: String) async throws {
         let _: Done = try await send("api/computers/\(id)/revoke", method: "POST", body: [:])
     }

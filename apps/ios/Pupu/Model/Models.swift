@@ -181,6 +181,42 @@ nonisolated struct Member: Decodable, Sendable, Hashable {
     }
 }
 
+/// 项目报回聊天的结果，云端 src/reports.ts 算好：同一个项目没看过的几条已经合成一张。
+nonisolated struct ReportCard: Decodable, Sendable, Hashable {
+    enum Status: String, Sendable {
+        case done, blocked, failed
+
+        /// 卡片上的状态：做完了 / 卡住了要你定 / 出错了。
+        var label: String {
+            switch self {
+            case .done: "做完了"
+            case .blocked: "卡住了要你定"
+            case .failed: "出错了"
+            }
+        }
+    }
+
+    let id: String
+    let projectId: String
+    let projectName: String
+    let status: String
+    /// 一句结果。
+    let summary: String
+    /// 转交过去的事。
+    let task: String
+    /// 报回来的时间，按它穿插在聊天的消息之间。
+    let at: Double
+    /// 用户打开过这个项目。
+    let seen: Bool
+    /// 合进来的、更早的几条没看过的报告。
+    let more: Int
+
+    var currentStatus: Status { Status(rawValue: status) ?? .done }
+
+    /// 引用回复这张卡时引用里写的话。带上项目名，聊天里的 Pupu 才知道在说哪个项目；和网页的 reportQuote 一样。
+    var quote: String { "项目「\(projectName)」的报告 · \(currentStatus.label)：\(summary)" }
+}
+
 /// 「我 → 账户」：成员连给 Pupu 的 Gmail、日历、GitHub 这类账号。凭据在 open-connector，见云端 src/connectors/。
 nonisolated struct Connectors: Decodable, Sendable, Hashable {
     nonisolated struct Service: Decodable, Sendable, Hashable {
@@ -230,4 +266,6 @@ nonisolated struct PupuState: Decodable, Sendable {
     let activity: [ComputerActivity]?
     let members: [Member]?
     let connectors: Connectors?
+    /// 旧版云端不给。
+    let reports: [ReportCard]?
 }
