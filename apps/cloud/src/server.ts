@@ -140,13 +140,8 @@ export class Pupu extends DurableObject<Env> {
         )
     },
     store: this.push,
-    // 电脑的审批只推给这台电脑主人的手机；新手机登录的等批推给所有手机（谁的手机都能批，见 sign-ins.ts）。
-    audience: (row) => {
-      const owner = row.kind === "sign_in" ? null : this.#ownerOf(row.computerId);
-      if (owner === null) return () => true;
-      const phones = new Set(this.devices.ofMember(owner).map((device) => device.id));
-      return (deviceId) => phones.has(deviceId);
-    },
+    // 新手机登录的等批推给所有手机（谁的手机都能批，见 sign-ins.ts）。
+    audience: (row) => (row.kind === "sign_in" ? () => true : this.#phonesOf(row.computerId)),
     apns: () => this.#apnsClient(),
     now: () => Date.now(),
     log: (message) => console.warn(message)
@@ -155,6 +150,7 @@ export class Pupu extends DurableObject<Env> {
     store: this.push,
     apns: () => this.#apnsClient(),
     state: { get: () => this.store.meta("live.state"), set: (value) => this.store.setMeta("live.state", value) },
+    audience: (computerId) => this.#phonesOf(computerId),
     now: () => Date.now(),
     log: (message) => console.warn(message)
   });
@@ -390,6 +386,14 @@ export class Pupu extends DurableObject<Env> {
   /** 电脑的主人。没有这台电脑或者还没主人是 null。 */
   #ownerOf(computerId: string): string | null {
     return this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+  }
+
+  /** 这台电脑的事推给哪些手机：只给主人的；还没主人的谁的手机都推。 */
+  #phonesOf(computerId: string): (deviceId: string) => boolean {
+    const owner = this.#ownerOf(computerId);
+    if (owner === null) return () => true;
+    const phones = new Set(this.devices.ofMember(owner).map((device) => device.id));
+    return (deviceId) => phones.has(deviceId);
   }
 
   /** 访问口令和本机开发配的设备算创建者的；还没有创建者时先不属于谁。 */

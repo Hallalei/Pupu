@@ -149,7 +149,7 @@ class Tokens {
   }
 }
 
-function setup(answers: ApnsResult[] = []) {
+function setup(answers: ApnsResult[] = [], audience?: (computerId: string) => (deviceId: string) => boolean) {
   const store = new Tokens();
   const sent: ApnsPush[] = [];
   let saved: string | undefined;
@@ -167,6 +167,7 @@ function setup(answers: ApnsResult[] = []) {
           }
         : null,
     state: { get: () => saved, set: (value) => (saved = value) },
+    ...(audience ? { audience } : {}),
     now: () => now
   });
   return {
@@ -181,6 +182,90 @@ function setup(answers: ApnsResult[] = []) {
 
 const waiting = input({ pending: [approval("a1")] });
 const twoWaiting = input({ pending: [approval("a1"), approval("a2")] });
+
+describe("每台手机只看自己的电脑", () => {
+  // c1 是我的，c2 是妈妈的，c3 还没主人。
+  const owners: Record<string, string> = { c1: "me", c2: "mom" };
+  const audience = (computerId: string) => (deviceId: string) => {
+    const owner = owners[computerId];
+    return owner === undefined || owner === deviceId;
+  };
+  const stateOf = (push: ApnsPush) =>
+    (push.payload as { aps: { "content-state": { computerId: string; pending: number; mode: string; title: string } } }).aps[
+      "content-state"
+    ];
+
+  function twoPhones() {
+    const context = setup([], audience);
+    context.store.add("me", "start", "m".repeat(64));
+    context.store.add("mom", "start", "p".repeat(64));
+    return context;
+  }
+
+  test("别人电脑上的请示不上我的灵动岛", async () => {
+    const { sent, pusher } = twoPhones();
+    await pusher.sync(input({ pending: [approval("a1", { computerId: "c2" })] }));
+    assert.deepEqual(
+      sent.map((push) => push.token),
+      ["p".repeat(64)]
+    );
+  });
+
+  test("两台电脑各有事：各看各的，等批的条数也只数自己的", async () => {
+    const { sent, pusher } = twoPhones();
+    await pusher.sync(
+      input({
+        computers: [computer("c1", "mbpro"), computer("c2", "书房", { screen: true })],
+        pending: [approval("a1"), approval("a2")]
+      })
+    );
+    const mine = sent.find((push) => push.token === "m".repeat(64))!;
+    const moms = sent.find((push) => push.token === "p".repeat(64))!;
+    assert.equal(stateOf(mine).mode, "approval");
+    assert.equal(stateOf(mine).pending, 2);
+    assert.equal(stateOf(moms).mode, "screen");
+    assert.equal(stateOf(moms).computerId, "c2");
+    assert.equal(stateOf(moms).pending, 0);
+  });
+
+  test("还没主人的电脑，谁的手机都看得到", async () => {
+    const { sent, pusher } = twoPhones();
+    await pusher.sync(
+      input({ computers: [computer("c3", "老电脑")], pending: [approval("a1", { computerId: "c3" })] })
+    );
+    assert.equal(sent.length, 2);
+  });
+
+  test("我这边做完了只结束我的；说的是我的电脑，妈妈的不动", async () => {
+    const { store, sent, pusher } = twoPhones();
+    store.add("me", "activity", "a".repeat(64));
+    store.add("mom", "activity", "b".repeat(64));
+    const both = [approval("a1"), approval("a2", { computerId: "c2" })];
+    await pusher.sync(input({ pending: both }));
+    sent.length = 0;
+
+    await pusher.sync(input({ pending: [both[1]!] }));
+    assert.deepEqual(
+      sent.map((push) => push.token),
+      ["a".repeat(64)]
+    );
+    assert.equal(stateOf(sent[0]!).mode, "done");
+    assert.equal(stateOf(sent[0]!).title, "Pupu 在「mbpro」上的事做完了");
+    assert.ok(store.rows.some((row) => row.token === "b".repeat(64)));
+  });
+
+  test("开活动的推送发出去后事就做完了，token 晚到也说是自己的电脑", async () => {
+    const { store, sent, pusher } = twoPhones();
+    await pusher.sync(input({ pending: [approval("a1")] }));
+    await pusher.sync(input({ pending: [approval("a2", { computerId: "c2" })] }));
+    sent.length = 0;
+
+    store.add("me", "activity", "a".repeat(64));
+    await pusher.sync(input({ pending: [approval("a2", { computerId: "c2" })] }));
+    assert.equal(sent.length, 1);
+    assert.equal(stateOf(sent[0]!).title, "Pupu 在「mbpro」上的事做完了");
+  });
+});
 
 describe("LivePusher", () => {
   test("没配 APNs：什么都不推", async () => {
