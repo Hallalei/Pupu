@@ -1,0 +1,268 @@
+---
+import Base from "../layouts/Base.astro";
+import Cat from "../components/Cat.astro";
+import Cloud from "../components/Cloud.astro";
+import Icon from "../components/Icon.astro";
+import Waitlist from "../components/Waitlist.astro";
+---
+
+<Base
+  title="Pupu：组织大脑"
+  description="Context, Not Control. 一个团体共用一个 Pupu，让智能在组织间流动。"
+  page="home"
+>
+  <main>
+    <!-- 首屏：定位和上下文接力 -->
+    <section class="hero band-sky" aria-labelledby="hero-title">
+      <Cloud class="cloud--a" />
+      <Cloud class="cloud--b" />
+      <Cloud class="cloud--c" />
+      <div class="hero__copy">
+        <h1 id="hero-title" lang="en">Context,<br />Not Control.</h1>
+        <p class="hero__line">组织大脑，让智能在组织间流动。</p>
+        <p class="lede">
+          一个团体共用一个 Pupu。大家的聊天和项目都在一起，谁接手都不用从头讲。它常驻云端，在你们授权的电脑上把事做完。
+        </p>
+        <Waitlist id="email-top" />
+      </div>
+
+      <div class="hero__demo">
+        <Cat variant="peek" class="peek" blink />
+        <div class="phone panel" data-scene data-loop aria-label="示例：两个同事和 Pupu 在同一条聊天里">
+          <div class="segments" aria-hidden="true">
+            <span>主页</span><span class="is-on">聊天</span><span>项目</span>
+          </div>
+          <div class="thread">
+            <p class="stamp" data-step data-wait="300">上午 9:12</p>
+            <div class="msg" data-step data-wait="700">
+              <span class="avatar avatar--a">林</span>
+              <div>
+                <p class="who">林夏</p>
+                <p class="bubble">北辰那单定了：<mark data-flow-from>年付，折扣上限 12%</mark>。合同按这个改。</p>
+              </div>
+            </div>
+            <div class="msg msg--pupu" data-step data-typing data-wait="1000">
+              <span class="avatar avatar--pupu"><Cat variant="head" /></span>
+              <div>
+                <p class="tag"><Icon name="folder" />北辰续约</p>
+                <p class="bubble bubble--pupu">改好了，新版放在「工作室 Mac」的合同文件夹里。</p>
+              </div>
+            </div>
+            <p class="stamp" data-step data-wait="1400">下午 3:40</p>
+            <div class="msg" data-step data-wait="700">
+              <span class="avatar avatar--b">周</span>
+              <div>
+                <p class="who">周屿</p>
+                <p class="bubble">北辰来问折扣，我们能给多少？</p>
+              </div>
+            </div>
+            <div class="msg msg--pupu" data-step data-typing data-flow data-wait="1200">
+              <span class="avatar avatar--pupu"><Cat variant="head" /></span>
+              <div>
+                <p class="bubble bubble--pupu"><mark data-flow-to>年付，折扣上限 12%</mark>，林夏上午定的。合同已经按这个改好了，要我把新版发你吗？</p>
+              </div>
+            </div>
+          </div>
+          <div class="fake-input" aria-hidden="true"><span>和 Pupu 说点什么</span><i></i></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 问题 -->
+    <section class="problem band-sky" aria-labelledby="problem-title">
+      <Cloud class="cloud--d" />
+      <ul class="asks" aria-hidden="true">
+        <li>这事做到哪了？</li>
+        <li>上次怎么定的？</li>
+        <li>文件在谁那儿？</li>
+        <li>这个现在谁在跟？</li>
+      </ul>
+      <div class="statement reveal">
+        <h2 id="problem-title">组织里最贵的一句话，<br />是「能再讲一遍吗」。</h2>
+        <p class="lede">
+          事情的来龙去脉散在各人的脑子、聊天记录和电脑里。换个人接手，就得从头问一遍。
+        </p>
+      </div>
+    </section>
+
+    <!-- 一个大脑 -->
+    <section class="brain" id="tone-switch" aria-labelledby="brain-title">
+      <div class="panel brain__panel reveal">
+        <div class="brain__head">
+          <h2 id="brain-title">一个团体，一个大脑。</h2>
+          <p class="lede">
+            Pupu 常驻云端，一个团体只要一个。每个人用自己的账号登录，和它在同一条聊天里说话。只有这一个大脑，事情不用在几个助手之间交接，也不会各记各的。
+          </p>
+        </div>
+        <div class="flow">
+          <div class="node">
+            <div class="node__faces" aria-hidden="true">
+              <span class="avatar avatar--a">林</span>
+              <span class="avatar avatar--b">周</span>
+              <span class="avatar avatar--c">陈</span>
+            </div>
+            <h3>人</h3>
+            <p>一起聊，一起让 Pupu 做事</p>
+          </div>
+          <span class="link" aria-hidden="true"></span>
+          <div class="node node--pupu">
+            <Cat variant="full" blink />
+            <h3>Pupu</h3>
+            <p>常驻云端，手机关了它还在</p>
+          </div>
+          <span class="link" aria-hidden="true"></span>
+          <div class="node">
+            <div class="node__faces" aria-hidden="true">
+              <span class="avatar avatar--box"><Icon name="desktop" /></span>
+              <span class="avatar avatar--box"><Icon name="desktop" /></span>
+            </div>
+            <h3>电脑</h3>
+            <p>挂在主人名下，替 Pupu 动手</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 项目 -->
+    <section class="split band-ink" id="project" aria-labelledby="project-title">
+      <div class="split__copy reveal">
+        <h2 id="project-title">事情在哪，<br />上下文就在哪。</h2>
+        <p class="lede">
+          要持续推进的事放进项目。Pupu 用一句话问要不要建，答应了才建。项目大家都能看，都能接着说，进展不用谁来汇报。
+        </p>
+      </div>
+      <div class="split__demo" data-scene>
+        <div class="panel card-stack">
+          <div class="msg" data-step data-wait="200">
+            <span class="avatar avatar--b">周</span>
+            <div>
+              <p class="who">周屿</p>
+              <p class="bubble">这个续约后面还有几轮，单独跟吧。</p>
+            </div>
+          </div>
+          <div class="msg msg--pupu" data-step data-typing data-wait="700">
+            <span class="avatar avatar--pupu"><Cat variant="head" /></span>
+            <div><p class="bubble bubble--pupu">要不要我建一个「北辰续约」项目？这件事的进展都放在那边。</p></div>
+          </div>
+          <div class="msg" data-step data-wait="900">
+            <span class="avatar avatar--a">林</span>
+            <div>
+              <p class="who">林夏</p>
+              <p class="bubble">好。</p>
+            </div>
+          </div>
+          <div class="project" data-step data-wait="700">
+            <div class="project__head">
+              <p class="pill"><Icon name="folder" />北辰续约</p>
+              <span class="project__people" aria-hidden="true">
+                <span class="avatar avatar--a">林</span>
+                <span class="avatar avatar--b">周</span>
+                <span class="avatar avatar--pupu"><Cat variant="head" /></span>
+              </span>
+            </div>
+            <ul class="rows">
+              <li><strong>合同 v3 已放进「工作室 Mac」</strong><span>Pupu · 刚刚</span></li>
+              <li><strong>年付，折扣上限 12%</strong><span>林夏 · 2 小时前</span></li>
+              <li><strong>报价单等法务看过</strong><span>周屿 · 1 天前</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 电脑 -->
+    <section class="split split--flip band-ink" aria-labelledby="computer-title">
+      <div class="split__copy reveal">
+        <h2 id="computer-title">知道了，<br />就能接着做。</h2>
+        <p class="lede">
+          Pupu 在你们授权的电脑上跑命令、读写文件、操作屏幕，把事情做完，做了什么在项目里都看得到。电脑掉线了，Pupu 还在，照常聊，也会如实告诉你们。
+        </p>
+      </div>
+      <div class="split__demo" data-scene>
+        <div class="panel card-stack">
+          <ul class="rows rows--computers">
+            <li>
+              <span class="avatar avatar--box"><Icon name="desktop" /></span>
+              <div><strong>工作室 Mac</strong><span><i class="dot dot--on"></i>在线 · 正在写文件</span></div>
+            </li>
+            <li>
+              <span class="avatar avatar--box"><Icon name="desktop" /></span>
+              <div><strong>设计组 iMac</strong><span><i class="dot dot--on"></i>在线</span></div>
+            </li>
+            <li>
+              <span class="avatar avatar--box"><Icon name="desktop" /></span>
+              <div><strong>林夏的 MacBook</strong><span><i class="dot"></i>离线 · 3 分钟前</span></div>
+            </li>
+          </ul>
+          <div class="tool" data-step data-wait="400">
+            <p><Icon name="doc" />读了 合同/北辰/续约草稿.docx</p>
+          </div>
+          <div class="tool" data-step data-wait="800">
+            <p><Icon name="terminal" />在「工作室 Mac」上跑了命令</p>
+            <pre lang="en"><code>$ python3 tools/contract.py --plan annual --cap 12
+updated 3 clauses</code></pre>
+          </div>
+          <div class="tool" data-step data-wait="900">
+            <p><Icon name="check" />写好 合同/北辰/续约-v3.pdf</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 安全底线 -->
+    <section class="split band-ink" aria-labelledby="safe-title">
+      <div class="split__copy reveal">
+        <h2 id="safe-title">电脑是谁的，<br />就由谁批准。</h2>
+        <p class="lede">
+          上下文大家共享，电脑还是主人说了算。删除、推代码、发布这类高风险动作，先到主人手机上问一句，锁屏上就能批。操作屏幕要先授权，随时一键收回。
+        </p>
+      </div>
+      <div class="split__demo">
+        <div class="approve" data-approve>
+          <div class="island" aria-hidden="true">
+            <span class="island__cat"><Cat variant="head" /></span>
+            <span data-island>等你批准</span>
+          </div>
+          <div class="panel approve__card">
+            <p class="badge" data-badge><Icon name="hand" />等你批准</p>
+            <h3>Pupu 想在「工作室 Mac」上发布网站</h3>
+            <pre lang="en"><code>npm run deploy</code></pre>
+            <p class="approve__who">这是你的电脑，只有你的手机能批</p>
+            <div class="approve__actions" data-actions>
+              <button type="button" class="btn btn--ghost" data-decide="no">拒绝</button>
+              <button type="button" class="btn btn--ink" data-decide="yes">允许</button>
+            </div>
+            <p class="approve__result" role="status" hidden>
+              <span data-result></span>
+              <button type="button" class="linkish" data-again>再看一次</button>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 宣言 -->
+    <section class="manifesto band-ink" aria-labelledby="manifesto-title">
+      <h2 id="manifesto-title" lang="en" class="reveal">Context, Not Control.</h2>
+      <div class="manifesto__body">
+        <p class="reveal">组织慢下来，很少是因为人不够聪明，多半是该知道的事没传到。</p>
+        <p class="reveal">于是我们加会议、加汇报、加流程，用管控去补上下文的缺口。</p>
+        <p class="reveal">Pupu 换一个方向：把事情的来龙去脉留在一个大家都能问的地方。</p>
+        <p class="reveal">智能不再只待在某个人的脑子里，它在人和人之间流动。</p>
+      </div>
+    </section>
+
+    <!-- 收尾 -->
+    <section class="join band-ink" id="join" aria-labelledby="join-title">
+      <div class="join__box">
+        <Cat variant="peek" class="peek peek--join" blink />
+        <div class="panel join__panel">
+          <h2 id="join-title">给你们的组织<br />一个大脑。</h2>
+          <p class="lede">内测名额不多，我们一个团体一个团体地开。现在有 iPhone App、Mac App 和网页版，每人用 Google 账号登录。</p>
+          <Waitlist id="email-bottom" />
+          <p class="fine">邮箱只用来发内测邀请。详见<a href="/privacy">隐私说明</a>。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</Base>

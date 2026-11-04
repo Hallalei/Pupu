@@ -1,0 +1,83 @@
+---
+/**
+ * 像素小猫。网格抄自 design/icon/pixels.py 的 MAIN，改图以那边为准。
+ * full：小猫扒在气泡上；peek：只要猫和爪子，用来扒在面板上沿；head：头像。
+ */
+interface Props {
+  variant?: "full" | "peek" | "head";
+  class?: string;
+  blink?: boolean;
+}
+
+const { variant = "full", class: className, blink = false } = Astro.props;
+
+const GRID = [
+  "........................",
+  ".....O............O.....",
+  ".....OO..........OO.....",
+  ".....OdOO.OOOO.OOdO.....",
+  ".....OpddOddddOddpO.....",
+  ".....OppddddddddppO.....",
+  ".....OdgdgdgdgdgdgO.....",
+  "....OggeeggggggeeggO....",
+  "....OgePheggggePhegO....",
+  "....OgEPPEggggEPPEgO....",
+  "....OllEElcccclEEllO....",
+  ".....OlllccNNcclllO.....",
+  ".....OllcncnncncllO.....",
+  "....OOOOOOnOOnOOOOOO....",
+  "...WOcccOWWWWWWOcccOW...",
+  "..WWOoOoOWWWWWWOoOoOWW..",
+  "..WWWWWWWWWWWWWWWWWWWW..",
+  "..WWWWWWkkWkkWkkWWWWWW..",
+  "..WWWWWWkkWkkWkkWWWWWW..",
+  "..WWWWWWWWWWWWWWWWWWWW..",
+  "...wwwwwwwwwwwwwwwwww...",
+  ".....ww................."
+];
+
+const COLORS: Record<string, string> = {
+  D: "#7a532e", d: "#ad7638", g: "#d8a04e", l: "#eec57e", c: "#fae7c3",
+  O: "#3b2717", o: "#8a5c35",
+  E: "#4fae5a", e: "#2c7a3c", P: "#13201a", h: "#ffffff",
+  N: "#d4826e", n: "#7d4a30", p: "#e8a090",
+  W: "var(--cat-bubble)", w: "var(--cat-bubble-edge)", k: "var(--cat-dots)"
+};
+
+const box = {
+  full: { left: 0, cols: 24, top: 1, rows: 21, skip: "" },
+  peek: { left: 0, cols: 24, top: 1, rows: 15, skip: "Wwk" },
+  head: { left: 4, cols: 16, top: 1, rows: 13, skip: "Wwk" }
+}[variant];
+
+// 同一行连续同色的格子合成一个方块，SVG 能小很多。
+const cells: { x: number; y: number; w: number; fill: string }[] = [];
+GRID.slice(box.top, box.top + box.rows).forEach((row, y) => {
+  for (let x = 0; x < row.length; ) {
+    const ch = row[x];
+    let end = x + 1;
+    while (row[end] === ch) end += 1;
+    if (ch !== "." && !box.skip.includes(ch)) {
+      cells.push({ x, y: y + box.top, w: end - x, fill: COLORS[ch] });
+    }
+    x = end;
+  }
+});
+---
+
+<svg
+  class:list={["cat", className, { "cat--blink": blink }]}
+  viewBox={`${box.left} ${box.top} ${box.cols} ${box.rows}`}
+  shape-rendering="crispEdges"
+  aria-hidden="true"
+>
+  {cells.map((c) => <rect x={c.x} y={c.y} width={c.w} height="1" fill={c.fill} />)}
+  {blink && (
+    <g class="cat__lids">
+      <rect x="6" y="7" width="4" height="3" fill="#d8a04e" />
+      <rect x="14" y="7" width="4" height="3" fill="#d8a04e" />
+      <rect x="6" y="9" width="4" height="1" fill="#3b2717" />
+      <rect x="14" y="9" width="4" height="1" fill="#3b2717" />
+    </g>
+  )}
+</svg>

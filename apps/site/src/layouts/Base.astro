@@ -1,0 +1,61 @@
+---
+import "../styles/tokens.css";
+import "../styles/site.css";
+import Cat from "../components/Cat.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  page?: "home" | "plain";
+}
+
+const { title, description, page = "plain" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#34557f" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0c1420" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script is:inline>document.documentElement.classList.add("js");</script>
+  </head>
+  <body class={`page-${page}`}>
+    <div class="edge-blur" aria-hidden="true"></div>
+    <header class="top" data-tone="sky">
+      <a class="brand" href="/" aria-label="Pupu 首页">
+        <Cat variant="head" />
+        <span>Pupu</span>
+      </a>
+      <a class="top__cta" href="/#join">申请内测</a>
+    </header>
+
+    <slot />
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <a class="brand" href="/" aria-label="Pupu 首页">
+          <Cat variant="head" />
+          <span>Pupu</span>
+        </a>
+        <nav aria-label="页脚">
+          <a href="/privacy">隐私说明</a>
+        </nav>
+        <p>© 2026 Pupu</p>
+      </div>
+    </footer>
+
+    <script>
+      import "../scripts/site.ts";
+    </script>
+  </body>
+</html>

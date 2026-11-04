@@ -1,0 +1,20 @@
+---
+/** 像素云，和小猫同一种画法。天上慢慢飘，对应「智能在流动」。 */
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+
+const ROWS = [
+  [6, 4],
+  [4, 9],
+  [2, 13],
+  [1, 18],
+  [0, 22]
+];
+---
+
+<svg class:list={["cloud", className]} viewBox="0 0 22 5" shape-rendering="crispEdges" aria-hidden="true">
+  {ROWS.map(([x, w], y) => <rect x={x} y={y} width={w} height="1" fill="currentColor" />)}
+</svg>

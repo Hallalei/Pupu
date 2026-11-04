@@ -1,0 +1,32 @@
+---
+/** 申请内测的表单长得就是 Pupu 的输入栏，发出去之后 Pupu 回一句。 */
+import Cat from "./Cat.astro";
+
+interface Props {
+  id: string;
+}
+
+const { id } = Astro.props;
+---
+
+<div class="waitlist" data-waitlist>
+  <form class="composer" action="/api/waitlist" method="post">
+    <label class="sr-only" for={id}>你的邮箱</label>
+    <input
+      id={id}
+      name="email"
+      type="email"
+      required
+      maxlength="254"
+      autocomplete="email"
+      placeholder="你的邮箱"
+    />
+    <input class="trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+    <button type="submit">申请内测</button>
+  </form>
+  <div class="waitlist__reply" role="status" hidden>
+    <span class="avatar avatar--pupu"><Cat variant="head" /></span>
+    <p class="bubble bubble--pupu" data-reply></p>
+  </div>
+  <noscript><p class="fine">申请内测要打开 JavaScript。</p></noscript>
+</div>

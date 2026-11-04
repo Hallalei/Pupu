@@ -1,0 +1,23 @@
+{
+  "name": "@pupu/site",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro build && wrangler dev --port 4330",
+    "deploy": "astro build && wrangler deploy",
+    "check": "tsc --noEmit && tsc --noEmit -p worker",
+    "test": "node --test worker/*.test.ts"
+  },
+  "dependencies": {
+    "astro": "^6.4.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261103.1",
+    "@types/node": "^22",
+    "typescript": "^5",
+    "wrangler": "^4.157.0"
+  }
+}
