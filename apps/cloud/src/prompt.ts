@@ -70,11 +70,23 @@ function currentState(store: ProjectStore): string {
 ${lines}`;
 }
 
-/** 每次请求前按会话渲染系统提示词：根会话是聊天，其余会话按项目找。 */
+const CONNECTORS = `成员可以把自己的 Gmail、Google 日历、云端硬盘、GitHub 账号连给你（在手机 App 的「我 → 账户」里连）。
+- 用 connector_search 找动作，再用 connector_run 跑。读邮件、查日程这类读的动作直接跑；发邮件、建日程、改 issue 这类写和删，工具会先等账号主人在手机上批准，不用你另外开口问。
+- 一个服务连了几个人的账号，先问清楚用谁的。别人的账号里读到的东西，只说这件事需要的部分。
+- 没连上要用的账号，告诉用户去「我 → 账户」里连，不要假装做了。`;
+
+function describeConnectors(accounts: readonly string[]): string {
+  return `${CONNECTORS}
+
+连上的账号：${accounts.length ? accounts.join("；") : "还没有"}。`;
+}
+
+/** 每次请求前按会话渲染系统提示词：根会话是聊天，其余会话按项目找。`accounts` 是连上的账号，一个一行的说明。 */
 export function renderPrompt(
   conversationId: string,
   store: ProjectStore,
-  computers: readonly ComputerView[]
+  computers: readonly ComputerView[],
+  accounts: readonly string[] = []
 ): string {
   const project =
     conversationId === ROOT_SESSION
@@ -83,5 +95,5 @@ export function renderPrompt(
   const body = project
     ? projectPrompt(project, computers)
     : `${MAIN_PROMPT}\n\n${currentState(store)}\n\n${describeComputers(computers)}`;
-  return `${body}\n\n今天是 ${today()}（UTC）。`;
+  return `${body}\n\n${describeConnectors(accounts)}\n\n今天是 ${today()}（UTC）。`;
 }

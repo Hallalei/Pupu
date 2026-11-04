@@ -106,6 +106,35 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
         return code
     }
 
+    /// 连账号：打开 open-connector 给的授权页，等 Pupu 跳回 `pupu://connector`，返回给人看的那句结果。
+    /// 连上了返回 (true, …)，没连上返回 (false, 原因)。取消时抛 CancellationError。
+    func connect(authorization url: URL) async throws -> (connected: Bool, message: String) {
+        let callback: URL = try await withCheckedThrowingContinuation { continuation in
+            let session = ASWebAuthenticationSession(url: url, callback: .customScheme("pupu")) { url, error in
+                if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+                    continuation.resume(throwing: CancellationError())
+                } else if let error {
+                    continuation.resume(throwing: APIError(message: "授权页打不开：\(error.localizedDescription)"))
+                } else if let url {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(throwing: APIError(message: "授权没有结果，再试一次。"))
+                }
+            }
+            session.presentationContextProvider = self
+            session.prefersEphemeralWebBrowserSession = false
+            self.session = session
+            if !session.start() {
+                continuation.resume(throwing: APIError(message: "授权页打不开，再试一次。"))
+            }
+        }
+        session = nil
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let message = items.first(where: { $0.name == "message" })?.value ?? ""
+        guard callback.host() == "connector" else { throw APIError(message: "授权没有结果，再试一次。") }
+        return (items.first(where: { $0.name == "status" })?.value == "connected", message)
+    }
+
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         anchor ?? ASPresentationAnchor()
     }

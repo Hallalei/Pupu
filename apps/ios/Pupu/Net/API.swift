@@ -102,6 +102,19 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/members/\(id)/remove", method: "POST", body: [:])
     }
 
+    /// 连一个账号：返回授权页地址，在系统登录页里打开，见 SignIn.connect。只能在手机上做。
+    func connect(service: String) async throws -> URL {
+        let started: Started = try await send("api/connectors/\(service)/connect", method: "POST", body: [:])
+        guard let url = URL(string: started.url) else { throw APIError(message: "授权页地址不对。") }
+        return url
+    }
+
+    /// 断开一个账号，open-connector 那边一起撤销授权。
+    func remove(connector id: String) async throws {
+        let _: Done = try await send("api/connectors/\(id)/remove", method: "POST", body: [:])
+    }
+
+    private struct Started: Decodable { let url: String }
     private struct Done: Decodable {}
     private struct Failure: Decodable { let error: String }
 

@@ -31,6 +31,21 @@ import {
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
 import { createComputerTools } from "./bridge/tools";
+import { ConnectorClient, ConnectorError, connectorConfigFrom } from "./connectors/client";
+import {
+  CONNECTOR_SERVICES,
+  ConnectorStore,
+  serviceOf,
+  type ConnectorService,
+  type ConnectorView
+} from "./connectors/store";
+import {
+  connectorIdOf,
+  createConnectorTools,
+  describeAccount,
+  planConnectorCall,
+  type ConnectorDeps
+} from "./connectors/tools";
 import {
   browserName,
   DEFAULT_DEVICE_NAMES,
@@ -100,6 +115,12 @@ export type PupuState = {
   readonly activity: readonly ComputerActivity[];
   /** 成员名单，创建者在前。设备的 `memberId`、电脑的 `ownerId` 对的是这里的 id。 */
   readonly members: readonly MemberView[];
+  /** 账户（连接器）。`enabled` 是 Pupu 这边配没配 open-connector。 */
+  readonly connectors: {
+    readonly enabled: boolean;
+    readonly services: readonly ConnectorService[];
+    readonly accounts: readonly ConnectorView[];
+  };
 };
 
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
@@ -116,6 +137,13 @@ export class Pupu extends DurableObject<Env> {
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly members = new MemberStore(this.ctx.storage.sql);
+  readonly connectors = new ConnectorStore(this.ctx.storage.sql);
+  /** 连接器工具和审批要用的状态。 */
+  readonly #connectorDeps: ConnectorDeps = {
+    client: () => this.#connectorClient(),
+    accounts: () => this.connectors.list(),
+    emailOf: (memberId) => (memberId ? (this.members.byId(memberId)?.email ?? null) : null)
+  };
   readonly bridge = new ComputerBridge({
     directory: this.computers,
     sockets: () => this.ctx.getWebSockets(BRIDGE_TAG),
@@ -165,7 +193,12 @@ export class Pupu extends DurableObject<Env> {
     directory: this.computers,
     approvals: this.approvals,
     now: () => Date.now(),
-    onChange: (computerIds) => this.#approvalsChanged(computerIds)
+    onChange: (computerIds) => this.#approvalsChanged(computerIds),
+    plan: (call) => planConnectorCall(call, this.#connectorDeps),
+    subjectName: (subjectId) => {
+      const row = this.connectors.byId(connectorIdOf(subjectId) ?? "");
+      return row ? describeAccount(row, () => null) : undefined;
+    }
   });
   /** 电脑上的调用是哪个会话发的，「正在做」靠它说出是哪个项目。 */
   readonly #callSessions = new CallSessions();
@@ -181,7 +214,12 @@ export class Pupu extends DurableObject<Env> {
             key: "pupu",
             tag: false,
             render: (input) =>
-              renderPrompt(String(input.conversationId), this.store, this.bridge.list())
+              renderPrompt(
+                String(input.conversationId),
+                this.store,
+                this.bridge.list(),
+                this.connectors.list().map((row) => describeAccount(row, this.#connectorDeps.emailOf))
+              )
           }
         ],
         tools: [
@@ -191,7 +229,8 @@ export class Pupu extends DurableObject<Env> {
             handOff: (project, task, operationId) =>
               this.#handOff(project, task, operationId)
           }),
-          ...createComputerTools(this.bridge)
+          ...createComputerTools(this.bridge),
+          ...createConnectorTools(this.#connectorDeps)
         ],
         hooks: [
           hook(ToolTask, {
@@ -387,9 +426,31 @@ export class Pupu extends DurableObject<Env> {
     );
   }
 
-  /** 电脑的主人。没有这台电脑或者还没主人是 null。 */
+  /** 电脑的主人。没有这台电脑或者还没主人是 null。连接器的请示（见 connectors/tools.ts）是连这个账号的人。 */
   #ownerOf(computerId: string): string | null {
+    const connector = connectorIdOf(computerId);
+    if (connector !== null) return this.connectors.byId(connector)?.memberId ?? null;
     return this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+  }
+
+  /** 没配 CONNECTOR_URL 和 CONNECTOR_TOKEN 是 null。 */
+  #connectorClient(): ConnectorClient | null {
+    const config = connectorConfigFrom(this.env);
+    return config ? new ConnectorClient(config) : null;
+  }
+
+  #connectorViews(current: string | null): ConnectorView[] {
+    const actor = this.#actor(current);
+    return this.connectors.list().map((row) => ({
+      id: row.id,
+      service: row.service,
+      name: serviceOf(row.service)?.name ?? row.service,
+      account: row.account,
+      memberId: row.memberId,
+      ownerEmail: this.#connectorDeps.emailOf(row.memberId),
+      removable: mayRevoke(actor, row.memberId),
+      createdAt: row.createdAt
+    }));
   }
 
   /** 访问口令和本机开发配的设备算创建者的；还没有创建者时先不属于谁。 */
@@ -413,6 +474,7 @@ export class Pupu extends DurableObject<Env> {
     if (!creator) return undefined;
     this.devices.claimUnowned(creator.id);
     this.computers.claimUnowned(creator.id);
+    this.connectors.claimUnowned(creator.id);
     this.bridge.onChange();
     this.#devicesChanged();
     return creator;
@@ -429,7 +491,12 @@ export class Pupu extends DurableObject<Env> {
       approvals: [...this.gate.pending(), ...this.signIns.pending(Date.now()).map(signInApprovalView)],
       devices: this.#deviceViews(current),
       activity: this.#activity(),
-      members: this.members.list().map((row) => memberView(row, this.#actor(current)?.memberId ?? null))
+      members: this.members.list().map((row) => memberView(row, this.#actor(current)?.memberId ?? null)),
+      connectors: {
+        enabled: connectorConfigFrom(this.env) !== null,
+        services: CONNECTOR_SERVICES,
+        accounts: this.#connectorViews(current)
+      }
     };
   }
 
@@ -804,9 +871,108 @@ export class Pupu extends DurableObject<Env> {
     await this.lifecycle.start();
     for (const row of this.devices.ofMember(id)) this.#revokeDevice(row.id);
     for (const row of this.computers.list()) if (row.ownerId === id) this.#revokeComputer(row.id);
+    for (const row of this.connectors.list()) if (row.memberId === id) await this.#disconnect(row.id);
     this.members.remove(id);
     this.#devicesChanged();
     return "ok";
+  }
+
+  // ---- 账户（连接器，需求说明 4.8）----
+
+  /**
+   * 成员在手机上连一个账号：在 open-connector 发起授权，返回授权页地址。授权完跳回
+   * `/api/connectors/done`，见 `finishConnector`。连账号是放宽 Pupu 能做的事，和放宽电脑分级一样
+   * 只在手机 App 上做（`mayChangePolicy` 的理由）；`device` 是 null 是本机开发。
+   */
+  async startConnector(
+    service: string,
+    origin: string,
+    device: string | null = null
+  ): Promise<{ ok: true; url: string } | { ok: false; status: 400 | 403 | 409 | 502; error: string }> {
+    const client = this.#connectorClient();
+    if (!client) return { ok: false, status: 409, error: "这个 Pupu 还没配连接器（open-connector）" };
+    if (!serviceOf(service)) return { ok: false, status: 400, error: "现在还不能连这个服务" };
+    const actor = this.#actor(device);
+    if (actor !== null && actor?.kind !== "phone") return { ok: false, status: 403, error: "连账号要在手机 App 上做" };
+    if (actor !== null && actor.memberId === null && this.members.creator()) {
+      return { ok: false, status: 403, error: "这台手机不属于哪个成员，先用 Google 登录" };
+    }
+    const attempt = crypto.randomUUID();
+    const returnUri = new URL(`/api/connectors/done?attempt=${attempt}`, origin).toString();
+    try {
+      const started = await client.start(service, returnUri);
+      this.connectors.addAttempt({
+        id: attempt,
+        requestId: started.requestId,
+        service,
+        memberId: actor?.memberId ?? this.#fallbackOwner(),
+        client: actor === null ? "browser" : "phone",
+        createdAt: Date.now()
+      });
+      return { ok: true, url: started.authorizationUrl };
+    } catch (error) {
+      return { ok: false, status: 502, error: connectorMessage(error) };
+    }
+  }
+
+  /** 授权页跳回来：问 open-connector 这次连上没有，连上了记下是谁的哪个账号。一次授权只认一次。 */
+  async finishConnector(
+    attemptId: string
+  ): Promise<{ client: "phone" | "browser"; ok: boolean; service: string; message: string } | undefined> {
+    const attempt = this.connectors.takeAttempt(attemptId, Date.now());
+    if (!attempt) return undefined;
+    const name = serviceOf(attempt.service)?.name ?? attempt.service;
+    const done = (ok: boolean, message: string) => ({ client: attempt.client, ok, service: attempt.service, message });
+    const client = this.#connectorClient();
+    if (!client) return done(false, "这个 Pupu 的连接器已经关了");
+    try {
+      const request = await client.request(attempt.requestId);
+      if (request.status !== "connected" || !request.appId) {
+        return done(false, request.status === "expired" ? "授权超时了，再连一次" : (request.errorMessage ?? `没连上 ${name}`));
+      }
+      const connection = await client.connection(request.appId);
+      const known = this.connectors.byId(connection.id);
+      this.connectors.save({
+        id: connection.id,
+        service: attempt.service,
+        alias: connection.alias,
+        account: connection.account,
+        memberId: known?.memberId ?? attempt.memberId,
+        createdAt: known?.createdAt ?? Date.now()
+      });
+      this.#devicesChanged();
+      return done(true, connection.account ? `${name}（${connection.account}）连好了` : `${name} 连好了`);
+    } catch (error) {
+      return done(false, connectorMessage(error));
+    }
+  }
+
+  /** 断开一个账号：自己的自己能断，创建者能断所有人的（是收紧，哪个设备上都行）。 */
+  async removeConnector(id: string, device: string | null = null): Promise<"ok" | "missing" | "forbidden" | "failed"> {
+    const row = this.connectors.byId(id);
+    if (!row) return "missing";
+    if (!mayRevoke(this.#actor(device), row.memberId)) return "forbidden";
+    return (await this.#disconnect(id)) ? "ok" : "failed";
+  }
+
+  /** 先在 open-connector 撤销授权，成功了再删这边的记录，免得记录没了凭据还在。那边已经没有这个连接也算成功。 */
+  async #disconnect(id: string): Promise<boolean> {
+    const row = this.connectors.byId(id);
+    if (!row) return true;
+    const client = this.#connectorClient();
+    if (client) {
+      try {
+        await client.disconnect(row.service, row.alias);
+      } catch (error) {
+        if (!(error instanceof ConnectorError && error.status === 404)) {
+          console.warn("断开连接器失败", error);
+          return false;
+        }
+      }
+    }
+    this.connectors.remove(id);
+    this.#devicesChanged();
+    return true;
   }
 
   /** 桥拿自己的凭据注销自己，不用访问口令。 */
@@ -899,6 +1065,35 @@ function credentialOf(request: Request): { token: string; cookie: boolean } | nu
 
 /** 发请求的设备。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。 */
 type Caller = { readonly device: string | null };
+
+function connectorMessage(error: unknown): string {
+  return error instanceof Error ? `连接器出错了：${error.message}` : "连接器出错了";
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+}
+
+/**
+ * 授权完从 open-connector 跳回来。没有设备凭据（手机上是系统的登录页），靠 attempt 这个一次性的随机 id 认。
+ * 手机跳回 App（`pupu://connector`，登录会话接住）；浏览器显示一页说结果。
+ */
+async function handleConnectorDone(env: Env, url: URL): Promise<Response> {
+  const attempt = url.searchParams.get("attempt") ?? "";
+  const result = /^[0-9a-f-]{36}$/.test(attempt) ? await pupu(env).finishConnector(attempt) : undefined;
+  if (result?.client === "phone") {
+    const back = new URL("pupu://connector");
+    back.searchParams.set("status", result.ok ? "connected" : "failed");
+    back.searchParams.set("service", result.service);
+    back.searchParams.set("message", result.message);
+    return Response.redirect(back.toString(), 302);
+  }
+  const message = result?.message ?? "这个授权链接已经用过或过期了，回 Pupu 再连一次。";
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pupu</title><body style="font:17px/26px -apple-system,system-ui,sans-serif;margin:48px 24px;color:#1f1f1f"><p>${escapeHtml(message)}</p><p>可以关掉这一页了。</p></body>`,
+    { status: result ? 200 : 410, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } }
+  );
+}
 
 /**
  * 带了凭据就一定要对上一台没吊销的设备，本机也一样，吊销马上能看到效果。
@@ -1068,6 +1263,20 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (result === "creator_only") return Response.json({ error: "只有创建者能移除成员，创建者自己移除不了" }, { status: 403 });
     return Response.json({ ok: true });
   }
+  const connect = pathname.match(/^\/api\/connectors\/([a-z0-9_]+)\/connect$/);
+  if (connect && method === "POST") {
+    const result = await pupu(env).startConnector(connect[1] ?? "", url.origin, caller.device);
+    if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
+    return Response.json({ url: result.url });
+  }
+  const disconnect = pathname.match(/^\/api\/connectors\/([^/]+)\/remove$/);
+  if (disconnect && method === "POST") {
+    const result = await pupu(env).removeConnector(decodeURIComponent(disconnect[1] ?? ""), caller.device);
+    if (result === "missing") return Response.json({ error: "没有这个账号" }, { status: 404 });
+    if (result === "forbidden") return Response.json({ error: "别人连的账号只有创建者能断开" }, { status: 403 });
+    if (result === "failed") return Response.json({ error: "连接器那边没断开，等一下再试" }, { status: 502 });
+    return Response.json({ ok: true });
+  }
   if (pathname === "/api/computers/run" && method === "POST") {
     if (!isLocal(request)) return new Response("Not found", { status: 404 });
     const body = await readJson<{ command?: string; computerId?: string; background?: boolean }>(request);
@@ -1121,6 +1330,9 @@ export default {
       // 不再认，跳到首页的登录页去填。
       if (url.pathname === "/api/login") {
         return Response.redirect(new URL("/", url).toString(), 302);
+      }
+      if (url.pathname === "/api/connectors/done" && request.method === "GET") {
+        return await handleConnectorDone(env, url);
       }
       if (url.pathname === "/api/bridge/revoke" && request.method === "POST") {
         const token = credentialOf(request)?.token;

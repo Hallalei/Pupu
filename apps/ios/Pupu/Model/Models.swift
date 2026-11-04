@@ -181,6 +181,47 @@ nonisolated struct Member: Decodable, Sendable, Hashable {
     }
 }
 
+/// 「我 → 账户」：成员连给 Pupu 的 Gmail、日历、GitHub 这类账号。凭据在 open-connector，见云端 src/connectors/。
+nonisolated struct Connectors: Decodable, Sendable, Hashable {
+    nonisolated struct Service: Decodable, Sendable, Hashable {
+        /// open-connector 的 provider id，比如 gmail。
+        let id: String
+        let name: String
+        let detail: String
+
+        /// 列表上的图标。
+        var symbol: String {
+            switch id {
+            case "gmail": "envelope"
+            case "googlecalendar": "calendar"
+            case "googledrive": "folder"
+            case "github": "chevron.left.forwardslash.chevron.right"
+            default: "link"
+            }
+        }
+    }
+
+    nonisolated struct Account: Decodable, Sendable, Hashable {
+        let id: String
+        let service: String
+        let name: String
+        /// 邮箱或用户名。没拿到是 nil。
+        let account: String?
+        let memberId: String?
+        let ownerEmail: String?
+        /// 这台手机的人能不能断开：自己的，或者是创建者。
+        let removable: Bool
+        let createdAt: Double
+    }
+
+    /// Pupu 这边配没配 open-connector。
+    let enabled: Bool
+    let services: [Service]
+    let accounts: [Account]
+
+    static let empty = Connectors(enabled: false, services: [], accounts: [])
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
     let computers: [Computer]
@@ -188,4 +229,5 @@ nonisolated struct PupuState: Decodable, Sendable {
     let devices: [Device]?
     let activity: [ComputerActivity]?
     let members: [Member]?
+    let connectors: Connectors?
 }

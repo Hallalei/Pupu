@@ -31,6 +31,16 @@ export type GateOptions = {
   readonly now: () => number;
   /** 这些电脑的审批或屏幕授权变了。 */
   readonly onChange: (computerIds: readonly string[]) => void;
+  /**
+   * 不在电脑上的调用（连接器的写操作）要不要问。要问就给出请示的内容，`subjectId` 记在审批表的
+   * computer_id 一栏，和电脑的分开；不用问返回 undefined。见 src/connectors/tools.ts。
+   */
+  readonly plan?: (call: {
+    readonly name: string;
+    readonly arguments: Readonly<Record<string, unknown>>;
+  }) => Promise<{ subjectId: string; title: string; detail: string; reason: string | null } | undefined>;
+  /** 审批卡上「哪台电脑」那一栏，不是电脑的时候写什么。 */
+  readonly subjectName?: (subjectId: string) => string | undefined;
 };
 
 /**
@@ -55,7 +65,13 @@ export class ComputerGate {
     let row = this.#options.approvals.byCall(call.id);
     if (!row) {
       const planned = actionForCall(call.name, call.arguments);
-      if (!planned) return undefined;
+      if (!planned) {
+        const asked = await this.#options.plan?.(call);
+        if (!asked) return undefined;
+        // 等 plan 的时候 DO 可能已经把同一次调用登记过了。
+        row = this.#options.approvals.byCall(call.id) ?? this.#askOther(call.id, asked);
+        return this.#await(row, signal);
+      }
       // 选不出电脑时让工具自己去说明，这里不拦。
       const selected = selectComputer(this.#options.computers(), planned.computerId);
       if (!selected.ok) return undefined;
@@ -137,7 +153,7 @@ export class ComputerGate {
     return this.#options.approvals.pending(now).map((row) => ({
       id: row.id,
       computerId: row.computerId,
-      computerName: names.get(row.computerId) ?? "电脑",
+      computerName: names.get(row.computerId) ?? this.#options.subjectName?.(row.computerId) ?? "电脑",
       kind: row.kind,
       title: row.title,
       detail: row.detail,
@@ -179,6 +195,26 @@ export class ComputerGate {
       expiresAt: now + APPROVAL_TTL_MS
     });
     this.#options.onChange([computer.id]);
+    return created;
+  }
+
+  #askOther(
+    callId: string,
+    asked: { subjectId: string; title: string; detail: string; reason: string | null }
+  ): ApprovalRow {
+    const now = this.#options.now();
+    const created = this.#options.approvals.insert({
+      callId,
+      computerId: asked.subjectId,
+      kind: "step",
+      screen: false,
+      title: asked.title,
+      detail: asked.detail,
+      reason: asked.reason,
+      createdAt: now,
+      expiresAt: now + APPROVAL_TTL_MS
+    });
+    this.#options.onChange([asked.subjectId]);
     return created;
   }
 
