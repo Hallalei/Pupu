@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：正文、项目标签、电脑上的操作。
+/// 聊天列表里的一行。一条 Pupu 的消息会拆成好几行：正文、项目标签、电脑上的操作。聊天里还有项目报回来的结果。
 /// 思考过程不显示，跟聊天软件一样只看回复。
 nonisolated struct ChatRow: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
@@ -17,6 +17,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
         case notice(String)
         /// 项目会话里，从聊天转来的事。
         case handoff(String)
+        /// 聊天里，项目报回来的结果。
+        case report(ReportCard)
         case error(String)
     }
 
@@ -57,6 +59,8 @@ nonisolated struct ChatContext: Sendable {
     var projects: [Project] = []
     var computers: [Computer] = []
     var approvals: [Approval] = []
+    /// 项目报回聊天的结果，按时间先后。只有聊天里有。
+    var reports: [ReportCard] = []
     /// 用户点开或收起过的行，和默认状态相反。
     var toggled: Set<String> = []
 }
@@ -82,9 +86,16 @@ nonisolated enum ChatRows {
 
         var messages = view.messages.filter(isVisible)
         if let live = view.live, isVisible(live) { messages.append(live) }
+        let retried = retriedFailures(messages, running: view.running)
 
+        var reports = context.reports[...]
         var rows: [ChatRow] = []
-        for message in messages {
+        for message in messages where !retried.contains(message.id) {
+            // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
+            while let report = reports.first, message.timestamp > 0, report.at <= message.timestamp {
+                rows.append(reportRow(report))
+                reports.removeFirst()
+            }
             var own: [ChatRow] = []
             switch message.role {
             case .user:
@@ -120,7 +131,7 @@ nonisolated enum ChatRows {
                     }
                 }
                 if let error = message.error, !error.isBlank {
-                    own.append(ChatRow(id: "\(message.id)#error", kind: .error("模型出错：\(error)")))
+                    own.append(ChatRow(id: "\(message.id)#error", kind: .error(modelErrorText(error))))
                 }
             case .tool:
                 break
@@ -128,16 +139,58 @@ nonisolated enum ChatRows {
             for index in own.indices { own[index].gap = index == 0 ? 12 : 8 }
             rows += own
         }
+        rows += reports.map(reportRow)
         rows = grouped(rows, context: context)
         if view.running && !(view.live?.hasText ?? false) {
             rows.append(ChatRow(id: "typing", kind: .typing(retrying: view.retry != nil)))
         }
-        if let error = view.error {
+        // 模型出错没回上时，那条回答自己已经带着原因，这里不再重复一行。
+        if let error = view.error, error != "这条消息没有得到回复：model_error" {
             rows.append(ChatRow(id: "session-error", kind: .error("出错了：\(error)")))
         }
         if !rows.isEmpty { rows[0].gap = 0 }
         var seen = Set<String>()
         return rows.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func reportRow(_ card: ReportCard) -> ChatRow {
+        ChatRow(id: "report:\(card.id)", kind: .report(card))
+    }
+
+    /// 模型出错后自动重试了的那几次：后面紧跟着下一次回答，或者现在正在重试。
+    /// pi 把每次失败都记进对话，跟聊天软件一样只留最后的结果；重试期间打字气泡会写「模型忙，正在重试」。
+    private static func retriedFailures(_ messages: [Message], running: Bool) -> Set<String> {
+        var ids = Set<String>()
+        for (index, message) in messages.enumerated() where message.role == .assistant {
+            guard let error = message.error, !error.isBlank else { continue }
+            let next = messages[(index + 1)...].first { $0.role != .notice }
+            if next.map({ $0.role == .assistant }) ?? running { ids.insert(message.id) }
+        }
+        return ids
+    }
+
+    /// 模型报的错是 `503: {"message": …}` 这种给程序看的，换成人话。
+    static func modelErrorText(_ error: String) -> String {
+        let status = Int(error.trimmingCharacters(in: .whitespaces).prefix(3)) ?? 0
+        let lower = error.lowercased()
+        if status == 429 || lower.contains("rate limit") { return "模型那边限流了，这条没回上。过一会儿再发一次。" }
+        if status == 402 || lower.contains("insufficient balance") { return "模型账户的余额用完了，这条没回上。充值以后再发一次。" }
+        if status == 401 || status == 403 { return "模型的 key 用不了了，这条没回上。" }
+        if status >= 500 || lower.contains("busy") || lower.contains("overloaded") {
+            return "模型那边太忙，这条没回上。过一会儿再发一次。"
+        }
+        return "模型出错了，这条没回上：\(errorDetail(error))"
+    }
+
+    /// 原文里能看懂的那句：JSON 里的 message，没有就是原文，太长截断。
+    private static func errorDetail(_ error: String) -> String {
+        var detail = error.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let start = error.firstIndex(of: "{"),
+           let object = try? JSONSerialization.jsonObject(with: Data(error[start...].utf8)) as? [String: Any] {
+            let message = object["message"] as? String ?? (object["error"] as? [String: Any])?["message"] as? String
+            if let message, !message.isBlank { detail = message.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        return detail.count > 200 ? String(detail.prefix(200)) + "…" : detail
     }
 
     /// 工具结果和系统记录不单独显示：项目标签和电脑上的操作已经在工具调用那里画出来了。
