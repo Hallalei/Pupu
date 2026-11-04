@@ -34,6 +34,8 @@
 	<false/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>打开远程桌面之前确认是你本人。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Pupu 不使用相机。远程桌面用的 WebRTC 组件带有相机接口，所以系统要求写明这一条。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
