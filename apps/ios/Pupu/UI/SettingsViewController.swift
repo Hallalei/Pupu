@@ -253,7 +253,7 @@ final class SettingsViewController: UICollectionViewController {
             .policy(computerId: id, policy: $0, selected: computer.currentPolicy == $0)
         }, toSection: .policy(computerId: id))
         snapshot.appendItems([
-            .note("跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。")
+            .note("跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。")
         ], toSection: .abilities)
         if mayRevoke(owner: computer.ownerId) {
             snapshot.appendSections([.revokeComputer])

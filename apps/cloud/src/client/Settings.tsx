@@ -197,7 +197,7 @@ export function Settings({
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium text-muted">这台电脑能做的</h3>
         <p className="text-sm leading-6">
-          跑命令，读写主目录里的文件，列目录。也能看主屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。
+          跑命令，读写主目录里的文件，列目录。也能看主屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。
         </p>
         <p className="text-sm leading-6 text-muted">
           电脑菜单栏上有 Pupu 的图标：能看到它在跑什么、是不是在操作屏幕，一键收回屏幕控制，也能在那台电脑上关掉跑命令或操作屏幕。在电脑上关掉的，批准了也不做。
