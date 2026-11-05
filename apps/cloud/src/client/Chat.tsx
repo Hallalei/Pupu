@@ -157,7 +157,10 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
           }}
           className="h-full overflow-y-auto"
         >
-          <div className="scroll-body mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pb-4 lg:px-6">
+          <div
+            data-capped={top ? "" : undefined}
+            className="scroll-body mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pb-4 lg:px-6"
+          >
             {loading && (
               <div className="my-auto flex justify-center">
                 <Spinner size="sm" aria-label="正在打开" />
