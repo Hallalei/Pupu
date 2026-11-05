@@ -59,24 +59,12 @@ type ChatProps = {
   readonly empty: ReactNode;
   readonly placeholder: string;
   readonly starters?: readonly string[];
-  /** 在主页输入栏里发的话，连上以后替用户发出去。 */
-  readonly pending?: string | null;
-  readonly onPendingSent?: () => void;
 };
 
 /** 离底部这么近就算在底部，新内容来了跟着滚。 */
 const STICK_DISTANCE = 80;
 
-export function Chat({
-  session,
-  context,
-  top,
-  empty,
-  placeholder,
-  starters = [],
-  pending = null,
-  onPendingSent
-}: ChatProps) {
+export function Chat({ session, context, top, empty, placeholder, starters = [] }: ChatProps) {
   const pi = usePiSession(session, context.onProjectsChanged, context.onActivity);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
@@ -91,7 +79,6 @@ export function Chat({
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
-  const sentPending = useRef<string | null>(null);
 
   const rows = buildRows(pi, { ...context, toggled });
 
@@ -100,15 +87,6 @@ export function Chat({
     const node = scroller.current;
     if (node && stick.current) node.scrollTop = node.scrollHeight;
   }, [rows.length, pi.live, pi.running]);
-
-  useEffect(() => {
-    if (!pending || pi.status !== "open" || sentPending.current === pending) return;
-    if (pi.submit(pending)) {
-      sentPending.current = pending;
-      stick.current = true;
-      onPendingSent?.();
-    }
-  }, [pending, pi, onPendingSent]);
 
   function send(text = draft) {
     const value = text.trim();
