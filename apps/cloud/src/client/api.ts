@@ -3,6 +3,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
 import type { Project } from "../projects";
+import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
 
 /** 这个浏览器没有凭据，或者凭据被吊销了。页面换成登录。 */
@@ -29,13 +30,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+
 export const api = {
   state: () => request<PupuState>("/api/state"),
+  /** 开没开 Google 登录。见 src/auth/routes.ts。 */
+  googleEnabled: async () => (await request<{ enabled: boolean }>("/api/auth/google")).enabled,
   createProject: (name: string, goal: string) =>
     request<Project>("/api/projects", {
       method: "POST",
       body: JSON.stringify({ name, goal })
     }),
+  /** 打开了这个项目：它报回聊天的结果都算看过。 */
+  markProjectSeen: (id: string) =>
+    request<{ ok: true }>(`/api/projects/${encodeURIComponent(id)}/seen`, { method: "POST" }),
   revokeComputer: (id: string) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
@@ -66,11 +73,16 @@ export const api = {
   revokeDevice: (id: string) =>
     request<{ ok: true }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
-    })
+    }),
+  /** 邀请成员。只有创建者在手机 App 上能邀请，网页上调会被拒（见 members.ts 的 `mayInvite`）。 */
+  inviteMember: (email: string) =>
+    request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email }) }),
+  removeMember: (id: string) =>
+    request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" })
 };
 
 /**
- * 项目、电脑、请示和设备。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
+ * 项目、电脑、请示、设备和项目报回聊天的结果。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
  * 被拒（没登录或者被吊销）时 `unauthorized` 是 true，接着轮询：别的标签页登录了，这里也会回来。
  */
 export function usePupuState() {
@@ -79,6 +91,8 @@ export function usePupuState() {
   const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);
   const [activity, setActivity] = useState<PupuState["activity"]>([]);
+  const [members, setMembers] = useState<PupuState["members"]>([]);
+  const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -91,6 +105,9 @@ export function usePupuState() {
       setApprovals(state.approvals);
       setDevices(state.devices);
       setActivity(state.activity);
+      setMembers(state.members);
+      // 部署新云端之前的老 DO 没有这一项。
+      setReports(state.reports ?? []);
       setError(null);
       setUnauthorized(false);
     } catch (cause) {
@@ -124,7 +141,9 @@ export function usePupuState() {
     approvals,
     devices,
     activity,
+    members,
     applyActivity: setActivity,
+    reports,
     error,
     unauthorized,
     loaded,

@@ -17,10 +17,16 @@ export type PairingInfo = {
    * 沿用它的授权就不会多出一台同名的电脑。只在第一次配对时给。
    */
   readonly adoptable: string | null;
+  /** 这个 Pupu 开了 Google 登录：先给「用 Google 登录」，配对码收在下面。`computer` 时不用登录，是 false。 */
+  readonly google: boolean;
 };
 
 export type PairingRequest = {
   readonly code: string;
+  readonly adopt: boolean;
+};
+
+export type GoogleRequest = {
   readonly adopt: boolean;
 };
 

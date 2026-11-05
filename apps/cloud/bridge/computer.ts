@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ComputerAction, UpFrame } from "../src/bridge/protocol.ts";
 import type { ActionHost } from "./actions.ts";
+import { yieldToHuman } from "./remote.ts";
 import { ensureSwiftBinary } from "./swift.ts";
 
 const SOURCE = fileURLToPath(new URL("./computer.swift", import.meta.url));
@@ -59,6 +60,7 @@ export async function performComputer(
   }
   const shot = lastShot;
   if (!shot) throw new Error("还没有截图。先截一张，再用图上的坐标。");
+  await yieldToHuman();
   if (action.op === "type") {
     const text = action.text ?? "";
     if (!text.trim()) throw new Error("没有要输入的文字。");

@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- Google OAuth 发布到正式版要一个隐私权政策网址，填的是 /privacy（Cloudflare 静态资源会把它对到这个文件）。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#34557f" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0c1420" media="(prefers-color-scheme: dark)" />
+    <title>Pupu 隐私说明</title>
+    <style>
+      :root {
+        --sky: linear-gradient(180deg, #34557f 0%, #6f8fb3 28%, #b9cad9 52%, #e6e5df 76%, #d6d0c4 100%);
+        --card: #ffffffd1;
+        --ink: #1c2634;
+        --muted: #1c2634bf;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --sky: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
+          --card: #24262cdb;
+          --ink: #ffffffe6;
+          --muted: #ffffff99;
+        }
+      }
+      html {
+        min-height: 100%;
+        background: var(--sky);
+      }
+      body {
+        margin: 0;
+        padding: 48px 16px;
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Segoe UI", sans-serif;
+        font-size: 16px;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 28px 24px;
+        border-radius: 28px;
+        background: var(--card);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 24px;
+        line-height: 32px;
+      }
+      h2 {
+        margin: 28px 0 6px;
+        font-size: 17px;
+      }
+      p,
+      li {
+        color: var(--muted);
+      }
+      ul {
+        padding-left: 1.2em;
+      }
+      a {
+        color: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Pupu 隐私说明</h1>
+      <p>Pupu 是一个团体（一家人、一个小组织）共用的 AI 助手。每个 Pupu 由它的创建者运营，只有创建者邀请的人能登录。</p>
+
+      <h2>用 Google 登录时拿到什么</h2>
+      <p>只请求 Google 账号的邮箱（openid 和 email），用来认出你是成员名单上的哪个人。不读你的 Gmail、通讯录、云端硬盘或其他 Google 数据。</p>
+
+      <h2>Pupu 存了什么</h2>
+      <ul>
+        <li>成员名单：每个人的邮箱、角色、加入时间。</li>
+        <li>你连上的手机、浏览器、电脑 App 和电脑：名字和凭据的摘要，不存明文凭据。</li>
+        <li>你和 Pupu 的对话、项目、审批记录，以及让 Pupu 在你电脑上做事的过程。</li>
+      </ul>
+      <p>这些数据存在这个 Pupu 的 Cloudflare 服务上。</p>
+
+      <h2>交给谁处理</h2>
+      <ul>
+        <li>对话内容会发给 AI 模型服务（目前是 DeepSeek）来生成回复。</li>
+        <li>要你批准的事会通过 Apple 推送通知发到你的手机。</li>
+      </ul>
+      <p>除此之外不卖、不分享给任何第三方，也不用来投放广告。</p>
+
+      <h2>删除</h2>
+      <p>在设置里可以吊销自己的设备和电脑。创建者移除一个成员时，他名下的设备和电脑凭据立刻作废。要删掉别的数据，请联系这个 Pupu 的创建者。</p>
+
+      <p><a href="/">回到 Pupu</a></p>
+    </main>
+  </body>
+</html>

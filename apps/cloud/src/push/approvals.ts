@@ -24,6 +24,8 @@ export type PushSender = { send(push: ApnsPush): Promise<ApnsResult> };
 export type ApprovalPusherOptions = {
   readonly approvals: Pick<ApprovalDirectory, "byId" | "pending">;
   readonly store: PushDirectory;
+  /** 这条审批推给哪些设备（按设备 id 判断）。不给就推给所有手机。 */
+  readonly audience?: (row: ApprovalRow) => (deviceId: string) => boolean;
   /** 没配 APNs 密钥时是 null：什么都不推，也不记，配好以后还在等的那几条照样推出去。 */
   readonly apns: () => PushSender | null;
   readonly now: () => number;
@@ -73,8 +75,9 @@ export class ApprovalPusher {
       if (store.approvalState(row.id)) continue;
       // 先记下再发：发的时候又来一轮，也不会再推一次。
       store.markApproval(row.id, "sent", now);
+      const to = this.#options.audience?.(row);
       jobs.push(
-        this.#fanOut(apns, tokens, (token) => ({
+        this.#fanOut(apns, to ? tokens.filter((token) => to(token.deviceId)) : tokens, (token) => ({
           token: token.token,
           env: token.env,
           type: "alert",
@@ -91,10 +94,11 @@ export class ApprovalPusher {
       store.markApproval(id, "cleared", now);
       const decider = this.#decidedBy.get(id);
       const row = approvals.byId(id);
+      const to = row ? this.#options.audience?.(row) : undefined;
       jobs.push(
         this.#fanOut(
           apns,
-          tokens.filter((token) => token.deviceId !== decider),
+          tokens.filter((token) => token.deviceId !== decider && (!to || to(token.deviceId))),
           (token) => ({
             token: token.token,
             env: token.env,
@@ -145,7 +149,8 @@ export function approvalAlert(row: ApprovalRow): object {
     aps: {
       alert: {
         title: row.title,
-        ...(row.reason ? { subtitle: `高风险：${row.reason}` } : {}),
+        // 新手机登录的 reason 是「认不出这次登录就点拒绝」，不是风险。
+        ...(row.reason ? { subtitle: row.kind === "sign_in" ? row.reason : `高风险：${row.reason}` } : {}),
         body: clip(row.detail, BODY_CHARS)
       },
       category: APPROVAL_CATEGORY,

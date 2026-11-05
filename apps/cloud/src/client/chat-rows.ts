@@ -3,9 +3,10 @@ import type { ComputerView } from "../bridge/protocol";
 import { parseHandoff, parseQuote } from "../messages";
 import type { Project } from "../projects";
 import type { SessionView, TranscriptMessage, TranscriptPart } from "../protocol";
+import type { ReportCard } from "../reports";
 
 /**
- * 把一个会话拆成对话里的一行行：正文、项目标签、电脑上的操作。
+ * 把一个会话拆成对话里的一行行：正文、项目标签、电脑上的操作，聊天里还有项目报回来的结果。
  * 和 iOS 的 ChatRows.swift 是同一套规则，两边改的时候一起改。
  */
 
@@ -51,6 +52,7 @@ export type ChatRow = {
     }
   | { readonly kind: "notice"; readonly text: string }
   | { readonly kind: "handoff"; readonly text: string }
+  | { readonly kind: "report"; readonly card: ReportCard }
   | { readonly kind: "error"; readonly text: string }
 );
 
@@ -60,6 +62,8 @@ export type RowContext = {
   readonly projects: ReadonlyMap<string, Project>;
   readonly computers: readonly ComputerView[];
   readonly approvals: readonly ApprovalView[];
+  /** 项目报回聊天的结果，按时间先后。只有聊天里有。 */
+  readonly reports?: readonly ReportCard[];
   /** 用户点开或收起过的行，和默认状态相反。 */
   readonly toggled: ReadonlySet<string>;
 };
@@ -93,9 +97,16 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
 
   const messages = view.messages.filter(isVisible);
   if (view.live && isVisible(view.live)) messages.push(view.live);
+  const retried = retriedFailures(messages, view.running);
 
+  const reports = [...(context.reports ?? [])];
   let rows: Row[] = [];
   for (const message of messages) {
+    if (retried.has(message.id)) continue;
+    // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
+    while (reports.length > 0 && message.timestamp > 0 && reports[0]!.at <= message.timestamp) {
+      rows.push(reportRow(reports.shift()!));
+    }
     const own: Draft[] = [];
     if (message.role === "user") {
       const text = textOf(message);
@@ -118,20 +129,69 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
         }
       });
       if (message.error?.trim()) {
-        own.push({ id: `${message.id}#error`, kind: "error", text: `模型出错：${message.error}` });
+        own.push({ id: `${message.id}#error`, kind: "error", text: modelErrorText(message.error) });
       }
     }
     rows.push(...own.map((row, index) => ({ ...row, gap: index === 0 ? 12 : 8 }) as Row));
   }
+  rows.push(...reports.map(reportRow));
   rows = grouped(rows, context);
   if (view.running && !hasText(view.live)) {
     rows.push({ id: "typing", gap: 12, kind: "typing", retrying: view.retry !== null });
   }
-  if (view.error) rows.push({ id: "session-error", gap: 12, kind: "error", text: `出错了：${view.error}` });
+  // 模型出错没回上时，那条回答自己已经带着原因，这里不再重复一行。
+  if (view.error && view.error !== "Not answered: model_error") {
+    rows.push({ id: "session-error", gap: 12, kind: "error", text: `出错了：${view.error}` });
+  }
   const seen = new Set<string>();
   return rows
     .filter((row) => !seen.has(row.id) && Boolean(seen.add(row.id)))
     .map((row, index) => (index === 0 ? { ...row, gap: 0 } : row));
+}
+
+function reportRow(card: ReportCard): Row {
+  return { id: `report:${card.id}`, gap: 12, kind: "report", card };
+}
+
+/**
+ * 模型出错后自动重试了的那几次：后面紧跟着下一次回答，或者现在正在重试。
+ * pi 把每次失败都记进对话，跟聊天软件一样只留最后的结果；重试期间打字气泡会写「模型忙，正在重试」。
+ */
+function retriedFailures(messages: readonly TranscriptMessage[], running: boolean): Set<string> {
+  const ids = new Set<string>();
+  messages.forEach((message, index) => {
+    if (message.role !== "assistant" || !message.error?.trim()) return;
+    const next = messages.slice(index + 1).find((later) => later.role !== "notice");
+    if (next ? next.role === "assistant" : running) ids.add(message.id);
+  });
+  return ids;
+}
+
+/** 模型报的错是 `503: {"message": …}` 这种给程序看的，换成人话。 */
+function modelErrorText(error: string): string {
+  const status = Number(/^\s*(\d{3})\b/.exec(error)?.[1] ?? 0);
+  const lower = error.toLowerCase();
+  if (status === 429 || lower.includes("rate limit")) return "模型那边限流了，这条没回上。过一会儿再发一次。";
+  if (status === 402 || lower.includes("insufficient balance")) return "模型账户的余额用完了，这条没回上。充值以后再发一次。";
+  if (status === 401 || status === 403) return "模型的 key 用不了了，这条没回上。";
+  if (status >= 500 || lower.includes("busy") || lower.includes("overloaded")) {
+    return "模型那边太忙，这条没回上。过一会儿再发一次。";
+  }
+  return `模型出错了，这条没回上：${errorDetail(error)}`;
+}
+
+/** 原文里能看懂的那句：JSON 里的 message，没有就是原文，太长截断。 */
+function errorDetail(error: string): string {
+  const json = error.slice(error.indexOf("{"));
+  let detail = error.trim();
+  try {
+    const body = asRecord(JSON.parse(json));
+    const message = body.message ?? asRecord(body.error).message;
+    if (typeof message === "string" && message.trim()) detail = message.trim();
+  } catch {
+    // 不是 JSON，用原文。
+  }
+  return detail.length > 200 ? `${detail.slice(0, 200)}…` : detail;
 }
 
 /** 工具结果和系统记录不单独显示：项目标签和电脑上的操作已经在工具调用那里画出来了。 */

@@ -19,6 +19,11 @@ nonisolated struct API: Sendable {
         try await send("api/projects", method: "POST", body: ["name": name, "goal": goal])
     }
 
+    /// 打开了这个项目：它报回聊天的结果都算看过。
+    func markSeen(project id: String) async throws {
+        let _: Done = try await send("api/projects/\(id)/seen", method: "POST", body: [:])
+    }
+
     func revoke(computer id: String) async throws {
         let _: Done = try await send("api/computers/\(id)/revoke", method: "POST", body: [:])
     }
@@ -36,9 +41,15 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/approvals/\(id)", method: "POST", body: ["decision": allow ? "allow" : "deny"])
     }
 
-    /// 把这台手机的推送 token 交给 Pupu。type：alert 是普通通知，start 是实时活动的 push-to-start。
+    /// 把这台手机的推送 token 交给 Pupu。type：alert 是普通通知，start 是实时活动的 push-to-start，
+    /// activity 是正开着的那个实时活动自己的。
     func registerPush(token: String, type: String, env: String) async throws {
         let _: Done = try await send("api/push-tokens", method: "POST", body: ["token": token, "type": type, "env": env])
+    }
+
+    /// 实时活动结束或被划掉了，它的 token 用不着了。
+    func unregisterPush(token: String) async throws {
+        let _: Done = try await send("api/push-tokens/\(token)", method: "DELETE")
     }
 
     /// 让 Pupu 给这台手机发一条测试通知，带回 APNs 的回答。
@@ -54,6 +65,30 @@ nonisolated struct API: Sendable {
         return try await API(endpoint: Endpoint(base: base, token: nil)).send("api/pair", method: "POST", body: body)
     }
 
+    /// 换凭据的结果：拿到了，或者还在等已有手机点允许。
+    nonisolated enum Redeemed: Sendable {
+        case paired(Paired)
+        case waiting(expiresAt: Double)
+    }
+
+    private struct RedeemBody: Decodable {
+        let status: String
+        let device: Paired?
+        let expiresAt: Double?
+    }
+
+    /// 用 Google 登录回来的一次性 code，加上这台手机留着的 verifier，换凭据。见 src/auth/routes.ts 的 /api/auth/redeem。
+    static func redeemSignIn(base: URL, code: String, verifier: String, name: String) async throws -> Redeemed {
+        let body: RedeemBody = try await API(endpoint: Endpoint(base: base, token: nil)).send(
+            "api/auth/redeem",
+            method: "POST",
+            body: ["code": code, "verifier": verifier, "name": name]
+        )
+        if body.status == "waiting", let expiresAt = body.expiresAt { return .waiting(expiresAt: expiresAt) }
+        guard let device = body.device else { throw APIError(message: "Pupu 给的凭据不完整。") }
+        return .paired(device)
+    }
+
     func createPairingCode() async throws -> PairingCode {
         try await send("api/pairing-codes", method: "POST", body: [:])
     }
@@ -62,6 +97,29 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/devices/\(id)/revoke", method: "POST", body: [:])
     }
 
+    /// 邀请成员。只有创建者在手机上能邀请（云端 members.ts 的 mayInvite）。
+    func invite(email: String) async throws {
+        let _: Done = try await send("api/members", method: "POST", body: ["email": email])
+    }
+
+    /// 移除成员：他名下的设备和电脑一起吊销。只有创建者能做。
+    func remove(member id: String) async throws {
+        let _: Done = try await send("api/members/\(id)/remove", method: "POST", body: [:])
+    }
+
+    /// 连一个账号：返回授权页地址，在系统登录页里打开，见 SignIn.connect。只能在手机上做。
+    func connect(service: String) async throws -> URL {
+        let started: Started = try await send("api/connectors/\(service)/connect", method: "POST", body: [:])
+        guard let url = URL(string: started.url) else { throw APIError(message: "授权页地址不对。") }
+        return url
+    }
+
+    /// 断开一个账号，open-connector 那边一起撤销授权。
+    func remove(connector id: String) async throws {
+        let _: Done = try await send("api/connectors/\(id)/remove", method: "POST", body: [:])
+    }
+
+    private struct Started: Decodable { let url: String }
     private struct Done: Decodable {}
     private struct Failure: Decodable { let error: String }
 

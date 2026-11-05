@@ -43,6 +43,8 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
 
     let id: String
     let name: String
+    /// 主人的成员 id：用谁的账号登录电脑 App 就是谁的。还没主人是 nil。
+    let ownerId: String?
     let online: Bool
     /// 连着，但是心跳停了。
     let stale: Bool
@@ -80,15 +82,19 @@ nonisolated struct Device: Decodable, Sendable, Hashable {
     let name: String
     /// phone、browser 或 desktop（电脑 App 的窗口）。
     let kind: String
+    /// 是谁的：成员 id 和他的 Google 邮箱。不属于谁是 nil。
+    let memberId: String?
+    let member: String?
     let createdAt: Double
     let lastSeenAt: Double?
     /// 就是这台手机。
     let current: Bool
 
+    /// 比如「手机 · a@gmail.com · 3 分钟前用过」。
     var label: String {
         let kind = kind == "phone" ? "手机" : kind == "desktop" ? "电脑 App" : "浏览器"
-        guard let lastSeenAt else { return kind }
-        return "\(kind) · \(Ago.text(lastSeenAt))用过"
+        let seen = lastSeenAt.map { "\(Ago.text($0))用过" }
+        return [kind, member, seen].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -156,10 +162,110 @@ nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
     var currentState: State { State(rawValue: state) ?? .idle }
 }
 
+/// 一起用这个 Pupu 的人。创建者在前（需求说明 4.7）。
+nonisolated struct Member: Decodable, Sendable, Hashable {
+    let id: String
+    let email: String
+    /// creator 或 member。
+    let role: String
+    /// 第一次登录的时间。邀请了还没登录过是 nil。
+    let joinedAt: Double?
+    /// 这台手机是他的。
+    let current: Bool
+
+    var isCreator: Bool { role == "creator" }
+
+    var label: String {
+        if isCreator { return "创建者" }
+        return joinedAt == nil ? "成员 · 还没登录过" : "成员"
+    }
+}
+
+/// 项目报回聊天的结果，云端 src/reports.ts 算好：同一个项目没看过的几条已经合成一张。
+nonisolated struct ReportCard: Decodable, Sendable, Hashable {
+    enum Status: String, Sendable {
+        case done, blocked, failed
+
+        /// 卡片上的状态：做完了 / 卡住了要你定 / 出错了。
+        var label: String {
+            switch self {
+            case .done: "做完了"
+            case .blocked: "卡住了要你定"
+            case .failed: "出错了"
+            }
+        }
+    }
+
+    let id: String
+    let projectId: String
+    let projectName: String
+    let status: String
+    /// 一句结果。
+    let summary: String
+    /// 转交过去的事。
+    let task: String
+    /// 报回来的时间，按它穿插在聊天的消息之间。
+    let at: Double
+    /// 用户打开过这个项目。
+    let seen: Bool
+    /// 合进来的、更早的几条没看过的报告。
+    let more: Int
+
+    var currentStatus: Status { Status(rawValue: status) ?? .done }
+
+    /// 引用回复这张卡时引用里写的话。带上项目名，聊天里的 Pupu 才知道在说哪个项目；和网页的 reportQuote 一样。
+    var quote: String { "项目「\(projectName)」的报告 · \(currentStatus.label)：\(summary)" }
+}
+
+/// 「我 → 账户」：成员连给 Pupu 的 Gmail、日历、GitHub 这类账号。凭据在 open-connector，见云端 src/connectors/。
+nonisolated struct Connectors: Decodable, Sendable, Hashable {
+    nonisolated struct Service: Decodable, Sendable, Hashable {
+        /// open-connector 的 provider id，比如 gmail。
+        let id: String
+        let name: String
+        let detail: String
+
+        /// 列表上的图标。
+        var symbol: String {
+            switch id {
+            case "gmail": "envelope"
+            case "googlecalendar": "calendar"
+            case "googledrive": "folder"
+            case "github": "chevron.left.forwardslash.chevron.right"
+            default: "link"
+            }
+        }
+    }
+
+    nonisolated struct Account: Decodable, Sendable, Hashable {
+        let id: String
+        let service: String
+        let name: String
+        /// 邮箱或用户名。没拿到是 nil。
+        let account: String?
+        let memberId: String?
+        let ownerEmail: String?
+        /// 这台手机的人能不能断开：自己的，或者是创建者。
+        let removable: Bool
+        let createdAt: Double
+    }
+
+    /// Pupu 这边配没配 open-connector。
+    let enabled: Bool
+    let services: [Service]
+    let accounts: [Account]
+
+    static let empty = Connectors(enabled: false, services: [], accounts: [])
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
     let computers: [Computer]
     let approvals: [Approval]?
     let devices: [Device]?
     let activity: [ComputerActivity]?
+    let members: [Member]?
+    let connectors: Connectors?
+    /// 旧版云端不给。
+    let reports: [ReportCard]?
 }

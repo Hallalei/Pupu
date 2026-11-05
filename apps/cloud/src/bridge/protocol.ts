@@ -1,3 +1,4 @@
+import { parseDesktopDown, parseDesktopUp, type DesktopDown, type DesktopUp } from "./desktop.ts";
 import type { ComputerPolicy } from "./policy.ts";
 
 /**
@@ -93,7 +94,9 @@ export type DownFrame =
   /** 停止把输出往连接上送，进程继续跑，输出继续写进文件。 */
   | { readonly type: "detach"; readonly requestId: string }
   /** 菜单栏上要显示的：这台电脑在等批准的动作、屏幕授权还在不在。 */
-  | { readonly type: "status"; readonly pending: readonly string[]; readonly screen: boolean };
+  | { readonly type: "status"; readonly pending: readonly string[]; readonly screen: boolean }
+  /** 远程桌面的信令和控制，见 desktop.ts。 */
+  | { readonly type: "desktop"; readonly session: string; readonly message: DesktopDown };
 
 export type ListEntry = {
   readonly name: string;
@@ -113,6 +116,7 @@ export type UpFrame =
   | { readonly type: "output"; readonly requestId: string; readonly text: string }
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
   | { readonly type: "takeback" }
+  | { readonly type: "desktop"; readonly session: string; readonly message: DesktopUp }
   | {
       readonly type: "started";
       readonly requestId: string;
@@ -148,6 +152,8 @@ export type UpFrame =
 export type ComputerView = {
   readonly id: string;
   readonly name: string;
+  /** 主人的成员 id（见 apps/cloud/src/members.ts）。还没主人是 null。 */
+  readonly ownerId: string | null;
   readonly online: boolean;
   /** 连着，但是心跳停了。界面上算离线，工具会说明是心跳。 */
   readonly stale: boolean;
@@ -215,6 +221,11 @@ export function parseUpFrame(raw: string): UpFrame | null {
   switch (value.type) {
     case "takeback":
       return { type: "takeback" };
+    case "desktop": {
+      const session = stringField(value, "session");
+      const message = parseDesktopUp(value.message);
+      return session && message ? { type: "desktop", session, message } : null;
+    }
     case "hello": {
       const computerId = stringField(value, "computerId");
       const name = stringField(value, "name");
@@ -323,6 +334,11 @@ export function parseDownFrame(raw: string): DownFrame | null {
   switch (value.type) {
     case "welcome":
       return { type: "welcome" };
+    case "desktop": {
+      const session = stringField(value, "session");
+      const message = parseDesktopDown(value.message);
+      return session && message ? { type: "desktop", session, message } : null;
+    }
     case "cancel":
       return requestId ? { type: "cancel", requestId } : null;
     case "detach":

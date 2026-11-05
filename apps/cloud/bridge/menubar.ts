@@ -16,6 +16,8 @@ export type MenubarState = {
   readonly allowScreen: boolean;
   readonly url: string;
   readonly name: string;
+  /** 有手机正连着远程桌面。 */
+  readonly remote?: boolean;
 };
 
 /** 没连上的原因：凭据被拒，或者这台电脑已经有别的桥连着。 */
@@ -24,6 +26,7 @@ export type MenubarProblem = "rejected" | "busy";
 export type MenubarAction =
   | { readonly action: "takeback" }
   | { readonly action: "stopJobs" }
+  | { readonly action: "stopRemote" }
   | { readonly action: "setAllowCommands"; readonly value: boolean }
   | { readonly action: "setAllowScreen"; readonly value: boolean };
 
@@ -44,6 +47,7 @@ function parseAction(line: string): MenubarAction | null {
   switch (record.action) {
     case "takeback":
     case "stopJobs":
+    case "stopRemote":
       return { action: record.action };
     case "setAllowCommands":
     case "setAllowScreen":
@@ -137,6 +141,7 @@ export function menubarState(input: {
   readonly allowScreen: boolean;
   readonly url: string;
   readonly name: string;
+  readonly remote?: "viewing" | "controlling" | null;
 }): MenubarState {
   const jobs = input.commands.length;
   let status: MenubarState["status"];
@@ -151,6 +156,9 @@ export function menubarState(input: {
           : jobs > 0
             ? `没连上 Pupu，还有 ${jobs} 条命令在跑`
             : "没连上 Pupu";
+  } else if (input.remote) {
+    status = "screen";
+    title = input.remote === "controlling" ? "手机正在远程控制这台电脑" : "手机正在远程查看这台电脑";
   } else if (input.pending.length > 0) {
     status = "waiting";
     title = `等你在手机或网页上批准（${input.pending.length} 件）`;
@@ -178,7 +186,8 @@ export function menubarState(input: {
     allowCommands: input.allowCommands,
     allowScreen: input.allowScreen,
     url: input.url,
-    name: input.name
+    name: input.name,
+    remote: Boolean(input.remote)
   };
 }
 

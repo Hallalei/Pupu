@@ -23,6 +23,13 @@ nonisolated struct Endpoint: Equatable, Sendable {
         return components.url!
     }
 
+    /// 远程桌面的信令：`/api/desktop/:id`。
+    func desktopURL(computer id: String) -> URL {
+        var components = URLComponents(url: base.appending(path: "api/desktop/\(id)"), resolvingAgainstBaseURL: false)!
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        return components.url!
+    }
+
     func authorize(_ request: inout URLRequest) {
         if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -66,11 +73,16 @@ final class Connection {
         }
     }
 
-    /// 拿配对码（或者访问口令）换这台手机的凭据，存好就算连上了。
+    /// 拿配对码（或者访问口令）换这台手机的凭据。
     /// 两样都不带，只有连本机的开发服务器、又没设访问口令时能过。
     /// 原来连着别的 Pupu，换过去之前先在那边注销。
     func pair(base: URL, code: String?, accessToken: String?) async throws {
         let paired = try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name)
+        await adopt(base: base, paired: paired)
+    }
+
+    /// 存好换来的凭据，就算连上了。配对码和 Google 登录都走这里。
+    func adopt(base: URL, paired: Paired) async {
         await revokeSelf()
         UserDefaults.standard.set(base.absoluteString, forKey: Self.serverKey)
         UserDefaults.standard.set(paired.id, forKey: Self.deviceKey)

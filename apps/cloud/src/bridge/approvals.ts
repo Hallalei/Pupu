@@ -3,8 +3,11 @@
  * 按工具调用的 id 唯一：DO 重启后 pi 会重跑这次调用的 beforeTool，按 id 查回来接着等。
  */
 
-/** step：这一步单独批。screen：批这台电脑的屏幕授权。 */
-export type ApprovalKind = "step" | "screen";
+/**
+ * step：这一步单独批。screen：批这台电脑的屏幕授权。
+ * sign_in：新手机用 Google 登录，等已有手机点允许，不在这张表里，见 src/auth/sign-ins.ts。
+ */
+export type ApprovalKind = "step" | "screen" | "sign_in";
 export type ApprovalStatus = "pending" | "allowed" | "denied" | "expired";
 
 export type ApprovalRow = {

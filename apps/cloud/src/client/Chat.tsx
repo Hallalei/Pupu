@@ -14,6 +14,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
 import { quotedMessage } from "../messages";
 import type { Project } from "../projects";
+import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { buildRows, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
 import { Composer } from "./Composer";
 import {
@@ -40,6 +41,8 @@ export type ChatContext = {
   readonly projectTags: boolean;
   readonly computers: readonly ComputerView[];
   readonly approvals: readonly ApprovalView[];
+  /** 项目报回聊天的结果。只有聊天里有，项目会话里是 undefined。 */
+  readonly reports?: readonly ReportCard[];
   readonly onOpenProject: (projectId: string) => void;
   readonly onProjectsChanged: () => void;
   /** 收到电脑在做什么的更新。 */
@@ -369,6 +372,8 @@ function Row({
           </div>
         </div>
       );
+    case "report":
+      return <ReportBubble card={row.card} context={context} onMenu={onMenu} />;
     case "error":
       return (
         <div className="strong w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
@@ -452,6 +457,50 @@ function ProjectTag({
       {name}
     </button>
   );
+}
+
+/**
+ * 项目报回来的结果：项目名、状态、一句结果，点「去项目看」过去。同一个项目没看过的几条合成这一张。
+ * 长按或右键能引用回复，引用里带着项目名，聊天里的 Pupu 就知道在说哪个项目。
+ */
+function ReportBubble({ card, context, onMenu }: { card: ReportCard; context: ChatContext; onMenu: MenuOpener }) {
+  const press = usePressMenu((anchor) => onMenu(anchor, reportQuote(card)));
+  return (
+    <div {...press} className="pressable strong flex w-full max-w-[85%] flex-col rounded-row sm:max-w-96">
+      <div className="flex items-center gap-2 px-3 pt-2.5">
+        <FolderIcon className="shrink-0 text-[15px] text-muted pointer-fine:text-[13px]" />
+        <span className="min-w-0 flex-1 truncate text-footnote font-semibold">{card.projectName}</span>
+        <ReportStatusMark status={card.status} />
+      </div>
+      <div className="px-3 pt-1 text-subheadline [overflow-wrap:anywhere]">{card.summary}</div>
+      <div className="flex min-h-10 items-center gap-2 px-3 pointer-fine:min-h-9">
+        {card.more > 0 && <span className="text-caption text-muted">还有 {card.more} 条</span>}
+        <button
+          type="button"
+          onClick={() => context.onOpenProject(card.projectId)}
+          className="ml-auto flex h-8 items-center gap-0.5 text-footnote font-semibold pointer-fine:h-7"
+        >
+          去项目看
+          <ChevronRightIcon className="text-[14px] pointer-fine:text-[12px]" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReportStatusMark({ status }: { status: ReportStatus }) {
+  switch (status) {
+    case "blocked":
+      return (
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+          {STATUS_LABELS[status]}
+        </span>
+      );
+    case "failed":
+      return <span className="shrink-0 text-caption text-danger-ink">{STATUS_LABELS[status]}</span>;
+    case "done":
+      return <span className="shrink-0 text-caption text-muted">{STATUS_LABELS[status]}</span>;
+  }
 }
 
 const STEP_ICONS: Record<StepIcon, ReactNode> = {

@@ -14,6 +14,7 @@ import {
   type DownFrame,
   type UpFrame
 } from "./protocol.ts";
+import type { DesktopDown, DesktopUp } from "./desktop.ts";
 import {
   appendTail,
   disconnectedComputer,
@@ -95,6 +96,10 @@ export class ComputerBridge {
   onReady: (computerId: string) => void = () => {};
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
   onTakeback: (computerId: string) => void = () => {};
+  /** 桥发来的远程桌面消息。 */
+  onDesktop: (computerId: string, session: string, message: DesktopUp) => void = () => {};
+  /** 这台电脑的桥断了。 */
+  onGone: (computerId: string) => void = () => {};
   /** 这个动作批过没有。批过的在 exec 帧里带上 approved，桥上的二次判断认它。 */
   approvedFor: (input: { requestId: string; computerId: string; action: Action }) => boolean = () => false;
 
@@ -156,6 +161,11 @@ export class ComputerBridge {
       if (link?.ready) this.onTakeback(link.computerId);
       return;
     }
+    if (frame.type === "desktop") {
+      const link = readLink(socket);
+      if (link?.ready) this.onDesktop(link.computerId, frame.session, frame.message);
+      return;
+    }
     const waiter = this.#waiters.get(frame.requestId);
     if (!waiter || waiter.socket !== socket) return;
     waiter.frames.push(frame);
@@ -170,7 +180,11 @@ export class ComputerBridge {
       waiter.notify?.();
       changed = true;
     }
-    if (readLink(socket)?.ready) changed = true;
+    const link = readLink(socket);
+    if (link?.ready) {
+      changed = true;
+      this.onGone(link.computerId);
+    }
     if (changed) this.onChange();
   }
 
@@ -293,6 +307,12 @@ export class ComputerBridge {
     const socket = this.#socketFor(computerId);
     if (!socket) return;
     this.#send(socket, { type: "status", pending: status.pending, screen: status.screen } satisfies DownFrame);
+  }
+
+  /** 把远程桌面的消息发给这台电脑的桥。没连着返回 false。 */
+  sendDesktop(computerId: string, session: string, message: DesktopDown): boolean {
+    const socket = this.#socketFor(computerId);
+    return socket ? this.#send(socket, { type: "desktop", session, message } satisfies DownFrame) : false;
   }
 
   async #collect(
@@ -514,6 +534,7 @@ export class ComputerBridge {
     return {
       id: row.id,
       name: link?.ready ? link.name : row.name,
+      ownerId: row.ownerId,
       online: alive,
       stale,
       lastSeenAt: lastBeat ?? row.lastSeenAt,

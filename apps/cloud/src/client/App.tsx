@@ -1,5 +1,6 @@
 import { Button, Drawer, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { actorOf } from "../members";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
@@ -93,14 +94,29 @@ function rememberProject(id: string) {
  */
 export function App() {
   const [route, go] = useRoute();
-  const { projects, computers, approvals, devices, activity, applyActivity, loaded, error, unauthorized, refresh } =
-    usePupuState();
+  const {
+    projects,
+    computers,
+    approvals,
+    devices,
+    activity,
+    members,
+    applyActivity,
+    reports,
+    loaded,
+    error,
+    unauthorized,
+    refresh
+  } = usePupuState();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 在主页输入栏里发的话：切到聊天，连上以后发出去。 */
   const [pendingChat, setPendingChat] = useState<string | null>(null);
   const thisComputer = useDesktopComputer();
+  // 审批的允许只认手机 App。本机开发没设访问口令时没有「这台设备」，照常能点。
+  const current = devices.find((device) => device.current);
+  const canAllow = !current || current.kind === "phone";
 
   const chat: ChatContext = useMemo(
     () => ({
@@ -108,11 +124,12 @@ export function App() {
       projectTags: route.kind === "chat",
       computers,
       approvals,
+      reports: route.kind === "chat" ? reports : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
-    [projects, computers, approvals, refresh, applyActivity, go, route.kind]
+    [projects, computers, approvals, reports, refresh, applyActivity, go, route.kind]
   );
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
@@ -127,6 +144,14 @@ export function App() {
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
+
+  // 打开了项目，它报回聊天的结果都算看过；人在项目里时新报回来的也是。
+  const unseenHere = Boolean(project && reports.some((card) => card.projectId === project.id && !card.seen));
+  const projectId = project?.id;
+  useEffect(() => {
+    if (!projectId || !unseenHere) return;
+    api.markProjectSeen(projectId).then(refresh, () => {});
+  }, [projectId, unseenHere, refresh]);
 
   const clearPending = useCallback(() => setPendingChat(null), []);
 
@@ -279,6 +304,8 @@ export function App() {
         )}
         <Approvals
           approvals={approvals}
+          canAllow={canAllow}
+          phonePaired={devices.some((device) => device.kind === "phone")}
           onDecide={async (id, decision) => {
             await api.decideApproval(id, decision);
             await refresh();
@@ -328,8 +355,18 @@ export function App() {
           await refresh();
         }}
         devices={devices}
+        members={members}
+        actor={actorOf(current ?? null, members)}
         onRevokeDevice={async (id) => {
           await api.revokeDevice(id);
+          await refresh();
+        }}
+        onInviteMember={async (email) => {
+          await api.inviteMember(email);
+          await refresh();
+        }}
+        onRemoveMember={async (id) => {
+          await api.removeMember(id);
           await refresh();
         }}
         onCreatePairingCode={api.createPairingCode}

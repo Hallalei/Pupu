@@ -49,6 +49,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private var width: CGFloat = 0
     private var storeToken: StoreToken?
     private var swipe: (cell: ChatCell, id: String, armed: Bool)?
+    private var markingSeen = false
 
     init(
         session: String,
@@ -137,6 +138,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let tools = registration(ToolCell.self)
         let notices = registration(NoticeCell.self)
         let errors = registration(ErrorCell.self)
+        let reports = registration(ReportCell.self)
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
@@ -145,6 +147,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             case .projectTag: return view.dequeueConfiguredReusableCell(using: tags, for: path, item: id)
             case .tool, .toolGroup: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
             case .notice, .handoff: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
+            case .report: return view.dequeueConfiguredReusableCell(using: reports, for: path, item: id)
             case .error, nil: return view.dequeueConfiguredReusableCell(using: errors, for: path, item: id)
             }
         }
@@ -154,6 +157,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         pan.delegate = self
         collectionView.addGestureRecognizer(pan)
         collectionView.panGestureRecognizer.require(toFail: pan)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        markSeen()
     }
 
     private func registration<Cell: ChatCell>(_ type: Cell.Type) -> UICollectionView.CellRegistration<Cell, String> {
@@ -342,6 +350,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             projects: store.projects,
             computers: store.computers,
             approvals: store.approvals,
+            reports: projectTags ? store.reports : [],
             toggled: toggled
         )
         let rows = ChatRows.build(state, context: context)
@@ -372,6 +381,23 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         composer.running = state.running
         composer.connected = status == .open
         updateStatus()
+        markSeen()
+    }
+
+    /// 人在项目里：这个项目报回聊天的结果都算看过，在这里时新报回来的也是。
+    private func markSeen() {
+        let store = Store.shared
+        guard !markingSeen, view.window != nil,
+              let project = store.projects.first(where: { $0.session == session }),
+              store.reports.contains(where: { $0.projectId == project.id && !$0.seen }),
+              let api = store.api
+        else { return }
+        markingSeen = true
+        Task {
+            try? await api.markSeen(project: project.id)
+            markingSeen = false
+            Store.shared.refresh()
+        }
     }
 
     private static func cellType(_ kind: ChatRow.Kind) -> Int {
@@ -383,6 +409,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .tool, .toolGroup: 4
         case .notice, .handoff: 5
         case .error: 6
+        case .report: 7
         }
     }
 
@@ -425,6 +452,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             (cell as? NoticeCell)?.configure(heading: "从聊天转来", body: task, width: width)
         case .error(let text):
             (cell as? ErrorCell)?.configure(text, width: width)
+        case .report(let card):
+            guard let cell = cell as? ReportCell else { return }
+            cell.configure(card: card, width: width)
+            cell.onOpen = { [weak self] in self?.openProject(card.projectId) }
         }
         if let texts = Self.menuTexts(row) {
             cell.accessibilityCustomActions = [
@@ -591,6 +622,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         switch row.kind {
         case .user(let body, _): (body, body)
         case .assistant(let text): (Markdown.plainText(text), text)
+        case .report(let card): (card.quote, card.quote)
         default: nil
         }
     }

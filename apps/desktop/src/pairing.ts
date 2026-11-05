@@ -2,10 +2,10 @@ import { net } from "electron";
 import type { Credential } from "./credentials.ts";
 
 /**
- * 配对：用户给一个配对码，换出两份凭据。
- * 1. 码换窗口的 `desktop` 设备凭据；
- * 2. 窗口凭据再要一个新码（和设置里「生成配对码」同一个接口），换桥的 `computer` 凭据。
- * 码用一次就作废，所以要第二个。走的都是现有接口，云端只多认一种 `desktop`。
+ * 配对：换出两份凭据，窗口的 `desktop` 设备凭据和桥的 `computer` 凭据。
+ * - 用 Google 登录：在系统浏览器里登完，拿一次性的码和自己的 verifier 换，一次就给两份（见 `redeemSignIn`）；
+ * - 用配对码：码换窗口的凭据，窗口凭据再要一个新码（和设置里「生成配对码」同一个接口）换桥的凭据。
+ *   码用一次就作废，所以要第二个。
  */
 
 type PairBody = { id?: string; name?: string; token?: string; error?: string };
@@ -51,6 +51,34 @@ export async function pairComputer(origin: string, desktopToken: string, name: s
   const { code } = await call<{ code?: string }>(origin, "/api/pairing-codes", {}, desktopToken);
   if (!code) throw new Error("云端没给配对码。");
   return credentialOf(await call<PairBody>(origin, "/api/pair", { kind: "computer", name, code }));
+}
+
+/** 这个 Pupu 开没开 Google 登录。连不上当没开，还能用配对码。 */
+export async function googleEnabled(origin: string): Promise<boolean> {
+  try {
+    const response = await net.fetch(new URL("/api/auth/google", origin).toString());
+    const body = (await response.json().catch(() => null)) as { enabled?: unknown } | null;
+    return response.ok && body?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Google 登录回来的码，配上这次登录开始时的 verifier，换窗口的凭据；`computer` 为真时顺带换桥的凭据。
+ * 见 apps/cloud/src/auth/routes.ts 的 /api/auth/redeem。
+ */
+export async function redeemSignIn(
+  origin: string,
+  input: { code: string; verifier: string; name: string; computer: boolean }
+): Promise<{ desktop: Credential; computer: Credential | null }> {
+  const body = await call<{ status?: string; device?: PairBody; computer?: PairBody | null }>(
+    origin,
+    "/api/auth/redeem",
+    input
+  );
+  if (body.status !== "ok" || !body.device) throw new Error("云端没给凭据，再登录一次。");
+  return { desktop: credentialOf(body.device), computer: body.computer ? credentialOf(body.computer) : null };
 }
 
 /** 窗口的凭据还能不能用。连不上不算失效。 */
