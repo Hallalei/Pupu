@@ -1,6 +1,7 @@
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
-import { parseHandoff, parseQuote } from "../messages";
+import type { MemberView } from "../members";
+import { parseHandoff, parseQuote, type Sender } from "../messages.ts";
 import type { Project } from "../projects";
 import type { SessionView, TranscriptMessage, TranscriptPart } from "../protocol";
 import type { ReportCard } from "../reports";
@@ -38,7 +39,13 @@ export type ChatRow = {
   /** 和上一行的间距：同一条消息里 8，消息之间 12。 */
   readonly gap: 0 | 8 | 12;
 } & (
-  | { readonly kind: "user"; readonly body: string; readonly quote: string | null }
+  | {
+      readonly kind: "user";
+      readonly body: string;
+      readonly quote: string | null;
+      /** 别人发的才有。自己发的、没记发送者的老消息、只有一个成员时都是 null，靠右照旧。 */
+      readonly sender: Sender | null;
+    }
   | { readonly kind: "assistant"; readonly text: string }
   | { readonly kind: "typing"; readonly retrying: boolean }
   | { readonly kind: "project-tag"; readonly name: string; readonly projectId: string | null }
@@ -62,6 +69,7 @@ export type RowContext = {
   readonly projects: ReadonlyMap<string, Project>;
   readonly computers: readonly ComputerView[];
   readonly approvals: readonly ApprovalView[];
+  readonly members: readonly MemberView[];
   /** 项目报回聊天的结果，按时间先后。只有聊天里有。 */
   readonly reports?: readonly ReportCard[];
   /** 用户点开或收起过的行，和默认状态相反。 */
@@ -115,7 +123,7 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
         own.push({ id: message.id, kind: "handoff", text: task });
       } else {
         const { quote, body } = parseQuote(text);
-        own.push({ id: message.id, kind: "user", body, quote });
+        own.push({ id: message.id, kind: "user", body, quote, sender: otherSender(message, context) });
       }
     } else if (message.role === "notice") {
       own.push({ id: message.id, kind: "notice", text: textOf(message, " ") });
@@ -147,6 +155,13 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
   return rows
     .filter((row) => !seen.has(row.id) && Boolean(seen.add(row.id)))
     .map((row, index) => (index === 0 ? { ...row, gap: 0 } : row));
+}
+
+/** 这条消息要标出是谁发的时，返回发送者。 */
+function otherSender(message: TranscriptMessage, context: RowContext): Sender | null {
+  const { sender } = message;
+  if (!sender || context.members.length <= 1) return null;
+  return context.members.some((member) => member.current && member.id === sender.id) ? null : sender;
 }
 
 function reportRow(card: ReportCard): Row {

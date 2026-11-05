@@ -52,7 +52,13 @@ export type RedeemResult =
 export type AuthBackend = {
   addSignInFlow(flow: SignInFlow): Promise<void>;
   takeSignInFlow(state: string): Promise<SignInFlow | null>;
-  finishSignIn(input: { flow: SignInFlow; email: string; name: string }): Promise<SignInGrant>;
+  /** `name` 是这台设备的名字，`displayName` 是这个人在 Google 上的名字。 */
+  finishSignIn(input: {
+    flow: SignInFlow;
+    email: string;
+    name: string;
+    displayName: string | null;
+  }): Promise<SignInGrant>;
   redeemSignIn(input: {
     codeHash: string;
     challenge: string;
@@ -201,6 +207,7 @@ async function callback(request: Request, url: URL, client: OidcClient, context:
   if (!code) return fail(flow, "Google 没给授权码，再试一次。", cleared);
 
   let email: string;
+  let displayName: string | null;
   try {
     const idToken = await exchangeCode(
       client,
@@ -214,6 +221,7 @@ async function callback(request: Request, url: URL, client: OidcClient, context:
       now: context.now?.() ?? Date.now()
     });
     email = identity.email;
+    displayName = identity.name;
   } catch (cause) {
     if (cause instanceof SignInError) return fail(flow, cause.message, cleared);
     throw cause;
@@ -222,6 +230,7 @@ async function callback(request: Request, url: URL, client: OidcClient, context:
   const grant = await context.backend.finishSignIn({
     flow,
     email,
+    displayName,
     name: context.browserName(request.headers.get("User-Agent"))
   });
   if (grant.kind === "refused") return fail(flow, grant.error, cleared);

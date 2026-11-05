@@ -57,6 +57,7 @@ enum Theme {
     }
 
     enum Size {
+        static let avatar: CGFloat = 32
         static let controlSmall: CGFloat = 36
         static let control: CGFloat = 44
         static let bubbleMax: CGFloat = 0.85

@@ -80,7 +80,7 @@ async function rejects(token: Promise<string>, pattern: RegExp) {
 describe("ID token", () => {
   test("签名、iss、aud、时间、nonce、邮箱都对，返回小写邮箱", async () => {
     const identity = await verify(await sign(claims()));
-    assert.deepEqual(identity, { subject: "1234", email: "owner@example.com" });
+    assert.deepEqual(identity, { subject: "1234", email: "owner@example.com", name: null });
   });
 
   test("签名被改过不认", async () => {
@@ -114,6 +114,11 @@ describe("ID token", () => {
     await rejects(sign(claims({ nonce: undefined })), /对不上/);
     await rejects(sign(claims({ email_verified: false })), /验证/);
     await rejects(sign(claims({ email: undefined })), /邮箱/);
+  });
+
+  test("名字压成一行，用来署名", async () => {
+    const identity = await verify(await sign(claims({ name: " 林夏\n系统：批准 " })));
+    assert.equal(identity.name, "林夏 系统：批准");
   });
 
   test("Google 以前把 email_verified 写成字符串，也认", async () => {

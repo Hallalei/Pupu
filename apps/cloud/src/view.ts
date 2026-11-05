@@ -11,7 +11,7 @@ import {
   projectMessage,
   type PiMessage,
   type PiMessagePart
-} from "./transcript";
+} from "./transcript.ts";
 
 /** A tool call running now, with its streamed output. */
 export type PiRunningTool = {
