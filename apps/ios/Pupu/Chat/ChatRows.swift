@@ -7,6 +7,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         /// 我发的消息；quote 是开头引用的那段。
         case user(body: String, quote: String?)
+        /// 别人发的消息。
+        case other(body: String, quote: String?, sender: Sender)
         /// Pupu 的正文，Markdown。
         case assistant(String)
         /// Pupu 还没出字：一个只有三个点的气泡。
@@ -59,6 +61,7 @@ nonisolated struct ChatContext: Sendable {
     var projects: [Project] = []
     var computers: [Computer] = []
     var approvals: [Approval] = []
+    var members: [Member] = []
     /// 项目报回聊天的结果，按时间先后。只有聊天里有。
     var reports: [ReportCard] = []
     /// 用户点开或收起过的行，和默认状态相反。
@@ -104,7 +107,12 @@ nonisolated enum ChatRows {
                     own.append(ChatRow(id: message.id, kind: .handoff(task)))
                 } else {
                     let split = SpecialMessage.splitQuote(text)
-                    own.append(ChatRow(id: message.id, kind: .user(body: split.body, quote: split.quote)))
+                    let kind: ChatRow.Kind = if let sender = otherSender(message, context: context) {
+                        .other(body: split.body, quote: split.quote, sender: sender)
+                    } else {
+                        .user(body: split.body, quote: split.quote)
+                    }
+                    own.append(ChatRow(id: message.id, kind: kind))
                 }
             case .notice:
                 own.append(ChatRow(id: message.id, kind: .notice(message.text)))
@@ -151,6 +159,12 @@ nonisolated enum ChatRows {
         if !rows.isEmpty { rows[0].gap = 0 }
         var seen = Set<String>()
         return rows.filter { seen.insert($0.id).inserted }
+    }
+
+    /// 这条消息要标出是谁发的时，返回发送者。自己发的、没记发送者的老消息、只有一个成员时都是 nil，靠右照旧。
+    private static func otherSender(_ message: Message, context: ChatContext) -> Sender? {
+        guard let sender = message.sender, context.members.count > 1 else { return nil }
+        return context.members.contains { $0.current && $0.id == sender.id } ? nil : sender
     }
 
     private static func reportRow(_ card: ReportCard) -> ChatRow {

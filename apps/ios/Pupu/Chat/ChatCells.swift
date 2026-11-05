@@ -95,7 +95,63 @@ final class UserCell: ChatCell {
     }
 }
 
-/// 我的气泡上方那条引用：点它滚回原消息。
+// MARK: - 别人的消息
+
+/// 靠左，头像在气泡旁边，名字在气泡里：滚动的字不直接写在天空上。
+final class OtherCell: ChatCell {
+    private let avatar = SurfaceView(.strong, radius: Theme.Size.avatar / 2)
+    private let initial = UILabel(style: .footnote)
+    private let bubble = SurfaceView(.user, radius: Theme.Radius.bubble)
+    private let name = UILabel(style: .footnote)
+    private let label = UILabel(style: .message, lines: 0)
+    private let quote = QuoteStrip()
+    var onQuote: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        initial.textAlignment = .center
+        avatar.contentView.addSubview(initial)
+        initial.pin(to: avatar.contentView)
+        NSLayoutConstraint.activate([
+            avatar.widthAnchor.constraint(equalToConstant: Theme.Size.avatar),
+            avatar.heightAnchor.constraint(equalToConstant: Theme.Size.avatar)
+        ])
+
+        let text = UIStackView(arrangedSubviews: [name, label])
+        text.axis = .vertical
+        bubble.contentView.addSubview(text)
+        text.pin(to: bubble.contentView, insets: Bubble.insets)
+
+        let column = UIStackView(arrangedSubviews: [quote, bubble])
+        column.axis = .vertical
+        column.alignment = .leading
+        column.spacing = Theme.Space.s1
+
+        let row = UIStackView(arrangedSubviews: [avatar, column])
+        row.alignment = .top
+        row.spacing = Theme.Space.s2
+        place(row, alignment: .left)
+        quote.addAction(UIAction { [weak self] _ in self?.onQuote?() }, for: .touchUpInside)
+        isAccessibilityElement = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var bubbleView: UIView? { bubble }
+
+    func configure(body: String, quote text: String?, sender: Sender, width: CGFloat) {
+        let column = width - Theme.Size.avatar - Theme.Space.s2
+        initial.text = sender.name.first.map { String($0).uppercased() }
+        name.text = sender.name
+        label.attributedText = NSAttributedString(string: body, attributes: Theme.messageAttributes())
+        label.preferredMaxLayoutWidth = column - Bubble.horizontal
+        quote.isHidden = text == nil
+        quote.configure(text.map(Markdown.plainText) ?? "", width: column)
+        accessibilityLabel = (text.map { "回复「\($0)」。" } ?? "") + "\(sender.name)：\(body)"
+    }
+}
+
+/// 气泡上方那条引用：点它滚回原消息。
 final class QuoteStrip: UIControl {
     private let surface = SurfaceView(.glass, radius: Theme.Radius.row)
     private let label = UILabel(style: .footnote, color: Theme.inkMuted, lines: 2)

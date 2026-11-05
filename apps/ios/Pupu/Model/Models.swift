@@ -166,6 +166,8 @@ nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
 nonisolated struct Member: Decodable, Sendable, Hashable {
     let id: String
     let email: String
+    /// 显示的名字。旧版云端不给。
+    let name: String?
     /// creator 或 member。
     let role: String
     /// 第一次登录的时间。邀请了还没登录过是 nil。

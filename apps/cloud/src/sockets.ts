@@ -10,7 +10,8 @@ import {
 } from "agents/harness/pi";
 import type { ClientMessage, ServerMessage } from "./protocol";
 import type { BridgeSocket } from "./bridge/hub";
-import { DEVICE_HEADER, deviceTag } from "./devices";
+import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices";
+import { sentInput, type Sender } from "./messages";
 
 const SESSION_TAG_PREFIX = "pi-session:";
 const SESSION_QUERY = "session";
@@ -69,6 +70,7 @@ export class PiSessionSockets {
   readonly #getWebSockets: (tag?: string) => WebSocket[];
   readonly #getTags: (socket: WebSocket) => readonly string[];
   readonly #onSubmit: (session: PiSessionId) => void;
+  readonly #senderOf: (device: string | null) => Sender | null;
   readonly #routes: readonly BridgeSocketHandlers[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
 
@@ -78,12 +80,15 @@ export class PiSessionSockets {
     getTags: (socket: WebSocket) => readonly string[],
     /** 某个会话收到用户输入时调用。 */
     onSubmit: (session: PiSessionId) => void,
+    /** 这台设备是哪个成员的。不属于谁是 null。 */
+    senderOf: (device: string | null) => Sender | null,
     routes: readonly BridgeSocketHandlers[] = []
   ) {
     this.#harness = harness;
     this.#getWebSockets = getWebSockets;
     this.#getTags = getTags;
     this.#onSubmit = onSubmit;
+    this.#senderOf = senderOf;
     this.#routes = routes;
   }
 
@@ -217,7 +222,10 @@ export class PiSessionSockets {
     const handle = this.#harness.session(session);
     switch (message.type) {
       case "submit": {
-        const receipt = await handle.submit(message.input, {
+        const sender = this.#senderOf(deviceOfTags(connection.tags));
+        const sent = sender ? sentInput(message.input, sender) : null;
+        const receipt = await handle.submit(sent?.content ?? message.input, {
+          ...(sent ? { entry: sent.entry } : {}),
           ...(message.whenBusy ? { whenBusy: message.whenBusy } : {}),
           ...(message.operationId ? { operationId: message.operationId } : {})
         });

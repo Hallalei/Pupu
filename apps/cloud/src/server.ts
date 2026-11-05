@@ -77,13 +77,14 @@ import {
   mayInvite,
   mayRemoveMember,
   mayRevoke,
+  memberName,
   MemberStore,
   memberView,
   type Actor,
   type MemberRow,
   type MemberView
 } from "./members";
-import { handoffMessage } from "./messages";
+import { handoffMessage, type Sender } from "./messages";
 import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
@@ -316,6 +317,7 @@ export class Pupu extends DurableObject<Env> {
     (tag) => this.ctx.getWebSockets(tag),
     (socket) => this.ctx.getTags(socket),
     (session) => this.store.touchSession(session),
+    (device) => this.#senderOf(device),
     [
       {
         tag: BRIDGE_TAG,
@@ -517,6 +519,13 @@ export class Pupu extends DurableObject<Env> {
     );
   }
 
+  /** 这台设备发的消息算谁发的。不属于哪个成员是 null。 */
+  #senderOf(device: string | null): Sender | null {
+    const memberId = device === null ? null : this.#actor(device)?.memberId;
+    const member = memberId ? this.members.byId(memberId) : undefined;
+    return member ? { id: member.id, name: memberName(member) } : null;
+  }
+
   /** 电脑的主人。没有这台电脑或者还没主人是 null。连接器的请示（见 connectors/tools.ts）是连这个账号的人。 */
   #ownerOf(computerId: string): string | null {
     const connector = connectorIdOf(computerId);
@@ -561,16 +570,18 @@ export class Pupu extends DurableObject<Env> {
    * Google 认过的邮箱能不能进：在名单上就记下第一次登录；还没有创建者、邮箱又是 `CREATOR_EMAIL`，
    * 他就是创建者，之前连上的设备和电脑都归他。都不是返回 undefined。
    */
-  #admit(email: string, now: number): MemberRow | undefined {
+  #admit(email: string, displayName: string | null, now: number): MemberRow | undefined {
     const member = this.members.byEmail(email);
     if (member) {
       this.members.markJoined(member.id, now);
+      this.members.setName(member.id, displayName);
       return member;
     }
     const creatorEmail = this.env.CREATOR_EMAIL?.trim();
     if (this.members.creator() || !creatorEmail || emailKey(creatorEmail) !== emailKey(email)) return undefined;
     const creator = this.members.addCreator(email, now);
     if (!creator) return undefined;
+    this.members.setName(creator.id, displayName);
     this.devices.claimUnowned(creator.id);
     this.computers.claimUnowned(creator.id);
     this.connectors.claimUnowned(creator.id);
@@ -706,9 +717,14 @@ export class Pupu extends DurableObject<Env> {
    * Google 认过是成员了：浏览器直接发凭据，种进 cookie；App 拿一个一次性的码，带着自己的 verifier 来换。
    * 发出去的设备凭据都挂在这个成员下面。
    */
-  async finishSignIn(input: { flow: SignInFlow; email: string; name: string }): Promise<SignInGrant> {
+  async finishSignIn(input: {
+    flow: SignInFlow;
+    email: string;
+    name: string;
+    displayName: string | null;
+  }): Promise<SignInGrant> {
     const { flow } = input;
-    const member = this.#admit(input.email, Date.now());
+    const member = this.#admit(input.email, input.displayName, Date.now());
     if (!member) {
       return {
         kind: "refused",

@@ -17,6 +17,8 @@ export type MemberRow = {
   readonly id: string;
   /** Google 账号的邮箱，按 `emailKey` 存。 */
   readonly email: string;
+  /** Google 账号的名字，每次登录更新。邀请了还没登录过，或者这一列加上之后还没再登录过，是 null。 */
+  readonly name: string | null;
   readonly role: MemberRole;
   /** 谁邀请的。创建者是 null。 */
   readonly invitedBy: string | null;
@@ -30,6 +32,8 @@ export type MemberRow = {
 export type MemberView = {
   readonly id: string;
   readonly email: string;
+  /** 显示的名字，见 `memberName`。 */
+  readonly name: string;
   readonly role: MemberRole;
   readonly joinedAt: number | null;
   /** 发这次请求的设备是他的。 */
@@ -96,7 +100,28 @@ export function mayRevoke(actor: Actor | null | undefined, owner: string | null)
 }
 
 export function memberView(row: MemberRow, current: string | null): MemberView {
-  return { id: row.id, email: row.email, role: row.role, joinedAt: row.joinedAt, current: row.id === current };
+  return {
+    id: row.id,
+    email: row.email,
+    name: memberName(row),
+    role: row.role,
+    joinedAt: row.joinedAt,
+    current: row.id === current
+  };
+}
+
+/** 显示的名字：Google 账号的名字，没有就用邮箱 @ 前面那段。 */
+export function memberName(row: Pick<MemberRow, "email" | "name">): string {
+  return row.name ?? (row.email.split("@")[0] || row.email);
+}
+
+const NAME_LIMIT = 40;
+
+/** Google 给的名字是账号主人自己填的，又要写进给模型看的抬头（见 `sentInput`）：压成一行、去掉控制字符和抬头的括号、限长。空的是 null。 */
+export function cleanName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.replace(/[【】]/g, "").replace(/[\p{C}\s]+/gu, " ").trim();
+  return [...name].slice(0, NAME_LIMIT).join("") || null;
 }
 
 type Row = Record<string, SqlStorageValue>;
@@ -105,6 +130,7 @@ function toRow(row: Row): MemberRow {
   return {
     id: String(row.id),
     email: String(row.email),
+    name: row.name === null || row.name === undefined ? null : String(row.name),
     role: row.role === "creator" ? "creator" : "member",
     invitedBy: row.invited_by === null ? null : String(row.invited_by),
     createdAt: Number(row.created_at),
@@ -130,6 +156,10 @@ export class MemberStore {
         created_at INTEGER NOT NULL,
         joined_at INTEGER
       )`);
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_members)").toArray();
+      if (!columns.some((row) => row.name === "name")) {
+        this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN name TEXT");
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -194,6 +224,11 @@ export class MemberStore {
   /** 记下第一次登录。 */
   markJoined(id: string, now: number): void {
     this.#db().exec("UPDATE pupu_members SET joined_at = ? WHERE id = ? AND joined_at IS NULL", now, id);
+  }
+
+  /** 记下登录时 Google 给的名字。`name` 是 null（Google 没给）时留着原来的。 */
+  setName(id: string, name: string | null): void {
+    if (name !== null) this.#db().exec("UPDATE pupu_members SET name = ? WHERE id = ?", name, id);
   }
 
   /** 移除一个成员。创建者删不掉。 */
