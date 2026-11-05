@@ -10,6 +10,7 @@ import {
   connectorSubject,
   pickAccount,
   planConnectorCall,
+  type ConnectorAsk,
   type ConnectorDeps
 } from "../src/connectors/tools.ts";
 import { sqlStorage } from "./sql-memory.ts";
@@ -165,27 +166,68 @@ describe("写操作先问账号主人", () => {
         }
       })
     });
-    return { client: () => client, accounts: () => rows, emailOf: () => "mom@example.com" };
+    return {
+      client: () => client,
+      accounts: () => rows,
+      emailOf: () => "mom@example.com",
+      threadOf: (session) =>
+        session === "7" ? { kind: "private", session, memberId: "m1" }
+        : session === "8" ? { kind: "private", session, memberId: "m2" }
+        : session === "1" ? { kind: "main", session }
+        : undefined
+    };
   }
 
-  const call = { name: "connector_run", arguments: { action_id: "gmail.send_email", input: { to: "a@b.c" } } };
+  const call = {
+    name: "connector_run",
+    arguments: { action_id: "gmail.send_email", input: { to: "a@b.c" } },
+    session: "1"
+  };
 
-  test("读的动作不问", async () => {
-    assert.equal(await planConnectorCall(call, deps("read")), undefined);
+  test("读的动作在账号主人的私聊里不问，直接跑", async () => {
+    assert.equal(await planConnectorCall({ ...call, session: "7" }, deps("read")), undefined);
+  });
+
+  test("读的动作在主会话、别人的私聊、项目里都拦下，告诉模型让用户去私聊", async () => {
+    for (const session of ["1", "8", "9", null]) {
+      const refused = await planConnectorCall({ ...call, session }, deps("read"));
+      assert.ok(refused && "block" in refused, `会话 ${session} 该拦下`);
+      assert.match(refused.block, /私聊/);
+    }
+  });
+
+  test("门上拦下读的动作：工具不跑，也不用人批", async () => {
+    const gate = new ComputerGate({
+      computers: () => [],
+      directory: { list: () => [], setPolicy: () => false, setScreenUntil: () => {} },
+      approvals: new ApprovalStore(sqlStorage()),
+      now: () => NOW,
+      onChange: () => {},
+      plan: (planned) => planConnectorCall(planned, deps("read"))
+    });
+    const blocked = await gate.beforeTool({ id: "call-read", ...call });
+    assert.match(blocked?.block ?? "", /私聊/);
+    assert.deepEqual(gate.pending(), []);
+    assert.equal(await gate.beforeTool({ id: "call-read-2", ...call, session: "7" }), undefined);
+  });
+
+  test("还没有创建者时账号没有主人，主会话能读", async () => {
+    const rows = [account({ memberId: null })];
+    assert.equal(await planConnectorCall(call, deps("read", rows)), undefined);
   });
 
   test("写的动作问连这个账号的人，删的动作标高风险", async () => {
-    const write = await planConnectorCall(call, deps("write"));
+    const write = (await planConnectorCall(call, deps("write"))) as ConnectorAsk;
     assert.equal(write?.subjectId, connectorSubject("app-1"));
     assert.equal(write?.ownerId, "m1");
     assert.match(write?.title ?? "", /Gmail（mom@example.com）：Send email/);
     assert.match(write?.detail ?? "", /a@b\.c/);
     assert.equal(write?.reason, null);
-    assert.ok((await planConnectorCall(call, deps("destructive")))?.reason);
+    assert.ok(((await planConnectorCall(call, deps("destructive"))) as ConnectorAsk).reason);
   });
 
   test("别的工具、没开连接器、选不出账号都不拦", async () => {
-    assert.equal(await planConnectorCall({ name: "run_command", arguments: {} }, deps("write")), undefined);
+    assert.equal(await planConnectorCall({ name: "run_command", arguments: {}, session: "1" }, deps("write")), undefined);
     assert.equal(await planConnectorCall(call, { ...deps("write"), client: () => null }), undefined);
     assert.equal(await planConnectorCall(call, deps("write", [])), undefined);
   });

@@ -15,6 +15,7 @@ function approval(over: Partial<ApprovalRow> & Pick<ApprovalRow, "id" | "callId"
     title: "在「mbpro」上跑命令",
     detail: "git push origin main",
     reason: "推送到远端仓库",
+    session: null,
     status: "pending",
     note: null,
     createdAt: 100,

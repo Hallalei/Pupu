@@ -1,7 +1,7 @@
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
-import { ROOT_SESSION } from "agents/harness/pi";
 import { Type } from "typebox";
-import type { Project, ProjectStore } from "./projects";
+import type { Project, ProjectStore } from "./projects.ts";
+import type { Thread } from "./threads.ts";
 
 function text(value: string) {
   return [{ type: "text" as const, text: value }];
@@ -10,19 +10,20 @@ function text(value: string) {
 /** 工具要用到的、Pupu 自己的动作。 */
 export type PupuActions = {
   readonly store: ProjectStore;
+  threadOf(session: string): Thread | undefined;
   createProject(input: {
     name: string;
     goal: string;
     background: string;
   }): Promise<Project>;
-  /** 把一件事交给项目会话去做。同一个 operationId 只交一次。 */
-  handOff(project: Project, task: string, operationId: string): Promise<void>;
+  /** 把一件事交给项目会话去做，`origin` 是从哪条聊天转来的。同一个 operationId 只交一次。 */
+  handOff(project: Project, task: string, operationId: string, origin: string): Promise<void>;
 };
 
-function onlyInChat(conversationId: unknown) {
-  return String(conversationId) === ROOT_SESSION
+function onlyInChat(thread: Thread | undefined) {
+  return thread?.kind === "main" || thread?.kind === "private"
     ? null
-    : { output: text("只能在聊天（主对话）里用。"), isError: true as const };
+    : { output: text("只能在聊天（大家或私聊）里用。"), isError: true as const };
 }
 
 /**
@@ -57,18 +58,20 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
       name: Type.String({ description: "项目名，简短，比如「AI 账号整理」" }),
       goal: Type.String({ description: "一句话说明这个项目要达成什么" }),
       background: Type.String({
-        description: "要带进项目的背景：用户在聊天里说过的要求、约束和已经聊定的东西"
+        description:
+          "要带进项目的背景：用户在聊天里说过的要求、约束和已经聊定的东西。项目大家都看得到，在私聊里只写这件事需要的，不带无关的私事"
       }),
       task: Type.Optional(
         Type.String({
           description:
-            "建好后要马上在项目里做的第一件事，写清楚，带上用户的原话。没有就省略"
+            "建好后要马上在项目里做的第一件事，写清楚。在大家那里带上用户的原话；在私聊里只写这件事需要的内容，不抄原话，不带无关的私事。没有就省略"
         })
       )
     }),
     replay: "safe",
     async execute(args, api) {
-      const refused = onlyInChat(api.conversationId);
+      const origin = String(api.conversationId);
+      const refused = onlyInChat(actions.threadOf(origin));
       if (refused) return refused;
       // 用 tool call id 去重：重放时不会建出第二个项目。
       const key = `create_project:${api.callId}`;
@@ -84,7 +87,7 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
       const task =
         args.task?.trim() ||
         "项目刚建好。用两三句话说说这个项目接下来怎么推进、需要用户提供什么。";
-      await actions.handOff(project, task, `kickoff:${api.callId}`);
+      await actions.handOff(project, task, `kickoff:${api.callId}`, origin);
       return {
         output: text(
           `项目「${project.name}」建好了，已经在那边开始推进。用一两句话告诉用户项目建好了、接下来在那边做什么；不要把 id 告诉用户。`
@@ -101,12 +104,14 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
     parameters: Type.Object({
       project_id: Type.String({ description: "已有项目的 id" }),
       task: Type.String({
-        description: "要项目做的事，写清楚、能独立看懂，带上用户的原话和链接"
+        description:
+          "要项目做的事，写清楚、能独立看懂。在大家那里带上用户的原话和链接；在私聊里只写这件事需要的内容，不抄原话，不带无关的私事"
       })
     }),
     replay: "safe",
     async execute(args, api) {
-      const refused = onlyInChat(api.conversationId);
+      const origin = String(api.conversationId);
+      const refused = onlyInChat(actions.threadOf(origin));
       if (refused) return refused;
       const project = store.getProject(args.project_id);
       if (!project) {
@@ -121,7 +126,7 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
           isError: true
         };
       }
-      await actions.handOff(project, args.task, `handoff:${api.callId}`);
+      await actions.handOff(project, args.task, `handoff:${api.callId}`, origin);
       return {
         output: text(
           `已经交给「${project.name}」，它会在那个项目里做，做完会报回聊天。用一两句话告诉用户已经交给「${project.name}」在做了，不要在聊天里自己再做一遍。`

@@ -207,6 +207,7 @@ function approval(id: string, patch: Partial<ApprovalRow> = {}): ApprovalRow {
   return {
     id,
     callId: `call-${id}`,
+    session: null,
     computerId: "c1",
     kind: "step",
     screen: false,

@@ -17,6 +17,7 @@ function approval(id: string, over: Partial<ApprovalRow> = {}): ApprovalRow {
   return {
     id,
     callId: `call-${id}`,
+    session: null,
     computerId: "c1",
     kind: "step",
     screen: false,

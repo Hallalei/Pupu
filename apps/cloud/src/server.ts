@@ -95,6 +95,7 @@ import { ApprovalPusher } from "./push/approvals";
 import { LivePusher, liveDue, type LiveInput } from "./push/live";
 import { PushStore, type PushTokenType } from "./push/store";
 import { PiSessionSockets } from "./sockets";
+import { MAIN_SESSION, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
 import { createPupuTools } from "./tools";
 
 /**
@@ -130,8 +131,10 @@ export type PupuState = {
     readonly services: readonly ConnectorService[];
     readonly accounts: readonly ConnectorView[];
   };
-  /** 项目报给聊天的结果，按时间先后。聊天里穿插在消息之间。 */
+  /** 项目报给聊天的结果，按时间先后。聊天里穿插在消息之间，卡上的 `chat` 说是哪一条。 */
   readonly reports: readonly ReportCard[];
+  /** 这个人能进的两条聊天。没有成员身份时没有私聊。 */
+  readonly chats: ChatsView;
 };
 
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
@@ -141,10 +144,11 @@ export type PairResult =
 
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
- * 聊天（主对话）是 pi 的根会话，每个项目各开一个 pi 会话，共用这个对象的 SQLite。
+ * 主会话是 pi 的根会话，每人的私聊和每个项目各开一个 pi 会话，共用这个对象的 SQLite。
  */
 export class Pupu extends DurableObject<Env> {
   readonly store = new ProjectStore(this.ctx.storage.sql);
+  readonly threads = new ThreadStore(this.ctx.storage.sql, this.store);
   readonly reports = new ReportStore(this.ctx.storage.sql);
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
@@ -154,7 +158,8 @@ export class Pupu extends DurableObject<Env> {
   readonly #connectorDeps: ConnectorDeps = {
     client: () => this.#connectorClient(),
     accounts: () => this.connectors.list(),
-    emailOf: (memberId) => (memberId ? (this.members.byId(memberId)?.email ?? null) : null)
+    emailOf: (memberId) => (memberId ? (this.members.byId(memberId)?.email ?? null) : null),
+    threadOf: (session) => this.threads.of(session)
   };
   readonly bridge = new ComputerBridge({
     directory: this.computers,
@@ -226,22 +231,31 @@ export class Pupu extends DurableObject<Env> {
           {
             key: "pupu",
             tag: false,
-            render: (input) =>
-              renderPrompt(
-                String(input.conversationId),
+            render: (input) => {
+              const session = String(input.conversationId);
+              const thread = this.threads.of(session);
+              if (!thread) throw new Error(`会话 ${session} 既不是聊天也不是项目`);
+              return renderPrompt(
+                thread,
                 this.store,
                 this.reports,
                 this.bridge.list(),
-                this.connectors.list().map((row) => describeAccount(row, this.#connectorDeps.emailOf))
-              )
+                this.connectors.list().map((row) => describeAccount(row, this.#connectorDeps.emailOf)),
+                (memberId) => {
+                  const member = this.members.byId(memberId);
+                  return member ? memberName(member) : "这位成员";
+                }
+              );
+            }
           }
         ],
         tools: [
           ...createPupuTools({
             store: this.store,
+            threadOf: (session) => this.threads.of(session),
             createProject: (input) => this.#createProject(input),
-            handOff: (project, task, operationId) =>
-              this.#handOff(project, task, operationId)
+            handOff: (project, task, operationId, origin) =>
+              this.#handOff(project, task, operationId, origin)
           }),
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
@@ -249,8 +263,9 @@ export class Pupu extends DurableObject<Env> {
         hooks: [
           hook(ToolTask, {
             beforeTool: (call, api, context) => {
-              this.#callSessions.remember(call.id, String(api.conversationId));
-              return this.gate.beforeTool(call, context.abortSignal);
+              const session = String(api.conversationId);
+              this.#callSessions.remember(call.id, session);
+              return this.gate.beforeTool({ ...call, session }, context.abortSignal);
             }
           }),
           hook(GenerationTask, {
@@ -260,6 +275,7 @@ export class Pupu extends DurableObject<Env> {
             },
             afterResponse: (message, api) => this.#reportError(String(api.conversationId), message),
             // 项目里回完一轮，记下最新进展，主页和项目列表上显示；从聊天转来的事报回聊天。
+            // 聊天里回完一轮，记下时间，客户端用它亮新消息的圆点。
             onYield: (answer, api) => {
               const session = String(api.conversationId);
               const reply = answer.content
@@ -273,7 +289,10 @@ export class Pupu extends DurableObject<Env> {
                 progressLine(reply),
                 Date.now()
               );
-              if (progressed || reported) this.#changed();
+              const thread = this.threads.of(session);
+              const replied = Boolean(reply.trim()) && (thread?.kind === "main" || thread?.kind === "private");
+              if (replied) this.threads.recordReply(thread, Date.now());
+              if (progressed || reported || replied) this.#changed();
               return undefined;
             }
           })
@@ -318,6 +337,7 @@ export class Pupu extends DurableObject<Env> {
     (socket) => this.ctx.getTags(socket),
     (session) => this.store.touchSession(session),
     (device) => this.#senderOf(device),
+    (session, device) => mayOpen(this.threads.of(session), this.#viewer(device)),
     [
       {
         tag: BRIDGE_TAG,
@@ -409,7 +429,7 @@ export class Pupu extends DurableObject<Env> {
   #syncWaitingReports(): void {
     const waiting = new Map<string, { summary: string; upTo: number }>();
     for (const row of this.approvals.pending(Date.now())) {
-      const session = this.#callSessions.of(row.callId);
+      const session = this.#sessionOfCall(row.callId);
       if (!session || waiting.has(session)) continue;
       waiting.set(session, {
         summary: `等你批准：${describeWaiting(row)}`,
@@ -428,13 +448,24 @@ export class Pupu extends DurableObject<Env> {
     this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
   }
 
-  #activity(): ComputerActivity[] {
+  /** 这次工具调用在哪个会话里：等批的记在审批行上，别的只在内存里。 */
+  #sessionOfCall(callId: string): string | null {
+    return this.approvals.byCall(callId)?.session ?? this.#callSessions.of(callId);
+  }
+
+  /** 这个人看得到哪些调用，见 `seesWork`。 */
+  #seenBy(viewer: string | null): (session: string | null, computerId: string) => boolean {
+    return workFilter(this.threads, (computerId) => this.#ownerOf(computerId), viewer);
+  }
+
+  /** 每台电脑在做什么。`sees` 滤掉这个人看不到的调用，不给就是全部。 */
+  #activity(sees: (session: string | null, computerId: string) => boolean = () => true): ComputerActivity[] {
     return computerActivity({
       computers: this.bridge.list(),
-      running: this.bridge.running(),
-      pending: this.approvals.pending(Date.now()),
+      running: this.bridge.running().filter((call) => sees(this.#sessionOfCall(call.callId), call.computerId)),
+      pending: this.approvals.pending(Date.now()).filter((row) => sees(row.session, row.computerId)),
       projectOf: (callId) => {
-        const session = this.#callSessions.of(callId);
+        const session = this.#sessionOfCall(callId);
         const project = session ? this.store.projectBySession(session) : undefined;
         return project ? { id: project.id, name: project.name } : null;
       }
@@ -443,11 +474,10 @@ export class Pupu extends DurableObject<Env> {
 
   #activityChanged(): void {
     this.#liveChanged();
-    const activity = this.#activity();
-    const sent = JSON.stringify(activity);
+    const sent = JSON.stringify(this.#activity());
     if (sent === this.#sentActivity) return;
     this.#sentActivity = sent;
-    this.sockets.broadcast({ type: "activity", activity });
+    this.sockets.broadcastBy((device) => ({ type: "activity", activity: this.#activity(this.#seenBy(this.#viewer(device))) }));
   }
 
   /** 灵动岛：对一遍账，再排好下次该看的时候。 */
@@ -519,9 +549,14 @@ export class Pupu extends DurableObject<Env> {
     );
   }
 
+  /** 这台设备是哪个成员的。不属于哪个成员、本机开发没带凭据、刚吊销的都是 null。 */
+  #viewer(device: string | null): string | null {
+    return this.#actor(device)?.memberId ?? null;
+  }
+
   /** 这台设备发的消息算谁发的。不属于哪个成员是 null。 */
   #senderOf(device: string | null): Sender | null {
-    const memberId = device === null ? null : this.#actor(device)?.memberId;
+    const memberId = this.#viewer(device);
     const member = memberId ? this.members.byId(memberId) : undefined;
     return member ? { id: member.id, name: memberName(member) } : null;
   }
@@ -595,25 +630,42 @@ export class Pupu extends DurableObject<Env> {
   /** `current` 是发请求的设备，列表里给它打个标记。 */
   async state(current: string | null = null): Promise<PupuState> {
     await this.lifecycle.start();
+    const viewer = this.#viewer(current);
+    const own = viewer === null ? null : await this.#ensurePrivateChat(viewer);
+    const sees = this.#seenBy(viewer);
     return {
       projects: this.store.listProjects(),
       computers: this.bridge.list(),
-      approvals: [...this.gate.pending(), ...this.signIns.pending(Date.now()).map(signInApprovalView)],
+      approvals: [
+        ...this.gate.pending((row) => sees(row.session, row.computerId)),
+        ...this.signIns.pending(Date.now()).map(signInApprovalView)
+      ],
       devices: this.#deviceViews(current),
-      activity: this.#activity(),
-      members: this.members.list().map((row) => memberView(row, this.#actor(current)?.memberId ?? null)),
+      activity: this.#activity(sees),
+      members: this.members.list().map((row) => memberView(row, viewer)),
       connectors: {
         enabled: connectorConfigFrom(this.env) !== null,
         services: CONNECTOR_SERVICES,
         accounts: this.#connectorViews(current)
       },
-      reports: this.#reportCards()
+      reports: this.#reportCards(own),
+      chats: this.threads.chats(own)
     };
   }
 
-  #reportCards(): ReportCard[] {
+  #ensurePrivateChat(memberId: string): Promise<PrivateChatRow> {
+    return this.threads.ensurePrivateChat(
+      memberId,
+      async () => (await this.harness.sessions.create()).id,
+      Date.now()
+    );
+  }
+
+  /** 主会话的卡大家都看，别人私聊转交的不发给你。 */
+  #reportCards(own: PrivateChatRow | null): ReportCard[] {
     const names = new Map(this.store.listProjects().map((project) => [project.id, project.name]));
-    return reportCards(this.reports.visible(), (id) => names.get(id));
+    const chats = own ? [MAIN_SESSION, own.session] : [MAIN_SESSION];
+    return reportCards(this.reports.visible(chats), (id) => names.get(id));
   }
 
   /** 用户打开了这个项目：项目报回聊天的结果都算看过，聊天里那几张卡不再合在一起。 */
@@ -990,7 +1042,7 @@ export class Pupu extends DurableObject<Env> {
 
   /**
    * 创建者移除一个成员：他名下的设备和电脑一起吊销，开着的连接马上断开。
-   * 以后有了各人的聊天和个人记忆，也在这里一起删。
+   * 他的私聊留着：映射还在，谁也打不开，创建者也一样。
    */
   async removeMember(id: string, device: string | null = null): Promise<"ok" | "missing" | "creator_only"> {
     const target = this.members.byId(id);
@@ -1153,15 +1205,16 @@ export class Pupu extends DurableObject<Env> {
     return project;
   }
 
-  /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。 */
+  /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。`origin` 是来自哪条聊天，报告卡回到那里。 */
   async #handOff(
     project: Project,
     task: string,
-    operationId: string
+    operationId: string,
+    origin: string
   ): Promise<void> {
     // 先记报告再提交：报告的时间要早于项目会话里那条消息，这一轮结束时才认得出是它。
     this.reports.open(
-      { id: operationId, projectId: project.id, session: project.session, task },
+      { id: operationId, projectId: project.id, session: project.session, task, origin },
       Date.now()
     );
     await this.harness.session(project.session).submit(handoffMessage(task), {

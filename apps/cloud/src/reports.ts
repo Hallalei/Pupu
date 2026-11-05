@@ -8,6 +8,7 @@
  */
 
 import { progressLine } from "./projects.ts";
+import { MAIN_SESSION } from "./threads.ts";
 
 /**
  * running：在做，或者排着队，聊天里不显示。waiting：停在一步等用户批准。
@@ -33,6 +34,8 @@ export type ReportRow = {
    * 现在还没有成员，是 null。
    */
   readonly owner: string | null;
+  /** 这件事是从哪条聊天转来的（主会话或者某人的私聊），报告卡回到那条聊天。 */
+  readonly origin: string;
   readonly createdAt: number;
   /** 最后一次变成要给人看的状态的时间，卡片按它排进聊天。还没报过是 null。 */
   readonly reportedAt: number | null;
@@ -52,6 +55,8 @@ export type ReportCard = {
   readonly seen: boolean;
   /** 合进来的、更早的几条没看过的报告。 */
   readonly more: number;
+  /** 这张卡出现在哪条聊天，是那条聊天的 session。 */
+  readonly chat: string;
 };
 
 type Row = Record<string, SqlStorageValue>;
@@ -122,17 +127,18 @@ export function reportQuote(card: Pick<ReportCard, "projectName" | "status" | "s
 }
 
 /**
- * 看过的一条一张，放在它自己的时间；同一个项目没看过的合成一张，放在最新那条的时间。按时间先后排。
+ * 看过的一条一张，放在它自己的时间；同一条聊天里同一个项目没看过的合成一张，放在最新那条的时间。按时间先后排。
  * `rows` 只给要显示的（不在做的），顺序不限。
  */
 export function reportCards(rows: readonly ReportRow[], projectName: (id: string) => string | undefined): ReportCard[] {
   const cards: ReportCard[] = [];
   const unseen = new Map<string, ReportRow[]>();
+  const groupOf = (row: ReportRow) => `${row.origin} ${row.projectId}`;
   for (const row of rows) {
     if (row.reportedAt === null || statusOf(row.state) === null) continue;
     if (projectName(row.projectId) === undefined) continue;
     if (row.seenAt === null) {
-      unseen.set(row.projectId, [...(unseen.get(row.projectId) ?? []), row]);
+      unseen.set(groupOf(row), [...(unseen.get(groupOf(row)) ?? []), row]);
     } else {
       cards.push(card(row, 0, projectName));
     }
@@ -154,7 +160,8 @@ function card(row: ReportRow, more: number, projectName: (id: string) => string 
     task: row.task,
     at: row.reportedAt!,
     seen: row.seenAt !== null,
-    more
+    more,
+    chat: row.origin
   };
 }
 
@@ -169,6 +176,7 @@ function toRow(row: Row): ReportRow {
       state === "waiting" || state === "done" || state === "asking" || state === "failed" ? state : "running",
     summary: String(row.summary),
     owner: row.owner === null ? null : String(row.owner),
+    origin: String(row.origin),
     createdAt: Number(row.created_at),
     reportedAt: row.reported_at === null ? null : Number(row.reported_at),
     seenAt: row.seen_at === null ? null : Number(row.seen_at)
@@ -199,22 +207,31 @@ export class ReportStore {
         seen_at INTEGER
       )`);
       this.#sql.exec("CREATE INDEX IF NOT EXISTS pupu_reports_session ON pupu_reports (session, state)");
+      // 有私聊之前转的事都来自主会话。
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_reports)").toArray();
+      if (!columns.some((column) => column.name === "origin")) {
+        this.#sql.exec(`ALTER TABLE pupu_reports ADD COLUMN origin TEXT NOT NULL DEFAULT '${MAIN_SESSION}'`);
+      }
       this.#ready = true;
     }
     return this.#sql;
   }
 
   /** 转交时记一条在做的。要在提交到项目会话之前记，时间才早于那条消息。 */
-  open(input: { id: string; projectId: string; session: string; task: string; owner?: string | null }, now: number): void {
+  open(
+    input: { id: string; projectId: string; session: string; task: string; origin: string; owner?: string | null },
+    now: number
+  ): void {
     const task = input.task.trim().split("\n")[0]?.trim() ?? "";
     this.#db().exec(
-      `INSERT OR IGNORE INTO pupu_reports (id, project_id, session, task, owner, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO pupu_reports (id, project_id, session, task, owner, origin, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.projectId,
       input.session,
       progressLine(task) || task.slice(0, 80),
       input.owner ?? null,
+      input.origin,
       now
     );
   }
@@ -306,16 +323,19 @@ export class ReportStore {
     return cursor.rowsWritten > 0;
   }
 
-  /** 聊天里要显示的：没看过的全部，加上最近看过的几十条。 */
-  visible(): ReportRow[] {
+  /** 这几条聊天里要显示的：没看过的全部，加上最近看过的几十条。 */
+  visible(chats: readonly string[]): ReportRow[] {
+    const origins = `(${chats.map(() => "?").join(", ")})`;
     return this.#db()
       .exec(
-        `SELECT * FROM pupu_reports WHERE state IN ${VISIBLE} AND (
+        `SELECT * FROM pupu_reports WHERE state IN ${VISIBLE} AND origin IN ${origins} AND (
            seen_at IS NULL OR id IN (
-             SELECT id FROM pupu_reports WHERE state IN ${VISIBLE} AND seen_at IS NOT NULL
+             SELECT id FROM pupu_reports WHERE state IN ${VISIBLE} AND origin IN ${origins} AND seen_at IS NOT NULL
              ORDER BY reported_at DESC LIMIT ${SEEN_LIMIT}
            )
-         )`
+         )`,
+        ...chats,
+        ...chats
       )
       .toArray()
       .map(toRow);

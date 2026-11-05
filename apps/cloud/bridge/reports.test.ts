@@ -9,6 +9,7 @@ function row(input: Partial<ReportRow> & Pick<ReportRow, "id" | "projectId">): R
     state: "done",
     summary: `结果 ${input.id}`,
     owner: null,
+    origin: "1",
     createdAt: 0,
     reportedAt: 100,
     seenAt: null,

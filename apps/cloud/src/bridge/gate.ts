@@ -32,13 +32,18 @@ export type GateOptions = {
   /** 这些电脑的审批或屏幕授权变了。 */
   readonly onChange: (computerIds: readonly string[]) => void;
   /**
-   * 不在电脑上的调用（连接器的写操作）要不要问。要问就给出请示的内容，`subjectId` 记在审批表的
-   * computer_id 一栏，和电脑的分开；不用问返回 undefined。见 src/connectors/tools.ts。
+   * 不在电脑上的调用（连接器）能不能做。要问就给出请示的内容，`subjectId` 记在审批表的
+   * computer_id 一栏，和电脑的分开；不许做给 `block`；直接做返回 undefined。见 src/connectors/tools.ts。
    */
   readonly plan?: (call: {
     readonly name: string;
     readonly arguments: Readonly<Record<string, unknown>>;
-  }) => Promise<{ subjectId: string; title: string; detail: string; reason: string | null } | undefined>;
+    readonly session: string | null;
+  }) => Promise<
+    | { subjectId: string; title: string; detail: string; reason: string | null }
+    | { block: string }
+    | undefined
+  >;
   /** 审批卡上「哪台电脑」那一栏，不是电脑的时候写什么。 */
   readonly subjectName?: (subjectId: string) => string | undefined;
 };
@@ -59,23 +64,31 @@ export class ComputerGate {
   }
 
   async beforeTool(
-    call: { readonly id: string; readonly name: string; readonly arguments: Readonly<Record<string, unknown>> },
+    call: {
+      readonly id: string;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, unknown>>;
+      /** 这次调用在哪个 pi 会话里，记在审批行上。 */
+      readonly session?: string;
+    },
     signal?: AbortSignal
   ): Promise<{ block: string } | undefined> {
+    const session = call.session ?? null;
     let row = this.#options.approvals.byCall(call.id);
     if (!row) {
       const planned = actionForCall(call.name, call.arguments);
       if (!planned) {
-        const asked = await this.#options.plan?.(call);
+        const asked = await this.#options.plan?.({ ...call, session });
         if (!asked) return undefined;
+        if ("block" in asked) return asked;
         // 等 plan 的时候 DO 可能已经把同一次调用登记过了。
-        row = this.#options.approvals.byCall(call.id) ?? this.#askOther(call.id, asked);
+        row = this.#options.approvals.byCall(call.id) ?? this.#askOther(call.id, session, asked);
         return this.#await(row, signal);
       }
       // 选不出电脑时让工具自己去说明，这里不拦。
       const selected = selectComputer(this.#options.computers(), planned.computerId);
       if (!selected.ok) return undefined;
-      row = this.#ask(call.id, selected.computer, planned.action);
+      row = this.#ask(call.id, session, selected.computer, planned.action);
       if (!row) return undefined;
     }
     return this.#await(row, signal);
@@ -143,14 +156,15 @@ export class ComputerGate {
     return until !== null && until > this.#options.now();
   }
 
-  pending(): ApprovalView[] {
+  /** `visible` 决定这一条给不给这个人看。 */
+  pending(visible: (row: ApprovalRow) => boolean = () => true): ApprovalView[] {
     const now = this.#options.now();
     if (this.#options.approvals.sweep(now) > 0) {
       // 过期的那几条可能还有人在等，叫醒它们去收尾。
       for (const id of this.#listeners.keys()) this.#wake(id);
     }
     const names = new Map(this.#options.computers().map((computer) => [computer.id, computer.name]));
-    return this.#options.approvals.pending(now).map((row) => ({
+    return this.#options.approvals.pending(now).filter(visible).map((row) => ({
       id: row.id,
       computerId: row.computerId,
       computerName: names.get(row.computerId) ?? this.#options.subjectName?.(row.computerId) ?? "电脑",
@@ -173,7 +187,7 @@ export class ComputerGate {
     return { pending, screen: this.screenActive(computerId) };
   }
 
-  #ask(callId: string, computer: ComputerView, action: Action): ApprovalRow | undefined {
+  #ask(callId: string, session: string | null, computer: ComputerView, action: Action): ApprovalRow | undefined {
     const row = this.#row(computer.id);
     const { need, risk } = needFor(row?.policy ?? DEFAULT_POLICY, action, {
       ...(row?.localRoot ? { home: row.localRoot } : {}),
@@ -185,6 +199,7 @@ export class ComputerGate {
       need === "screen" ? { title: "操作屏幕", detail: SCREEN_DETAIL } : describeAction(action);
     const created = this.#options.approvals.insert({
       callId,
+      session,
       computerId: computer.id,
       kind: need,
       screen: usesScreen(action),
@@ -200,11 +215,13 @@ export class ComputerGate {
 
   #askOther(
     callId: string,
+    session: string | null,
     asked: { subjectId: string; title: string; detail: string; reason: string | null }
   ): ApprovalRow {
     const now = this.#options.now();
     const created = this.#options.approvals.insert({
       callId,
+      session,
       computerId: asked.subjectId,
       kind: "step",
       screen: false,

@@ -148,6 +148,7 @@ export function signInApprovalRow(row: SignInRow): ApprovalRow {
   return {
     id: row.id,
     callId: `sign-in:${row.id}`,
+    session: null,
     computerId: "",
     kind: "sign_in",
     screen: false,

@@ -117,8 +117,8 @@ export function computerActivity(input: {
 }
 
 /**
- * 调用 id → 它在哪个 pi 会话里，用来找出是哪个项目。只在内存里记最近的这些：
- * DO 重启后，还在等批的调用 pi 会重跑一遍 beforeTool，又会记上。
+ * 调用 id → 它在哪个 pi 会话里，用来找出是哪个项目、该给谁看。只在内存里记最近的这些：
+ * DO 重启后，还在等批的调用 pi 会重跑一遍 beforeTool，又会记上；等批的调用审批行上也记着。
  */
 export class CallSessions {
   readonly #limit: number;

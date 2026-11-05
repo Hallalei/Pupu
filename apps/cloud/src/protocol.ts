@@ -12,6 +12,9 @@ import type { ComputerActivity } from "./bridge/activity";
 /** 设备被吊销时，Pupu 用这个码关掉它的 WebSocket。客户端收到就别再重连，回登录页。 */
 export const REVOKED_CLOSE_CODE = 4003;
 
+/** 这条连接要开的会话不归它：别人的私聊，或者查不到的会话。 */
+export const THREAD_REFUSED_CLOSE_CODE = 4004;
+
 /** 浏览器 → Pupu。带 `id` 的命令会收到 `result` 或 `error`。 */
 export type ClientMessage =
   | {

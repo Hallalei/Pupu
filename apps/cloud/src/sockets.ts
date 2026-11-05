@@ -3,15 +3,12 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 import type { AgentEventStream } from "@earendil-works/pi-durable";
 import type { Connection, ConnectionContext } from "agents/lifecycle";
 import type { WebSocketMessage, WebSocketsOptions } from "agents/websockets";
-import {
-  ROOT_SESSION,
-  type PiHarness,
-  type PiSessionId
-} from "agents/harness/pi";
-import type { ClientMessage, ServerMessage } from "./protocol";
+import type { PiHarness, PiSessionId } from "agents/harness/pi";
+import { THREAD_REFUSED_CLOSE_CODE, type ClientMessage, type ServerMessage } from "./protocol.ts";
 import type { BridgeSocket } from "./bridge/hub";
-import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices";
-import { sentInput, type Sender } from "./messages";
+import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices.ts";
+import { sentInput, type Sender } from "./messages.ts";
+import { MAIN_SESSION } from "./threads.ts";
 
 const SESSION_TAG_PREFIX = "pi-session:";
 const SESSION_QUERY = "session";
@@ -24,7 +21,7 @@ function sessionTag(session: PiSessionId): string {
 
 function sessionFromRequest(request: Request): string {
   const session = new URL(request.url).searchParams.get(SESSION_QUERY);
-  if (session === null || session === "") return ROOT_SESSION;
+  if (session === null || session === "") return MAIN_SESSION;
   if (!/^[1-9][0-9]{0,15}$/.test(session)) {
     throw new Error(`Invalid pi session ${JSON.stringify(session)}`);
   }
@@ -71,6 +68,7 @@ export class PiSessionSockets {
   readonly #getTags: (socket: WebSocket) => readonly string[];
   readonly #onSubmit: (session: PiSessionId) => void;
   readonly #senderOf: (device: string | null) => Sender | null;
+  readonly #mayOpen: (session: PiSessionId, device: string | null) => boolean;
   readonly #routes: readonly BridgeSocketHandlers[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
 
@@ -82,6 +80,8 @@ export class PiSessionSockets {
     onSubmit: (session: PiSessionId) => void,
     /** 这台设备是哪个成员的。不属于谁是 null。 */
     senderOf: (device: string | null) => Sender | null,
+    /** 这台设备能不能打开这个会话。私聊只有本人能开，见 threads.ts。 */
+    mayOpen: (session: PiSessionId, device: string | null) => boolean,
     routes: readonly BridgeSocketHandlers[] = []
   ) {
     this.#harness = harness;
@@ -89,6 +89,7 @@ export class PiSessionSockets {
     this.#getTags = getTags;
     this.#onSubmit = onSubmit;
     this.#senderOf = senderOf;
+    this.#mayOpen = mayOpen;
     this.#routes = routes;
   }
 
@@ -137,10 +138,15 @@ export class PiSessionSockets {
 
   /** 发给看会话的连接。桥和远程桌面的连接不收这些帧。 */
   broadcast(message: ServerMessage): void {
+    this.broadcastBy(() => message);
+  }
+
+  /** 按设备发各自的那一份，同一个帧不是人人都能看的时候用。 */
+  broadcastBy(messageFor: (device: string | null) => ServerMessage): void {
     for (const socket of this.#getWebSockets()) {
       const tags = this.#getTags(socket);
       if (this.#routes.some((route) => tags.includes(route.tag))) continue;
-      send(socket, message);
+      send(socket, messageFor(deviceOfTags(tags)));
     }
   }
 
@@ -165,6 +171,10 @@ export class PiSessionSockets {
 
   async #onConnect(connection: Connection, ctx: ConnectionContext) {
     const session = sessionFromRequest(ctx.request);
+    if (!this.#mayOpen(session, deviceOfTags(connection.tags))) {
+      connection.close(THREAD_REFUSED_CLOSE_CODE, "打不开这条聊天");
+      return;
+    }
     send(connection, { type: "hello", session });
     await this.#watch(connection, session);
   }
@@ -199,8 +209,9 @@ export class PiSessionSockets {
       send(connection, { type: "error", message: "Malformed JSON" });
       return;
     }
-    const session = sessionOf(connection.tags) ?? ROOT_SESSION;
+    const session = sessionOf(connection.tags) ?? MAIN_SESSION;
     try {
+      if (!this.#mayOpen(session, deviceOfTags(connection.tags))) throw new Error("打不开这条聊天");
       const result = await this.#dispatch(connection, session, message);
       if (message.id !== undefined) {
         send(connection, { type: "result", id: message.id, result });

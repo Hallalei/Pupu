@@ -1,6 +1,7 @@
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { ConnectorError, type ActionInfo, type ConnectorClient } from "./client.ts";
+import type { Thread } from "../threads.ts";
 import { serviceOf, type ConnectorRow } from "./store.ts";
 
 /** 返回给模型的结果最多这么长，太长的截掉。 */
@@ -21,6 +22,7 @@ export type ConnectorDeps = {
   readonly client: () => ConnectorClient | null;
   readonly accounts: () => readonly ConnectorRow[];
   readonly emailOf: (memberId: string | null) => string | null;
+  readonly threadOf: (session: string) => Thread | undefined;
 };
 
 export function describeAccount(row: ConnectorRow, emailOf: (memberId: string | null) => string | null): string {
@@ -56,6 +58,15 @@ export function pickAccount(
   if (candidates.length === 1 && !wanted) return { ok: true, row: candidates[0]! };
   const list = candidates.map((row) => `${row.account ?? "未命名"}（account: ${row.id}）`).join("、");
   return { ok: false, reason: `${name} 连了 ${candidates.length} 个账号：${list}。先问用户用哪个，再把 account 填上。` };
+}
+
+/**
+ * 读到的是账号主人自己的东西，只能留在主人和 Pupu 的私聊里（需求说明 4.8）。
+ * 没有主人的账号只出现在还没有创建者的时候，那时只有一个人用，也没有私聊可去。
+ */
+export function mayReadAccount(thread: Thread | undefined, row: Pick<ConnectorRow, "memberId">): boolean {
+  if (row.memberId === null) return true;
+  return thread?.kind === "private" && thread.memberId === row.memberId;
 }
 
 function describeAction(action: ActionInfo): string {
@@ -122,7 +133,7 @@ export function createConnectorTools(deps: ConnectorDeps): ToolRegistration[] {
   const run = defineTool({
     name: "connector_run",
     description:
-      "用连上的账号跑一个动作，action_id 来自 connector_search。读的动作直接跑；发邮件、建日程、改 issue 这类写和删，会先等账号主人在手机上批准，工具自己等，不用你另外开口问。",
+      "用连上的账号跑一个动作，action_id 来自 connector_search。读的动作只能在账号主人自己的私聊里跑；发邮件、建日程、改 issue 这类写和删，会先等账号主人在手机上批准，工具自己等，不用你另外开口问。",
     parameters: Type.Object({
       action_id: Type.String({ description: "动作 id，比如 gmail.search_messages" }),
       input: Type.Record(Type.String(), Type.Unknown(), { description: "按这个动作的入参 Schema 填" }),
@@ -151,7 +162,7 @@ export function createConnectorTools(deps: ConnectorDeps): ToolRegistration[] {
   return [search, run];
 }
 
-/** 要请示时的内容。读的动作返回 undefined，直接跑。 */
+/** 要请示时的内容。 */
 export type ConnectorAsk = {
   readonly subjectId: string;
   readonly ownerId: string | null;
@@ -161,13 +172,18 @@ export type ConnectorAsk = {
 };
 
 /**
- * connector_run 要不要先问：动作的读写分类以 open-connector 为准，查不到按写算。
- * 选不出账号时不拦，让工具自己去说明。
+ * connector_run 能不能跑：读的动作只在账号主人自己的私聊里直接跑，别处拦下；写和删要先问。
+ * 读写分类以 open-connector 为准，查不到按写算。分类只在这里查一次，工具里不再判断，
+ * 免得第二次查不到时把读当成写放过去。选不出账号时不拦，让工具自己去说明。
  */
 export async function planConnectorCall(
-  call: { readonly name: string; readonly arguments: Readonly<Record<string, unknown>> },
+  call: {
+    readonly name: string;
+    readonly arguments: Readonly<Record<string, unknown>>;
+    readonly session: string | null;
+  },
   deps: ConnectorDeps
-): Promise<ConnectorAsk | undefined> {
+): Promise<ConnectorAsk | { readonly block: string } | undefined> {
   if (call.name !== "connector_run") return undefined;
   const client = deps.client();
   if (!client) return undefined;
@@ -179,7 +195,14 @@ export async function planConnectorCall(
   );
   if (!picked.ok) return undefined;
   const action = await client.action(actionId).catch(() => undefined);
-  if (action?.operationType === "read") return undefined;
+  if (action?.operationType === "read") {
+    const thread = call.session === null ? undefined : deps.threadOf(call.session);
+    if (mayReadAccount(thread, picked.row)) return undefined;
+    const owner = deps.emailOf(picked.row.memberId) ?? "账号主人";
+    return {
+      block: `这里读不了这个账号：读 ${describeAccount(picked.row, () => null)} 只能在 ${owner} 和你的私聊里做，读到的东西才不会公开。这一步没有做，告诉用户到自己的私聊里说这件事（长按顶部中间那一段切过去）。`
+    };
+  }
   const input = clip(JSON.stringify(call.arguments.input ?? {}, null, 2), 1_200);
   return {
     subjectId: connectorSubject(picked.row.id),

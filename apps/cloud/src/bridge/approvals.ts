@@ -13,6 +13,8 @@ export type ApprovalStatus = "pending" | "allowed" | "denied" | "expired";
 export type ApprovalRow = {
   readonly id: string;
   readonly callId: string;
+  /** 这次调用在哪个 pi 会话里。私聊发起的要靠它决定给谁看。新手机登录和早先的记录是 null。 */
+  readonly session: string | null;
   readonly computerId: string;
   readonly kind: ApprovalKind;
   /** 批了这一条，也同时开这台电脑的屏幕授权。 */
@@ -63,6 +65,7 @@ function toRow(row: Row): ApprovalRow {
   return {
     id: String(row.id),
     callId: String(row.call_id),
+    session: row.session === null ? null : String(row.session),
     computerId: String(row.computer_id),
     kind: row.kind === "screen" ? "screen" : "step",
     screen: Number(row.screen) === 1,
@@ -103,6 +106,10 @@ export class ApprovalStore implements ApprovalDirectory {
         expires_at INTEGER NOT NULL,
         decided_at INTEGER
       )`);
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_approvals)").toArray();
+      if (!columns.some((column) => column.name === "session")) {
+        this.#sql.exec("ALTER TABLE pupu_approvals ADD COLUMN session TEXT");
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -122,10 +129,11 @@ export class ApprovalStore implements ApprovalDirectory {
     const id = crypto.randomUUID();
     this.#db().exec(
       `INSERT INTO pupu_approvals
-        (id, call_id, computer_id, kind, screen, title, detail, reason, status, note, created_at, expires_at, decided_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
+        (id, call_id, session, computer_id, kind, screen, title, detail, reason, status, note, created_at, expires_at, decided_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
       id,
       input.callId,
+      input.session,
       input.computerId,
       input.kind,
       input.screen ? 1 : 0,
