@@ -12,6 +12,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": [".claude/skills/verify-pupu/scripts/serve-cloud.mjs"],
       "port": 5199
+    },
+    {
+      "name": "pupu-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/site", "run", "preview"],
+      "port": 4330
     }
   ]
 }

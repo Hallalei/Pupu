@@ -1,0 +1,79 @@
+/* 值取自「Pupu 设计规范」的 tokens.json，名字不改。 */
+:root {
+  color-scheme: light dark;
+
+  --sky-1: #34557f;
+  --sky-2: #6f8fb3;
+  --sky-3: #b9cad9;
+  --sky-4: #e6e5df;
+  --sky-5: #d6d0c4;
+
+  --surface-glass: #ffffff9e;
+  --surface-strong: #ffffffd1;
+  --surface-inset: oklch(94% 0.001 286.375);
+  --bubble-user: #d6e0ecb8;
+  --line-glass: #ffffff8c;
+
+  --ink: oklch(0.2103 0.0059 285.89);
+  --ink-muted: oklch(0.5517 0.0138 285.94);
+  --ink-sky: #1c2634;
+  --ink-sky-muted: #1c2634bf;
+  --on-sky-strong: #ffffffeb;
+
+  --action: var(--ink);
+  --on-action: oklch(0.9702 0 0);
+
+  --online: #059669;
+  --offline: #18181b40;
+  --warning: oklch(0.7819 0.1585 72.33);
+  --on-warning: #18181b;
+  --danger-ink: #c01c22;
+
+  --island: #000000;
+  --on-island: #ffffff;
+
+  --shadow-bubble: 0 1px 2px #0f172a0f, 0 6px 20px #0f172a0f;
+
+  --radius-tag: 12px;
+  --radius-row: 16px;
+  --radius-bubble: 24px;
+  --radius-composer: 26px;
+  --radius-panel: 28px;
+
+  /* 小猫气泡的三个颜色，来自 design/icon/pixels.py */
+  --cat-bubble: #f5f2ea;
+  --cat-bubble-edge: #d6d0c4;
+  --cat-dots: #3a3d48;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sky-1: #0c1420;
+    --sky-2: #15233a;
+    --sky-3: #1d2633;
+    --sky-4: #1c1b1f;
+    --sky-5: #1c1b1f;
+
+    --surface-glass: #282c349e;
+    --surface-strong: #24262cdb;
+    --surface-inset: oklch(27.4% 0.006 286.033);
+    --bubble-user: #ffffff1f;
+    --line-glass: #ffffff14;
+
+    --ink: oklch(0.9911 0 0);
+    --ink-muted: oklch(70.5% 0.015 286.067);
+    --ink-sky: #ffffffe6;
+    --ink-sky-muted: #ffffff99;
+    --on-sky-strong: #ffffffe6;
+
+    --on-action: oklch(12% 0.005 285.823);
+
+    --offline: #fcfcfc40;
+    --warning: oklch(0.8203 0.1388 76.34);
+    --danger-ink: #ff6b6b;
+
+    --cat-bubble: #3a3d47;
+    --cat-bubble-edge: #2b2d34;
+    --cat-dots: #d9d4c8;
+  }
+}
