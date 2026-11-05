@@ -51,7 +51,7 @@ CREATOR_EMAIL=owner@example.com
 GOOGLE_OIDC_DEV_BASE=http://localhost:9999
 ```
 
-然后 `node dev/fake-google.mjs`，再 `npm run dev`。选账号页上 owner 是创建者，family 要创建者在手机 App 里邀请了才能登录，stranger 不在名单上。`GOOGLE_OIDC_DEV_BASE` 只在本机的请求上认，线上设了也不用。
+然后 `node dev/fake-google.mjs`，再 `npm run dev`。选账号页上 owner（林夏）是创建者，family（阿周）要创建者在手机 App 里邀请了才能登录，stranger 不在名单上。`GOOGLE_OIDC_DEV_BASE` 只在本机的请求上认，线上设了也不用。
 
 ## 电脑桥
 

@@ -12,7 +12,8 @@ import { Streamdown } from "streamdown";
 import type { ComputerActivity } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
-import { quotedMessage } from "../messages";
+import type { MemberView } from "../members";
+import { quotedMessage, type Sender } from "../messages";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { buildRows, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
@@ -41,6 +42,7 @@ export type ChatContext = {
   readonly projectTags: boolean;
   readonly computers: readonly ComputerView[];
   readonly approvals: readonly ApprovalView[];
+  readonly members: readonly MemberView[];
   /** 项目报回聊天的结果。只有聊天里有，项目会话里是 undefined。 */
   readonly reports?: readonly ReportCard[];
   readonly onOpenProject: (projectId: string) => void;
@@ -335,7 +337,11 @@ function Row({
 }) {
   switch (row.kind) {
     case "user":
-      return <UserMessage body={row.body} quote={row.quote} onMenu={onMenu} />;
+      return row.sender ? (
+        <OtherMessage body={row.body} quote={row.quote} sender={row.sender} onMenu={onMenu} />
+      ) : (
+        <UserMessage body={row.body} quote={row.quote} onMenu={onMenu} />
+      );
     case "assistant":
       return <AssistantText text={row.text} onMenu={onMenu} />;
     case "typing":
@@ -387,12 +393,7 @@ function UserMessage({ body, quote, onMenu }: { body: string; quote: string | nu
   const press = usePressMenu((anchor) => onMenu(anchor, body));
   return (
     <div className="flex flex-col items-end gap-1">
-      {quote && (
-        <div className="soft flex max-w-[85%] gap-2 rounded-row px-3 py-2">
-          <span className="w-0.5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
-          <span className="line-clamp-2 text-footnote">{quote}</span>
-        </div>
-      )}
+      {quote && <QuoteStrip quote={quote} className="max-w-[85%]" />}
       <div
         {...press}
         className="pressable max-w-[85%] rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap backdrop-blur-xl"
@@ -400,6 +401,54 @@ function UserMessage({ body, quote, onMenu }: { body: string; quote: string | nu
         {body}
       </div>
     </div>
+  );
+}
+
+function QuoteStrip({ quote, className = "" }: { quote: string; className?: string }) {
+  return (
+    <div className={`soft flex gap-2 rounded-row px-3 py-2 ${className}`}>
+      <span className="w-0.5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+      <span className="line-clamp-2 text-footnote">{quote}</span>
+    </div>
+  );
+}
+
+/** 别人发的：靠左，头像在气泡旁边，名字在气泡里。字不直接写在天空上。 */
+function OtherMessage({
+  body,
+  quote,
+  sender,
+  onMenu
+}: {
+  body: string;
+  quote: string | null;
+  sender: Sender;
+  onMenu: MenuOpener;
+}) {
+  const press = usePressMenu((anchor) => onMenu(anchor, body));
+  return (
+    <div className="flex max-w-[85%] items-start gap-2">
+      <Avatar name={sender.name} />
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        {quote && <QuoteStrip quote={quote} className="max-w-full" />}
+        <div
+          {...press}
+          className="pressable max-w-full rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap backdrop-blur-xl"
+        >
+          <div className="text-footnote">{sender.name}</div>
+          {body}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 名字的第一个字。 */
+function Avatar({ name }: { name: string }) {
+  return (
+    <span aria-hidden="true" className="strong grid size-8 shrink-0 place-items-center rounded-full text-footnote">
+      {[...name][0]?.toUpperCase()}
+    </span>
   );
 }
 

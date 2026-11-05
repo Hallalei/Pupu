@@ -10,6 +10,8 @@
  * 对照了 pilcrowonpaper/arctic 的示例。代码是自己写的，没搬。
  */
 
+import { cleanName } from "../members.ts";
+
 /** Google 的几个地址。本机开发时换成假的，见 `devProvider`。 */
 export type OidcProvider = {
   /** ID token 里 iss 认这几个。 */
@@ -27,7 +29,7 @@ export const GOOGLE: OidcProvider = {
   authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenEndpoint: "https://oauth2.googleapis.com/token",
   jwksUri: "https://www.googleapis.com/oauth2/v3/certs",
-  scope: "openid email",
+  scope: "openid email profile",
   // 登着好几个 Google 账号时让人挑一个，不默默用当前那个。
   params: { prompt: "select_account" }
 };
@@ -243,6 +245,8 @@ export type Identity = {
   readonly subject: string;
   /** 小写。 */
   readonly email: string;
+  /** Google 账号的名字，聊天里显示。ID token 里没有是 null。 */
+  readonly name: string | null;
 };
 
 type Claims = Record<string, unknown>;
@@ -316,5 +320,5 @@ export async function verifyIdToken(
   if (claims.email_verified !== true && claims.email_verified !== "true") {
     throw new SignInError("这个账号的邮箱还没验证过。");
   }
-  return { subject: claims.sub, email: claims.email.toLowerCase() };
+  return { subject: claims.sub, email: claims.email.toLowerCase(), name: cleanName(claims.name) };
 }

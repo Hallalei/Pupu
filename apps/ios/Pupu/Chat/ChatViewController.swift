@@ -132,6 +132,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         collectionView.pin(to: view)
 
         let users = registration(UserCell.self)
+        let others = registration(OtherCell.self)
         let assistants = registration(AssistantCell.self)
         let typing = registration(TypingCell.self)
         let tags = registration(TagCell.self)
@@ -142,6 +143,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
+            case .other: return view.dequeueConfiguredReusableCell(using: others, for: path, item: id)
             case .assistant: return view.dequeueConfiguredReusableCell(using: assistants, for: path, item: id)
             case .typing: return view.dequeueConfiguredReusableCell(using: typing, for: path, item: id)
             case .projectTag: return view.dequeueConfiguredReusableCell(using: tags, for: path, item: id)
@@ -350,6 +352,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             projects: store.projects,
             computers: store.computers,
             approvals: store.approvals,
+            members: store.members,
             reports: projectTags ? store.reports : [],
             toggled: toggled
         )
@@ -410,6 +413,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .notice, .handoff: 5
         case .error: 6
         case .report: 7
+        case .other: 8
         }
     }
 
@@ -426,6 +430,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .user(let body, let quote):
             guard let cell = cell as? UserCell else { return }
             cell.configure(body: body, quote: quote, width: width)
+            cell.onQuote = { [weak self] in self?.jump(toQuote: quote ?? "", from: id) }
+        case .other(let body, let quote, let sender):
+            guard let cell = cell as? OtherCell else { return }
+            cell.configure(body: body, quote: quote, sender: sender, width: width)
             cell.onQuote = { [weak self] in self?.jump(toQuote: quote ?? "", from: id) }
         case .assistant(let text):
             guard let cell = cell as? AssistantCell else { return }
@@ -620,7 +628,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     private static func menuTexts(_ row: ChatRow) -> (copy: String, quote: String)? {
         switch row.kind {
-        case .user(let body, _): (body, body)
+        case .user(let body, _), .other(let body, _, _): (body, body)
         case .assistant(let text): (Markdown.plainText(text), text)
         case .report(let card): (card.quote, card.quote)
         default: nil
