@@ -1,19 +1,18 @@
 # 私聊
 
-每个成员有一条只有自己和 Pupu 的私聊。中间一段长按或右键，在大家和私聊之间切换。
+每个成员有一条只有自己和 Pupu 的私聊。聊天这一段长按或右键，在大家和私聊之间切换。
 
 ## Sub-features
 
-- `private.switch`：长按或右键中间一段弹两行菜单，当前项打勾。选私聊后天空变夜空，输入栏写「只发给 Pupu」。
+- `private.switch`：长按或右键聊天这一段弹两行菜单，当前项打勾。选私聊后天空变夜空，输入栏写「只发给 Pupu」。
 - `private.isolated`：别人连不上你的私聊，会话 WebSocket 收到 `打不开这条聊天` 后以 1011 关闭。查不到的会话也一样。
 - `private.dot`：没在显示的那条有 Pupu 的新回复时，头像右上角亮红点；切过去就消失。
-- `private.home`：私聊状态下，主页输入栏发的话进私聊。
 - `private.handoff`：私聊里转交前 Pupu 先说内容会公开。报告卡回到这条私聊，别人的 `/api/state` 里没有这张卡，项目里不带无关私事。
 - `private.approval`：私聊发起的电脑动作，审批卡和「正在做」只给发起人和电脑主人。第三个人的 `/api/state`、`activity` 帧里都没有。
 
 ## How to get to it (user POV)
 
-- 手机宽度：长按顶部中间一段。电脑浏览器窄窗口：右键。
+- 手机宽度：长按顶部聊天这一段。电脑浏览器窄窗口：右键。
 - 宽屏：左侧栏「大家」「私聊」。
 
 ## Driving it with ego-browser
@@ -37,7 +36,7 @@ Preconditions: 要几个成员，`apps/cloud/.dev.vars` 按 `apps/cloud/README.m
   ```
 - `private.switch`（长按）：`Emulation.setTouchEmulationEnabled`，然后 `Input.dispatchTouchEvent` 的 `touchStart`，等 650 毫秒，再 `touchEnd`。
 - `private.isolated`：在成员页面里 `new WebSocket("ws://" + location.host + "/agents/pupu/me?_pk=" + crypto.randomUUID() + "&session=<别人的私聊>")`。`/api/state` 的 `chats.private.session` 是各人的私聊。
-- `private.dot`：林夏停在私聊，阿周在大家发一句。结果：林夏那边中间一段的 `aria-label` 变成「私聊，大家有新消息」。
+- `private.dot`：林夏停在私聊，阿周在大家发一句。结果：林夏那边聊天这一段的 `aria-label` 变成「私聊，大家有新消息」。
 
 ## Gotchas
 
