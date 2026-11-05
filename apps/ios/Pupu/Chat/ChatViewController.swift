@@ -52,8 +52,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private var stick = true {
         didSet { if stick != oldValue { updateJump() } }
     }
-    /// 主页输入栏发的话：连上了就发，没连上先记着，连上再发。
-    private var pending: String?
     private var renderScheduled = false
     private var width: CGFloat = 0
     private var storeToken: StoreToken?
@@ -323,10 +321,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         socket.onStatus = { [weak self] next in
             guard let self else { return }
             self.status = next
-            if next == .open {
-                self.opened = true
-                self.flushPending()
-            }
+            if next == .open { self.opened = true }
             self.scheduleRender()
         }
         socket.onEvents = { [weak self] events in self?.receive(events) }
@@ -598,18 +593,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let inset = collectionView.adjustedContentInset
         let y = max(-inset.top, collectionView.contentSize.height + inset.bottom - collectionView.bounds.height)
         collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: !UIAccessibility.isReduceMotionEnabled)
-    }
-
-    func deliver(_ text: String) {
-        pending = text
-        flushPending()
-    }
-
-    private func flushPending() {
-        guard let text = pending, status == .open, let socket, socket.submit(text) else { return }
-        pending = nil
-        stick = true
-        scrollToBottom()
     }
 
     private func scrollToBottom() {

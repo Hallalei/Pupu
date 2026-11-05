@@ -8,6 +8,7 @@
 - `chat.reply`：Pupu 回复。需要 `DEEPSEEK_API_KEY`，会扣真实余额。
 - `chat.model-error`：没配模型时显示「模型出错了，这条没回上：Provider is not configured: deepseek」。
 - `chat.sender`：多个成员时，别人的消息靠左、带头像和名字，自己的靠右；只有一个成员时不显示名字；Pupu 答得出是谁说的。
+- `chat.doing`：有电脑在干活、等批准或屏幕控制没收回时，聊天顶部显示一条，把对话往下挤；屏幕控制开着时带「收回」；没有就不占位。多台电脑只摊开第一行，屏幕控制开着的在最前，+N 展开其余的。要真的工具调用：配好电脑，让 Pupu 跑一条长命令。
 
 ## How to get to it (user POV)
 

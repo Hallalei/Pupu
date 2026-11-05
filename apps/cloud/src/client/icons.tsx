@@ -86,15 +86,6 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export function ComputerIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <rect x="3.5" y="4.5" width="17" height="11" rx="2" />
-      <path d="M8.5 19.5h7M12 15.5v4" />
-    </Icon>
-  );
-}
-
 export function PhoneIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>
@@ -120,15 +111,6 @@ export function ChevronRightIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export function HomeIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z" />
-      <path d="M9.5 20.5v-6h5v6" />
-    </Icon>
-  );
-}
-
 export function ChatIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>
@@ -143,14 +125,6 @@ export function LockIcon(props: SVGProps<SVGSVGElement>) {
     <Icon {...props}>
       <rect x="5" y="11" width="14" height="9" rx="2" />
       <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-    </Icon>
-  );
-}
-
-export function PulseIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
     </Icon>
   );
 }

@@ -5,7 +5,7 @@
 ## Sub-features
 
 - `ios.pair-link`：`pupu://pair` 链接连上。
-- `ios.home`：连上后显示主页、聊天、项目三段。
+- `ios.sections`：连上后停在聊天，顶部是聊天、项目两段。
 
 ## How to get to it (user POV)
 
@@ -17,7 +17,7 @@
 Preconditions: 按 `SKILL.md` 构建并 `launch`，App 停在「连接 Pupu」。
 
 - `ios.pair-link`：按 `SKILL.md` 的 `openurl` 命令，截图后点「连接」。结果：`/api/state` 的 `devices` 有 `phone`。
-- `ios.home`：截图。结果：顶部三段和「给 Pupu 发消息」输入栏可见。
+- `ios.sections`：截图。结果：顶部两段和「给 Pupu 发消息」输入栏可见。
 
 ## Gotchas
 

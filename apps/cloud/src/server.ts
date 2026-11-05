@@ -121,7 +121,7 @@ export type PupuState = {
   readonly approvals: readonly ApprovalView[];
   /** 配对过的手机和浏览器，新连上的在前。 */
   readonly devices: readonly DeviceView[];
-  /** 每台电脑在做什么，顺序和 `computers` 一样。主页的「正在做」用。 */
+  /** 每台电脑在做什么，顺序和 `computers` 一样。聊天顶部的「正在做」用。 */
   readonly activity: readonly ComputerActivity[];
   /** 成员名单，创建者在前。设备的 `memberId`、电脑的 `ownerId` 对的是这里的 id。 */
   readonly members: readonly MemberView[];
@@ -274,7 +274,7 @@ export class Pupu extends DurableObject<Env> {
               return undefined;
             },
             afterResponse: (message, api) => this.#reportError(String(api.conversationId), message),
-            // 项目里回完一轮，记下最新进展，主页和项目列表上显示；从聊天转来的事报回聊天。
+            // 项目里回完一轮，记下最新进展，项目列表上显示；从聊天转来的事报回聊天。
             // 聊天里回完一轮，记下时间，客户端用它亮新消息的圆点。
             onYield: (answer, api) => {
               const session = String(api.conversationId);

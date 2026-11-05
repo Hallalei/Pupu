@@ -175,7 +175,7 @@ body {
   -webkit-backdrop-filter: blur(28px) saturate(1.5);
 }
 
-/* 控件层：三段切换、顶栏按钮、输入栏、回到底部。近似 iOS 的 Liquid Glass。 */
+/* 控件层：两段切换、顶栏按钮、输入栏、回到底部。近似 iOS 的 Liquid Glass。 */
 .glass {
   background: var(--glass-fill);
   outline: 1px solid var(--glass-rim);

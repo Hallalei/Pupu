@@ -1,8 +1,16 @@
 import { Button } from "@heroui/react";
 import { useEffect, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
-import { ago } from "./Home";
+import { ago } from "./ago";
 import { PhoneIcon } from "./icons";
+
+export function WaitingChip() {
+  return (
+    <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+      等你批准
+    </span>
+  );
+}
 
 /**
  * Pupu 在电脑上要做的、等你批准的事。挂在每一屏的顶栏下面，把内容往下挤。
@@ -73,9 +81,7 @@ export function Approvals({
           className="strong bubble flex flex-col gap-3 rounded-panel p-4"
         >
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
-              等你批准
-            </span>
+            <WaitingChip />
             <span className="min-w-0 flex-1 truncate text-caption text-muted">
               {approval.computerName} · {ago(approval.createdAt)}
             </span>

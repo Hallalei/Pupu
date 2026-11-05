@@ -28,9 +28,9 @@ final class SkyView: UIView {
 /// 内容层的卡片：标准材质，加一层半透明底、1pt 描边，可选阴影。内容层不用 Liquid Glass。
 class SurfaceView: UIView {
     enum Kind {
-        /// 容器：主页面板、开场建议、引用条。
+        /// 容器：开场建议、引用条。
         case glass
-        /// 更实的底：Pupu 的消息、面板里的行、审批卡片。
+        /// 更实的底：Pupu 的消息、「正在做」、审批卡片。
         case strong
         /// 嵌在 strong 里的一层：代码块、分组列表的行。
         case inset

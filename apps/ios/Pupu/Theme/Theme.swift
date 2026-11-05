@@ -61,7 +61,6 @@ enum Theme {
         static let controlSmall: CGFloat = 36
         static let control: CGFloat = 44
         static let bubbleMax: CGFloat = 0.85
-        static let columnMax: CGFloat = 672
     }
 
     /// 规范里的文字样式。字号是默认大小（大）下的值，跟着 Dynamic Type 缩放。

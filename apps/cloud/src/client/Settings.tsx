@@ -5,8 +5,8 @@ import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
 import { mayChangePolicy, type DeviceView } from "../devices";
 import { mayInvite, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
+import { ago } from "./ago";
 import { useDesktopComputer } from "./desktop";
-import { ago, computerLabel } from "./Home";
 import { ThisComputer } from "./ThisComputer";
 
 const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
@@ -16,6 +16,13 @@ const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
 ];
 
 type PairingCode = { readonly code: string; readonly expiresAt: number };
+
+function computerLabel(computer: ComputerView): string {
+  if (computer.online) return "在线";
+  if (computer.stale) return "心跳中断";
+  if (computer.lastSeenAt) return `离线 · ${ago(computer.lastSeenAt)}`;
+  return "离线";
+}
 
 /**
  * 这一版的设置：管已经连上的电脑、手机和浏览器，每台电脑上 Pupu 什么时候要先问你，

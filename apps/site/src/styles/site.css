@@ -263,7 +263,17 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
   line-height: 28px;
   text-align: center;
 }
-.segments .is-on { border-radius: 999px; background: var(--action); color: var(--on-action); font-weight: 600; }
+.segments .is-on {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: var(--action);
+  color: var(--on-action);
+  font-weight: 600;
+}
+.segments .cat { width: 16px; }
 
 .thread { display: flex; flex-direction: column; gap: 12px; padding: 4px; }
 
@@ -428,6 +438,18 @@ mark.is-lit { background: color-mix(in srgb, var(--warning) 42%, transparent); }
   animation: stream 1.6s linear infinite;
 }
 @keyframes stream { to { background-position-x: 24px; } }
+
+/* 两条聊天：白天的天是大家，夜空是私聊，和 App 里切换时的背景一样。深浅色主题下都用这组固定的颜色。 */
+.lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: clamp(24px, 4vw, 40px);
+}
+.line { padding: 16px 20px; border-radius: var(--radius-row); text-align: left; }
+.line p { margin-top: 4px; font-size: 15px; line-height: 22px; }
+.line--day { background: linear-gradient(180deg, #8fa9c4, #b9cad9); color: #1c2634; }
+.line--night { background: linear-gradient(180deg, #0c1420, #15233a); color: #ffffffe6; }
 
 /* 左右交替的一段 */
 .split {
@@ -596,7 +618,7 @@ pre {
 
 /* 窄屏 */
 @media (max-width: 899px) {
-  .hero, .split { grid-template-columns: minmax(0, 1fr); }
+  .hero, .split, .lines { grid-template-columns: minmax(0, 1fr); }
   .hero { min-height: 0; padding-top: 96px; }
   .hero__demo { max-width: 480px; width: 100%; margin: 40px auto 0; }
   .split--flip .split__copy { order: 0; }
