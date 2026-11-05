@@ -120,12 +120,12 @@ npm run dist
 | 签名 | Electron 自带的临时签名 | Developer ID，hardened runtime，公证过 |
 | 连哪个 Pupu | 线上，或者 `PUPU_URL` | 只连线上 |
 | 数据 | `~/Library/Application Support/Pupu Dev`，日志在 `~/Library/Logs/Pupu Dev/` | `~/Library/Application Support/Pupu`，日志在 `~/Library/Logs/Pupu/` |
-| 屏幕助手 | 桥在本机编到 `~/.pupu/bin/pupu-computer-use` | 包里编好、签好的 `Contents/Resources/helpers/pupu-computer-use`，主进程经 MessagePort 把路径告诉桥 |
+| 屏幕助手、输入助手 | 桥在本机编到 `~/.pupu/bin/` 下的 `pupu-computer-use`、`pupu-input` | 包里编好、签好的 `Contents/Resources/helpers/` 下同名程序，主进程经 MessagePort 把目录告诉桥 |
 | 调试 | 认 `PUPU_*` 环境变量，能开 DevTools、`--remote-debugging-port` | 删掉 `PUPU_*`，关 DevTools；带 `--remote-debugging-port`、`--inspect`、`--js-flags` 这类参数启动就直接退出 |
 
 收紧入口照 Cindy 正式包的 Fuses：关 RunAsNode、`NODE_OPTIONS`、`--inspect`，开 asar 完整性校验、只从 asar 加载、cookie 加密，关 file:// 的额外权限。桥走 `utilityProcess`，不受 RunAsNode 影响。
 
-entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，屏幕助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
+entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，屏幕助手和输入助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
 
 ### 第一次装正式包
 

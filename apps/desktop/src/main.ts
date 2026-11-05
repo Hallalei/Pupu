@@ -78,9 +78,11 @@ let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
 
+const LOAD_TIMEOUT_MS = 15_000;
+
 const dist = (name: string) => path.join(__dirname, name);
-/** 正式包里带着编好、签好名的屏幕助手；开发版是 null，桥照旧在本机编到 ~/.pupu/bin。 */
-const helper = app.isPackaged ? path.join(process.resourcesPath, "helpers", "pupu-computer-use") : null;
+/** 正式包里带着编好、签好名的屏幕助手和输入助手；开发版是 null，桥照旧在本机编到 ~/.pupu/bin。 */
+const helpers = app.isPackaged ? path.join(process.resourcesPath, "helpers") : null;
 
 // ── 日志 ──────────────────────────────────────────────────────────────
 
@@ -142,7 +144,7 @@ function startBridge(): void {
     { url: origin, computerId: computer.id, token: computer.token, name: computer.name },
     // App 的凭据文件，还有命令行桥的 bridge.json，文件工具都不让碰。
     [credentialsPath(), configPath()],
-    helper
+    helpers
   );
 }
 
@@ -444,12 +446,30 @@ async function openMain(): Promise<void> {
     if (mainWindow === window) mainWindow = null;
     updateDock();
   });
+  const showOffline = () =>
+    void window.loadFile(dist("offline.html"), { query: { url: `${origin}/`, host: new URL(origin).host } });
   window.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     // -3 是被新的导航顶掉了，不算失败。
     if (!isMainFrame || code === -3 || !sameOrigin(url, origin)) return;
     log(`页面没加载出来：${code} ${description}`);
-    void window.loadFile(dist("offline.html"), { query: { url: `${origin}/`, host: new URL(origin).host } });
+    showOffline();
   });
+  // 网络半通时请求既不成功也不报错，等不到 did-fail-load，窗口就一直空着。
+  let loadTimer: NodeJS.Timeout | null = null;
+  const clearLoadTimer = () => {
+    if (loadTimer) clearTimeout(loadTimer);
+    loadTimer = null;
+  };
+  window.webContents.on("did-start-loading", () => {
+    clearLoadTimer();
+    loadTimer = setTimeout(() => {
+      if (window.isDestroyed() || !window.webContents.isLoadingMainFrame()) return;
+      log(`页面 ${LOAD_TIMEOUT_MS / 1000} 秒没加载出来，换成离线页。`);
+      showOffline();
+    }, LOAD_TIMEOUT_MS);
+  });
+  window.webContents.on("did-stop-loading", clearLoadTimer);
+  window.once("closed", clearLoadTimer);
   window.webContents.on("did-finish-load", () => sendComputer());
   // 从系统设置开完授权回来，授权状态跟着刷新。
   window.on("focus", () => sendComputer());

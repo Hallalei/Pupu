@@ -1,5 +1,5 @@
 # 电脑 App 的正式包（技术方案 5.5）。用 `npm run dist` 跑 package.mjs，别直接调 electron-builder：
-# 屏幕助手要先编好、签好名，签名身份和公证凭据由它找好了传进来，DMG 也由它另外签名、公证。
+# 屏幕助手和输入助手要先编好、签好名，签名身份和公证凭据由它找好了传进来，DMG 也由它另外签名、公证。
 # 写法参考 paseo 的 electron-builder.yml 和 emdash 的 electron-builder.config.ts，看思路自己写的。
 appId: com.leizi.pupu.desktop
 productName: Pupu
@@ -13,6 +13,7 @@ files:
   - dist/**/*
   - "!dist/**/*.map"
   - "!dist/computer.swift"
+  - "!dist/input.swift"
 # 照 Cindy 正式包收紧入口：别的程序不能借 Pupu 的身份和授权跑自己的代码。
 electronFuses:
   runAsNode: false
@@ -35,9 +36,10 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
-  # package.mjs 已经用同一个身份签好了屏幕助手（不带 JIT 那些 entitlements），这里别再签一遍。
+  # package.mjs 已经用同一个身份签好了两个助手（不带 JIT 那些 entitlements），这里别再签一遍。
   signIgnore:
     - /Contents/Resources/helpers/pupu-computer-use$
+    - /Contents/Resources/helpers/pupu-input$
   # package.mjs 发正式包时打开。
   notarize: false
   extraResources:
@@ -46,6 +48,8 @@ mac:
       to: Assets.car
     - from: out/pupu-computer-use
       to: helpers/pupu-computer-use
+    - from: out/pupu-input
+      to: helpers/pupu-input
   extendInfo:
     CFBundleIconName: AppIcon
     NSAppleEventsUsageDescription: Pupu 替你在这台电脑上跑的命令要控制别的 App。

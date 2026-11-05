@@ -43,9 +43,9 @@ export class BridgeSupervisor {
   }
 
   /** 给桥一份凭据。还没起就拉起来，已经在跑就换上新的。 */
-  start(config: BridgeConfig, blocked: readonly string[], helper: string | null): void {
+  start(config: BridgeConfig, blocked: readonly string[], helpers: string | null): void {
     this.#stopping = false;
-    this.#config = { type: "config", config, blocked, helper };
+    this.#config = { type: "config", config, blocked, helpers };
     if (this.#child) this.#send(this.#config);
     else if (!this.#timer) this.#spawn();
   }

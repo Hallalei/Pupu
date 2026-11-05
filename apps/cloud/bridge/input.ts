@@ -5,6 +5,13 @@ import { ensureSwiftBinary } from "./swift.ts";
 
 const SOURCE = fileURLToPath(new URL("./input.swift", import.meta.url));
 
+let prebuilt: string | null = null;
+
+/** 电脑 App 的正式包带着编好、签好名的输入助手，用它，不在本机编。 */
+export function usePrebuiltInput(bin: string): void {
+  prebuilt = bin;
+}
+
 /**
  * 常驻的输入助手。没编好或者挂了，`onFail` 报一次，由 remote.ts 把控制收回来：
  * 键鼠失灵时不该让手机上的人以为还在操作（参考 Cindy 的 Input failure releases control）。
@@ -43,7 +50,7 @@ export class InputHelper {
 
   async #start(): Promise<void> {
     try {
-      const bin = await ensureSwiftBinary({ source: SOURCE, name: "pupu-input" });
+      const bin = prebuilt ?? (await ensureSwiftBinary({ source: SOURCE, name: "pupu-input" }));
       const child = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
       child.once("error", (error) => this.#failed(child, error.message));
       child.once("close", () => this.#failed(child, "输入助手退出了。"));

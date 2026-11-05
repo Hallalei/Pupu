@@ -1,6 +1,6 @@
 // 出电脑 App 的正式包（技术方案 5.5），产物在 release/：
 // 1. build.mjs 打出 dist/；
-// 2. 屏幕助手 computer.swift 编成 out/pupu-computer-use，用同一个身份签名、开 hardened runtime；
+// 2. 屏幕助手 computer.swift、输入助手 input.swift 编到 out/，用同一个身份签名、开 hardened runtime；
 // 3. electron-builder 按 electron-builder.yml 打 Pupu.app（Fuses、签名、公证并 staple）和 DMG；
 // 4. DMG 签名、公证、staple；
 // 5. 验签名、Gatekeeper、公证票据、Fuses 和 entitlements。
@@ -21,8 +21,10 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const local = process.argv.includes("--local");
 const profile = process.env.PUPU_NOTARY_PROFILE || "pupu-notary";
 const { version } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-const helperSource = path.join(root, "..", "cloud", "bridge", "computer.swift");
-const helper = path.join(root, "out", "pupu-computer-use");
+const helpers = [
+  { source: "computer.swift", name: "pupu-computer-use", identifier: "com.leizi.pupu.desktop.computer-use" },
+  { source: "input.swift", name: "pupu-input", identifier: "com.leizi.pupu.desktop.input" }
+];
 const app = path.join(root, "release", "mac-arm64", "Pupu.app");
 const dmg = path.join(root, "release", `Pupu-${version}-arm64.dmg`);
 
@@ -61,11 +63,14 @@ async function checkNotaryProfile() {
   }
 }
 
-async function buildHelper(identity) {
-  await mkdir(path.dirname(helper), { recursive: true });
-  await run("swiftc", ["-O", "-target", "arm64-apple-macos14.0", "-o", helper, helperSource]);
+async function buildHelpers(identity) {
+  await mkdir(path.join(root, "out"), { recursive: true });
   const sign = identity ? ["--timestamp", "--sign", identity] : ["--sign", "-"];
-  await run("codesign", ["--force", "--options", "runtime", "--identifier", "com.leizi.pupu.desktop.computer-use", ...sign, helper]);
+  for (const { source, name, identifier } of helpers) {
+    const bin = path.join(root, "out", name);
+    await run("swiftc", ["-O", "-target", "arm64-apple-macos14.0", "-o", bin, path.join(root, "..", "cloud", "bridge", source)]);
+    await run("codesign", ["--force", "--options", "runtime", "--identifier", identifier, ...sign, bin]);
+  }
 }
 
 /** 公证一个文件，等苹果给结果；没过就把苹果的说明打出来。 */
@@ -85,7 +90,9 @@ async function notarize(file) {
 
 async function verify() {
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
-  await run("codesign", ["--verify", "--strict", "--verbose=2", path.join(app, "Contents", "Resources", "helpers", "pupu-computer-use")]);
+  for (const { name } of helpers) {
+    await run("codesign", ["--verify", "--strict", "--verbose=2", path.join(app, "Contents", "Resources", "helpers", name)]);
+  }
   const wire = await getCurrentFuseWire(app);
   const fuses = Object.entries(wire)
     .filter(([key]) => key !== "version")
@@ -102,7 +109,7 @@ async function verify() {
 const identity = local ? null : await signingIdentity();
 if (!local) await checkNotaryProfile();
 await run("node", ["build.mjs"]);
-await buildHelper(identity);
+await buildHelpers(identity);
 if (!local) process.env.APPLE_KEYCHAIN_PROFILE = profile;
 await build({
   targets: Platform.MAC.createTarget(["dmg"], Arch.arm64),
