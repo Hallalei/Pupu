@@ -197,6 +197,8 @@ nonisolated struct ReportCard: Decodable, Sendable, Hashable {
     }
 
     let id: String
+    /// 这张卡该出现的聊天 session。旧版云端不给，算大家那条。
+    let chat: String?
     let projectId: String
     let projectName: String
     let status: String
@@ -258,8 +260,62 @@ nonisolated struct Connectors: Decodable, Sendable, Hashable {
     static let empty = Connectors(enabled: false, services: [], accounts: [])
 }
 
+/// 聊天分两条：大家是全团体共用的主会话，私聊只有本人和 Pupu。
+nonisolated enum Lane: CaseIterable, Sendable {
+    case main, `private`
+
+    var title: String {
+        switch self {
+        case .main: "大家"
+        case .private: "私聊"
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .main: "发给大家和 Pupu"
+        case .private: "只发给 Pupu"
+        }
+    }
+
+    /// 空聊天里 Pupu 的开场白。
+    var intro: String {
+        switch self {
+        case .main: "这是我们的聊天，会一直接着聊下去。\n小事我直接办，要持续推进的事放进项目里。"
+        case .private: "这里只有你和我，别人看不到。\n小事我直接办，要持续推进的事放进项目里。"
+        }
+    }
+
+    var other: Lane { self == .main ? .private : .main }
+}
+
+/// 这台手机能进的两条聊天。
+nonisolated struct Chats: Decodable, Sendable, Hashable {
+    struct Chat: Decodable, Sendable, Hashable {
+        let session: String
+        /// Pupu 在这条聊天最后回复的时间。还没回复过是 nil。
+        let lastAt: Double?
+    }
+
+    let main: Chat
+    /// 没有成员身份时是 nil，界面不给切换。
+    let `private`: Chat?
+
+    /// 云端还没给 chats 时：只有大家这一条。
+    static let mainOnly = Chats(main: Chat(session: "1", lastAt: nil), private: nil)
+
+    subscript(lane: Lane) -> Chat? {
+        switch lane {
+        case .main: main
+        case .private: self.private
+        }
+    }
+}
+
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
+    /// 旧版云端不给。
+    let chats: Chats?
     let computers: [Computer]
     let approvals: [Approval]?
     let devices: [Device]?
