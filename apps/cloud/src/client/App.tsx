@@ -245,6 +245,7 @@ export function App() {
       <div className="sky" />
       <Sidebar
         route={route}
+        loaded={loaded}
         projects={projects}
         waiting={waiting}
         current={project?.id}
@@ -461,6 +462,7 @@ function SectionSwitch({
 /** 宽屏的左侧栏：大家、私聊、全部项目；底下是这台电脑（只在电脑 App 里）和设置。 */
 function Sidebar({
   route,
+  loaded,
   projects,
   waiting,
   current,
@@ -474,6 +476,7 @@ function Sidebar({
   thisComputer
 }: {
   route: Route;
+  loaded: boolean;
   projects: readonly Project[];
   waiting: ReadonlySet<string>;
   current: string | undefined;
@@ -518,7 +521,7 @@ function Sidebar({
         </button>
       </div>
       <nav aria-label="项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-        {projects.length === 0 && (
+        {loaded && projects.length === 0 && (
           <p className="px-2 py-1 text-footnote text-muted">还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个。</p>
         )}
         {projects.map((project) => (
