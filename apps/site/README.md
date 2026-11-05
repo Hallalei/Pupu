@@ -28,12 +28,11 @@ npm test
 - `src/components/Cat.astro`：像素小猫，网格抄自 `design/icon/pixels.py`。
 - `worker/`：`/api/waitlist`，其余请求交给静态资源。
 
-## 上线前要做
+## 线上
 
-1. 确认「消息显示是谁发的」已经部署。首页的多人演示依赖它。
-2. 确认手机远程桌面已经在发出去的 iOS 和 Mac 版里。电脑那段写了它。
-3. 配公开的联系邮箱 `PUBLIC_CONTACT_EMAIL`，隐私说明里才会出现删除邮箱的办法。
-4. 确认 `wrangler.jsonc` 里的 Worker 名和 D1 数据库，再跑 `npm run deploy`。
+官网在 https://getpupu.com ，`www.getpupu.com` 也指向同一个 Worker，`workers.dev` 地址已关。发布跑 `npm run deploy`。
+
+还差一个公开的联系邮箱：配上 `PUBLIC_CONTACT_EMAIL` 后，隐私说明里才会出现删除邮箱的办法。
 
 私聊上线后再写进首页。现在的措辞是「大家共用的聊天和项目」，有了私聊也成立。
 
