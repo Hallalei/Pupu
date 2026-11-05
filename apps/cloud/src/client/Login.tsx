@@ -1,7 +1,8 @@
 import { Button, Input } from "@heroui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { desktop } from "./desktop";
+import { mountPupuArt } from "./pupu-art";
 
 /** 登录没成时，云端跳回首页带着的原因。读一次就从地址栏去掉。 */
 function takeSignInError(): string | null {
@@ -25,13 +26,23 @@ function GoogleMark() {
   );
 }
 
-/** 登录的版式：左边一块 Pupu 的大图，右边一列居中。窄窗口只留右边。 */
+function Art() {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => mountPupuArt(canvas.current!), []);
+  return (
+    <div aria-hidden="true" className="login-art hidden flex-1 lg:block">
+      <canvas ref={canvas} />
+    </div>
+  );
+}
+
+/** 登录的版式：左边一块 Pupu 的 3D 场景，右边一列居中。窄窗口只留右边。 */
 function Shell({ lead, children }: { lead: string; children: ReactNode }) {
   return (
     <div className="login relative flex h-dvh gap-3">
       <div className="sky" />
       <div className="window-drag" />
-      <div aria-hidden="true" className="login-art hidden flex-1 lg:block" />
+      <Art />
       <div className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6">
         <div className="flex w-full max-w-sm flex-col gap-3 py-6 text-center">
           <h1 className="m-0 text-display text-ink-sky">Pupu</h1>
