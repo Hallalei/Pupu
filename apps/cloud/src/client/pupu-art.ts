@@ -21,6 +21,24 @@ import {
   type Eyes,
   type Mesh
 } from "./pupu-voxels";
+import {
+  CENTER,
+  FAR_BUBBLES,
+  MOON_SIZE,
+  camera,
+  chain,
+  invert,
+  normalize,
+  ortho,
+  lookAt,
+  rotateX,
+  rotateY,
+  rotateZ,
+  scale,
+  translate,
+  type Mat4,
+  type Vec3
+} from "./pupu-camera";
 
 /*
  * 节奏都在这里，单位是秒。一轮 LOOP 秒，之后从头再来。
@@ -31,112 +49,13 @@ const GLANCE = { from: 6.6, to: 8.8 }; // 转头瞄一眼右边的登录按钮
 const EAR_FLICKS = [15.6, 16]; // 右耳抖两下
 const BREATH = 4; // 一呼一吸
 const DOT_WAVE = 2; // 三个点走一遍
-const SWAY = 24; // 镜头来回一趟
 const STILL_AT = 2; // 减弱动态效果时停在这一刻
+const FRAME_MS = 1000 / 30; // 不跟屏幕刷新率走：大窗口每帧 GPU 约 3.6 毫秒（M3），120Hz 屏跑满要占四成
 
 const MAX_PIXEL_RATIO = 2;
 const SHADOW_SIZE = 1024;
 
-type Mat4 = Float32Array;
-
-function multiply(a: Mat4, b: Mat4): Mat4 {
-  const out = new Float32Array(16);
-  for (let column = 0; column < 4; column++) {
-    for (let row = 0; row < 4; row++) {
-      let sum = 0;
-      for (let k = 0; k < 4; k++) sum += a[k * 4 + row]! * b[column * 4 + k]!;
-      out[column * 4 + row] = sum;
-    }
-  }
-  return out;
-}
-
-const chain = (...matrices: Mat4[]) => matrices.reduce(multiply);
-
-function translate(x: number, y: number, z: number): Mat4 {
-  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
-}
-
-function scale(s: number): Mat4 {
-  return new Float32Array([s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1]);
-}
-
-function rotateX(a: number): Mat4 {
-  const [c, s] = [Math.cos(a), Math.sin(a)];
-  return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
-}
-
-function rotateY(a: number): Mat4 {
-  const [c, s] = [Math.cos(a), Math.sin(a)];
-  return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
-}
-
-function rotateZ(a: number): Mat4 {
-  const [c, s] = [Math.cos(a), Math.sin(a)];
-  return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-}
-
-function perspective(fovY: number, aspect: number, near: number, far: number): Mat4 {
-  const f = 1 / Math.tan(fovY / 2);
-  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
-}
-
-function ortho(size: number, near: number, far: number): Mat4 {
-  return new Float32Array([1 / size, 0, 0, 0, 0, 1 / size, 0, 0, 0, 0, -2 / (far - near), 0, 0, 0, -(far + near) / (far - near), 1]);
-}
-
-type Vec3 = [number, number, number];
-
-function normalize([x, y, z]: Vec3): Vec3 {
-  const length = Math.hypot(x, y, z);
-  return [x / length, y / length, z / length];
-}
-
-function cross(a: Vec3, b: Vec3): Vec3 {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-}
-
-const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
-function lookAt(eye: Vec3, target: Vec3): Mat4 {
-  const z = normalize([eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]]);
-  const x = normalize(cross([0, 1, 0], z));
-  const y = cross(z, x);
-  return new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot3(x, eye), -dot3(y, eye), -dot3(z, eye), 1]);
-}
-
-function invert(m: Mat4): Mat4 {
-  const r = new Float32Array(16);
-  const [a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33] = m as unknown as number[] as [
-    number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number
-  ];
-  const b = [
-    a00 * a11 - a01 * a10, a00 * a12 - a02 * a10, a00 * a13 - a03 * a10, a01 * a12 - a02 * a11, a01 * a13 - a03 * a11, a02 * a13 - a03 * a12,
-    a20 * a31 - a21 * a30, a20 * a32 - a22 * a30, a20 * a33 - a23 * a30, a21 * a32 - a22 * a31, a21 * a33 - a23 * a31, a22 * a33 - a23 * a32
-  ] as [number, number, number, number, number, number, number, number, number, number, number, number];
-  const det = 1 / (b[0] * b[11] - b[1] * b[10] + b[2] * b[9] + b[3] * b[8] - b[4] * b[7] + b[5] * b[6]);
-  r[0] = (a11 * b[11] - a12 * b[10] + a13 * b[9]) * det;
-  r[1] = (a02 * b[10] - a01 * b[11] - a03 * b[9]) * det;
-  r[2] = (a31 * b[5] - a32 * b[4] + a33 * b[3]) * det;
-  r[3] = (a22 * b[4] - a21 * b[5] - a23 * b[3]) * det;
-  r[4] = (a12 * b[8] - a10 * b[11] - a13 * b[7]) * det;
-  r[5] = (a00 * b[11] - a02 * b[8] + a03 * b[7]) * det;
-  r[6] = (a32 * b[2] - a30 * b[5] - a33 * b[1]) * det;
-  r[7] = (a20 * b[5] - a22 * b[2] + a23 * b[1]) * det;
-  r[8] = (a10 * b[10] - a11 * b[8] + a13 * b[6]) * det;
-  r[9] = (a01 * b[8] - a00 * b[10] - a03 * b[6]) * det;
-  r[10] = (a30 * b[4] - a31 * b[2] + a33 * b[0]) * det;
-  r[11] = (a21 * b[2] - a20 * b[4] - a23 * b[0]) * det;
-  r[12] = (a11 * b[7] - a10 * b[9] - a12 * b[6]) * det;
-  r[13] = (a00 * b[9] - a01 * b[7] + a02 * b[6]) * det;
-  r[14] = (a31 * b[1] - a30 * b[3] - a32 * b[0]) * det;
-  r[15] = (a20 * b[3] - a21 * b[1] + a22 * b[0]) * det;
-  return r;
-}
-
 const KEY_LIGHT = normalize([-0.45, 0.7, 0.75]);
-const MOON_AT: Vec3 = [66, 34, -360];
-const CENTER: Vec3 = [12.5, 10.5, 0];
 const FOG_COLOR = [0.085, 0.13, 0.21];
 
 const MESH_VERTEX = `#version 300 es
@@ -308,14 +227,6 @@ const EAR_LEFT_PIVOT: Vec3 = [7, 20, -3];
 const EAR_RIGHT_PIVOT: Vec3 = [17, 20, -3];
 const DOT_COLUMNS = [8, 11, 14];
 
-/** 远处的小气泡：位置和大小。光点在它们和大气泡之间走。 */
-const FAR_BUBBLES: { at: Vec3; size: number; phase: number }[] = [
-  { at: [-6, 44, -80], size: 0.62, phase: 0.4 },
-  { at: [58, 20, -86], size: 0.55, phase: 1.9 },
-  { at: [22, 62, -150], size: 0.55, phase: 3.1 },
-  { at: [88, 40, -170], size: 0.5, phase: 4.6 }
-];
-
 const CLOUDS: { seed: number; at: Vec3; speed: number; size: number }[] = [
   { seed: 7, at: [-30, -9, 2], speed: 0.45, size: 0.8 },
   { seed: 15, at: [-10, -16, 22], speed: 0.6, size: 0.9 },
@@ -449,28 +360,13 @@ function scene(gl: WebGL2RenderingContext) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     gl.viewport(0, 0, width, height);
-    const aspect = width / height;
-    const fov = (24 * Math.PI) / 180;
-    const half = Math.tan(fov / 2);
-    const needWidth = 20;
-    const needHeight = 17;
-    const distance = Math.max(needWidth / (half * aspect), needHeight / half);
-    const lift = (distance * half - needHeight) * 0.84;
-    const yaw = -0.34 + Math.sin((t / SWAY) * Math.PI * 2) * 0.09;
-    const pitch = 0.1 + Math.sin((t / SWAY) * Math.PI * 4) * 0.018;
-    const target: Vec3 = [CENTER[0], CENTER[1] + lift, CENTER[2]];
-    const eye: Vec3 = [
-      target[0] + Math.sin(yaw) * Math.cos(pitch) * distance,
-      target[1] + Math.sin(pitch) * distance,
-      target[2] + Math.cos(yaw) * Math.cos(pitch) * distance
-    ];
-    const viewProjection = chain(perspective(fov, aspect, 4, 900), lookAt(eye, target));
+    const { eye, viewProjection, moonAt, farAt } = camera(t, width / height);
 
     gl.disable(gl.DEPTH_TEST);
     sky.use();
     gl.uniformMatrix4fv(sky.at("uInverse"), false, invert(viewProjection));
     gl.uniform3fv(sky.at("uCamera"), eye);
-    gl.uniform3fv(sky.at("uMoon"), normalize([MOON_AT[0] - eye[0], MOON_AT[1] - eye[1], MOON_AT[2] - eye[2]]));
+    gl.uniform3fv(sky.at("uMoon"), normalize([moonAt[0] - eye[0], moonAt[1] - eye[1], moonAt[2] - eye[2]]));
     gl.bindVertexArray(emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -504,12 +400,13 @@ function scene(gl: WebGL2RenderingContext) {
       gl.drawArrays(gl.TRIANGLES, 0, part.count);
     };
 
-    draw(moon, chain(translate(...MOON_AT), rotateY(0.33), scale(1.7)), [0.78, 0.78, 0.74], 0.45, 0, 0);
+    draw(moon, chain(translate(...moonAt), rotateY(0.33), scale(MOON_SIZE)), [0.78, 0.78, 0.74], 0.45, 0, 0);
     for (const [part, model] of solid) draw(part, model, [1, 1, 1], 0, 1, 1);
 
-    const farModels = FAR_BUBBLES.map(({ at, size, phase }) =>
-      chain(translate(at[0], at[1] + Math.sin(t * 0.5 + phase) * 1.2, at[2]), rotateY(0.3 - phase * 0.1), scale(size), translate(-12, -6, 0))
-    );
+    const farModels = FAR_BUBBLES.map(({ size, phase }, index) => {
+      const at = farAt[index]!;
+      return chain(translate(at[0], at[1] + Math.sin(t * 0.5 + phase) * 1.2, at[2]), rotateY(0.3 - phase * 0.1), scale(size), translate(-12, -6, 0));
+    });
     FAR_BUBBLES.forEach((_, index) => {
       draw(bubble, farModels[index]!);
       DOT_COLUMNS.forEach((column) => draw(dot, chain(farModels[index]!, translate(column, 5, BUBBLE_FRONT - 0.5))));
@@ -522,8 +419,7 @@ function scene(gl: WebGL2RenderingContext) {
 
     const anchor = (index: number): Vec3 => {
       if (index < 0) return [root[12]! + 12, root[13]! + 6, BUBBLE_FRONT - 4];
-      const { at } = FAR_BUBBLES[index]!;
-      return at;
+      return farAt[index]!;
     };
     FLOWS.forEach(([start, end], index) => {
       const a = anchor(start);
@@ -570,10 +466,12 @@ export function mountPupuArt(canvas: HTMLCanvasElement): () => void {
   }
 
   function step(now: number) {
-    time += Math.min((now - last) / 1000, 0.1);
-    last = now;
-    paint();
     frame = requestAnimationFrame(step);
+    const elapsed = now - last;
+    if (elapsed < FRAME_MS) return;
+    time += Math.min(elapsed / 1000, 0.1);
+    last = now - (elapsed % FRAME_MS);
+    paint();
   }
 
   function sync() {
