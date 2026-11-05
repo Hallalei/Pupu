@@ -4,6 +4,7 @@
  * 状态发回主进程给托盘和窗口，托盘上点的收回、停命令、本机开关发过来。
  */
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
+import { usePrebuiltHelper } from "../../cloud/bridge/computer.ts";
 import type { MenubarAction } from "../../cloud/bridge/menubar.ts";
 import { runBridge, type RunningBridge } from "../../cloud/bridge/run.ts";
 import type { FromBridge, ToBridge } from "./messages.ts";
@@ -59,6 +60,7 @@ port.on("message", (event) => {
   const message = event.data as ToBridge;
   if (message.type === "config") {
     config = message.config;
+    if (message.helper) usePrebuiltHelper(message.helper);
     for (const resolve of waiting.splice(0)) resolve(message.config);
     if (!bridge) start(message.blocked);
   } else if (message.type === "action") {

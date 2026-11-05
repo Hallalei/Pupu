@@ -11,6 +11,8 @@ export type ToBridge =
       readonly config: BridgeConfig;
       /** 文件工具不让碰的路径：App 的凭据文件，还有命令行桥的 bridge.json。 */
       readonly blocked: readonly string[];
+      /** 正式包里预先编好、签好名的屏幕助手。开发版是 null，桥自己编。 */
+      readonly helper: string | null;
     }
   | { readonly type: "action"; readonly action: MenubarAction }
   | { readonly type: "stop" };

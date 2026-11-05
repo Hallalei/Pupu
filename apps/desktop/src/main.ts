@@ -25,6 +25,7 @@ import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/lo
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import type { DesktopComputer, DesktopSwitch, PrivacyPane } from "../../cloud/src/client/desktop.ts";
 import { credentialsPath, readPairing, writePairing, type Credential, type Pairing } from "./credentials.ts";
+import { debugSwitches, devVariables } from "./env.ts";
 import { desktopStatus, pairComputer, pairDesktop } from "./pairing.ts";
 import { createPairWindow, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
@@ -40,6 +41,13 @@ const PRIVACY_PANES: Record<PrivacyPane, string> = {
   screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
   accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 };
+
+/** 正式包带着调试开关启动就直接退出（技术方案 5.5）。 */
+const refused = app.isPackaged ? debugSwitches(process.argv) : [];
+if (app.isPackaged) {
+  // 正式包不认开发用的环境变量。桥继承主进程的环境变量，PUPU_DIR 这些一并去掉。
+  for (const key of devVariables()) delete process.env[key];
+}
 
 // 开发时可以用 PUPU_URL 连本机的 wrangler dev；正式包只连线上，免得被人用环境变量引到别处去配对。
 const origin = originOf((!app.isPackaged && process.env.PUPU_URL) || DEFAULT_URL);
@@ -66,6 +74,8 @@ let bridgeLog: WriteStream | null = null;
 let quitting = false;
 
 const dist = (name: string) => path.join(__dirname, name);
+/** 正式包里带着编好、签好名的屏幕助手；开发版是 null，桥照旧在本机编到 ~/.pupu/bin。 */
+const helper = app.isPackaged ? path.join(process.resourcesPath, "helpers", "pupu-computer-use") : null;
 
 // ── 日志 ──────────────────────────────────────────────────────────────
 
@@ -122,7 +132,8 @@ function startBridge(): void {
   supervisor.start(
     { url: origin, computerId: computer.id, token: computer.token, name: computer.name },
     // App 的凭据文件，还有命令行桥的 bridge.json，文件工具都不让碰。
-    [credentialsPath(), configPath()]
+    [credentialsPath(), configPath()],
+    helper
   );
 }
 
@@ -345,6 +356,7 @@ async function openMain(): Promise<void> {
       nodeIntegration: false,
       webSecurity: true,
       spellcheck: false,
+      devTools: !app.isPackaged,
       partition: PARTITION,
       additionalArguments: [`--pupu-origin=${origin}`]
     }
@@ -527,7 +539,10 @@ async function boot(): Promise<void> {
   else openPairWindow();
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (refused.length > 0) {
+  process.stderr.write(`Pupu 不认这些启动参数，退出：${refused.join(" ")}\n`);
+  app.exit(1);
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => void openMain());

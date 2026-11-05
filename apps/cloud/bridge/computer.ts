@@ -139,7 +139,15 @@ function requiredNumber(value: Record<string, unknown>, key: string): number {
   return number;
 }
 
+let prebuilt: string | null = null;
+
+/** 电脑 App 的正式包带着编好、签好名的屏幕助手，用它，不在本机编。 */
+export function usePrebuiltHelper(bin: string): void {
+  prebuilt = bin;
+}
+
 function ensureHelper(): Promise<string> {
+  if (prebuilt) return Promise.resolve(prebuilt);
   return ensureSwiftBinary({ source: SOURCE, name: "pupu-computer-use" });
 }
 
