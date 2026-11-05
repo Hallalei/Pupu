@@ -1,19 +1,18 @@
-import { Button, Drawer, Tabs } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Button, Dropdown, Label, Tabs } from "@heroui/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { actorOf } from "../members";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
-import { Chat, type ChatContext } from "./Chat";
+import { Chat, usePressMenu, type ChatContext } from "./Chat";
+import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
 import { useDesktopComputer } from "./desktop";
-import { ago, Home } from "./Home";
-import { ChatIcon, CheckIcon, ChevronDownIcon, FolderIcon, HomeIcon, PlusIcon } from "./icons";
+import { Home } from "./Home";
+import { ChatIcon, CheckIcon, FolderIcon, HomeIcon, LockIcon, MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { Settings } from "./Settings";
-
-/** pi 的根会话 id，就是聊天。不从 agents/harness/pi 引，免得把服务端代码打进网页。 */
-const ROOT_SESSION = "1";
+import { setNight } from "./theme";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
 type Route =
@@ -23,12 +22,6 @@ type Route =
   | { readonly kind: "project"; readonly id: string };
 
 type Section = "home" | "chat" | "projects";
-
-const SECTIONS: readonly (readonly [Section, string])[] = [
-  ["home", "主页"],
-  ["chat", "聊天"],
-  ["projects", "项目"]
-];
 
 function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, "");
@@ -89,8 +82,9 @@ function rememberProject(id: string) {
 }
 
 /**
- * 手机（窄于 1024）：顶部三段切换，项目页顶栏下方是项目名胶囊，点开从底部弹出的项目列表。
- * 宽屏（电脑 App 的窗口、电脑浏览器）：左侧栏放主页、聊天和全部项目，不要顶部三段和胶囊。
+ * 手机（窄于 1024）：顶部三段切换，中间一段是 Pupu，长按换大家和私聊。项目页左上角 ≡ 打开整页项目列表，
+ * 三段下方的小胶囊写项目名。
+ * 宽屏（电脑 App 的窗口、电脑浏览器）：左侧栏放主页、大家、私聊和全部项目，不要顶部三段和胶囊。
  */
 export function App() {
   const [route, go] = useRoute();
@@ -103,14 +97,18 @@ export function App() {
     members,
     applyActivity,
     reports,
+    chats,
     loaded,
     error,
     unauthorized,
     refresh
   } = usePupuState();
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const section = sectionOf(route);
+  const lines = useChatLines(chats, route.kind === "chat");
+  const { line, session, canSwitch } = lines;
   /** 在主页输入栏里发的话：切到聊天，连上以后发出去。 */
   const [pendingChat, setPendingChat] = useState<string | null>(null);
   const thisComputer = useDesktopComputer();
@@ -125,13 +123,23 @@ export function App() {
       computers,
       approvals,
       members,
-      reports: route.kind === "chat" ? reports : undefined,
+      reports: route.kind === "chat" ? reports.filter((card) => card.chat === session) : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
-    [projects, computers, approvals, members, reports, refresh, applyActivity, go, route.kind]
+    [projects, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind]
   );
+
+  // 夜空是私聊的记号：主页的输入栏发到私聊时也是；项目是公开的，不用。
+  const night = line === "private" && section !== "projects" && !unauthorized;
+  useEffect(() => {
+    setNight(night);
+  }, [night]);
+
+  useEffect(() => {
+    if (section !== "projects") setListOpen(false);
+  }, [section]);
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
   useEffect(() => {
@@ -158,7 +166,10 @@ export function App() {
 
   if (unauthorized) return <Login />;
 
-  const section = sectionOf(route);
+  const openLine = (key: LineKey) => {
+    lines.pick(key);
+    go({ kind: "chat" });
+  };
   const goSection = (key: Section) => {
     if (key === "home") go({ kind: "home" });
     else if (key === "chat") go({ kind: "chat" });
@@ -174,7 +185,10 @@ export function App() {
         activity={activity}
         onOpenProject={(id) => go({ kind: "project", id })}
         onOpenChat={() => go({ kind: "chat" })}
-        onOpenAllProjects={() => setDrawerOpen(true)}
+        onOpenAllProjects={() => {
+          setListOpen(true);
+          go({ kind: "projects" });
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
         onTakeback={async (id) => {
           await api.takeback(id);
@@ -184,25 +198,34 @@ export function App() {
           setPendingChat(text);
           go({ kind: "chat" });
         }}
+        placeholder={LINE_HINTS[line]}
       />
     );
   } else if (route.kind === "chat") {
     body = (
       <Chat
-        key="chat"
-        session={ROOT_SESSION}
+        key={session}
+        session={session}
         context={chat}
-        placeholder="给 Pupu 发消息"
+        placeholder={LINE_HINTS[line]}
         pending={pendingChat}
         onPendingSent={clearPending}
         empty={
           <div className="flex flex-col gap-2 text-center text-ink-sky">
             <div className="text-greeting">我是 Pupu</div>
-            <div className="text-message">
-              这是我们的聊天，会一直接着聊下去。
-              <br />
-              小事我直接办，要持续推进的事放进项目里。
-            </div>
+            {line === "main" ? (
+              <div className="text-message">
+                这是大家和我的聊天，会一直接着聊下去。
+                <br />
+                小事我直接办，要持续推进的事放进项目里。
+              </div>
+            ) : (
+              <div className="text-message">
+                这里只有你和我，别人看不到。
+                <br />
+                要转到项目的时候，我先跟你说一声。
+              </div>
+            )}
           </div>
         }
         starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事", "我现在有哪些项目？"]}
@@ -215,6 +238,11 @@ export function App() {
         session={project.session}
         context={chat}
         placeholder={`在「${project.name}」里说`}
+        top={
+          <span className="glass flex h-7 max-w-full items-center rounded-full px-3 text-footnote text-foreground lg:hidden">
+            <span className="truncate">{project.name}</span>
+          </span>
+        }
         empty={
           <div className="strong bubble mx-auto flex max-w-md flex-col gap-1 rounded-panel px-5 py-4 text-center">
             <div className="text-headline">{project.name}</div>
@@ -248,7 +276,7 @@ export function App() {
   }
 
   const title =
-    route.kind === "home" ? "主页" : route.kind === "chat" ? "聊天" : (project?.name ?? "项目");
+    route.kind === "home" ? "主页" : route.kind === "chat" ? LINE_NAMES[line] : (project?.name ?? "项目");
 
   return (
     <div className="flex h-dvh">
@@ -257,6 +285,10 @@ export function App() {
         route={route}
         projects={projects}
         current={project?.id}
+        line={line}
+        canSwitch={canSwitch}
+        unread={lines.unread}
+        onOpenLine={openLine}
         onGo={go}
         onCreate={() => setCreating(true)}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -265,23 +297,27 @@ export function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)] lg:pt-0">
           <div className="flex h-11 items-center justify-between px-4 lg:hidden">
-            <div className="size-11" />
-            <Tabs selectedKey={section} onSelectionChange={(key) => goSection(key as Section)}>
-              <Tabs.ListContainer>
-                <Tabs.List aria-label="Pupu" className="glass h-11 rounded-full p-1">
-                  {SECTIONS.map(([id, label]) => (
-                    <Tabs.Tab
-                      key={id}
-                      id={id}
-                      className="h-9 w-16 min-w-16 rounded-full px-0 text-subheadline font-medium text-foreground data-[selected=true]:font-semibold data-[selected=true]:text-background"
-                    >
-                      {label}
-                      <Tabs.Indicator className="rounded-full bg-foreground" />
-                    </Tabs.Tab>
-                  ))}
-                </Tabs.List>
-              </Tabs.ListContainer>
-            </Tabs>
+            {section === "projects" ? (
+              <button
+                type="button"
+                aria-label="全部项目"
+                aria-expanded={listOpen}
+                onClick={() => setListOpen((open) => !open)}
+                className="glass grid size-11 place-items-center rounded-full text-[20px]"
+              >
+                <MenuIcon />
+              </button>
+            ) : (
+              <div className="size-11" />
+            )}
+            <SectionSwitch
+              section={section}
+              onSection={goSection}
+              line={line}
+              canSwitch={canSwitch}
+              unread={lines.unread}
+              onOpenLine={openLine}
+            />
             <button
               type="button"
               aria-label="设置"
@@ -312,37 +348,25 @@ export function App() {
             await refresh();
           }}
         />
-        {project && (
-          <div className="relative z-10 flex shrink-0 justify-center px-4 pb-3 lg:hidden">
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(true)}
-              aria-label={`当前项目「${project.name}」，切换项目`}
-              className="glass flex h-9 max-w-[85%] items-center gap-1.5 rounded-full pr-3 pl-3.5 text-subheadline font-semibold"
-            >
-              <FolderIcon className="shrink-0 text-[15px]" />
-              <span className="truncate">{project.name}</span>
-              <ChevronDownIcon className="shrink-0 text-[14px]" />
-            </button>
-          </div>
-        )}
-        <main className="min-h-0 flex-1">{body}</main>
+        <main className="relative min-h-0 flex-1">
+          {body}
+          {listOpen && (
+            <ProjectList
+              projects={projects}
+              current={project?.id}
+              onOpen={(id) => {
+                setListOpen(false);
+                go({ kind: "project", id });
+              }}
+              onCreate={() => {
+                setListOpen(false);
+                setCreating(true);
+              }}
+            />
+          )}
+        </main>
       </div>
 
-      <ProjectSheet
-        isOpen={drawerOpen}
-        onOpenChange={setDrawerOpen}
-        projects={projects}
-        current={project?.id}
-        onOpen={(id) => {
-          setDrawerOpen(false);
-          go({ kind: "project", id });
-        }}
-        onCreate={() => {
-          setDrawerOpen(false);
-          setCreating(true);
-        }}
-      />
       <Settings
         isOpen={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -385,11 +409,94 @@ export function App() {
   );
 }
 
-/** 宽屏的左侧栏：主页、聊天、全部项目；底下是这台电脑（只在电脑 App 里）和设置。 */
+/** 顶部三段。中间一段是 Pupu：写着当前那条聊天，长按或右键换大家和私聊。 */
+function SectionSwitch({
+  section,
+  onSection,
+  line,
+  canSwitch,
+  unread,
+  onOpenLine
+}: {
+  section: Section;
+  onSection: (section: Section) => void;
+  line: LineKey;
+  canSwitch: boolean;
+  unread: Record<LineKey, boolean>;
+  onOpenLine: (line: LineKey) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const anchor = useRef<HTMLElement | null>(null);
+  const press = usePressMenu((target) => {
+    anchor.current = target;
+    setMenuOpen(true);
+  });
+  const fresh = (["main", "private"] as const).filter((key) => unread[key]);
+  const segment =
+    "h-9 rounded-full px-0 text-subheadline text-foreground data-[selected=true]:text-background";
+  const indicator = <Tabs.Indicator className="rounded-full bg-foreground" />;
+
+  return (
+    <>
+      <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
+        <Tabs.ListContainer>
+          <Tabs.List aria-label="Pupu" className="glass h-11 rounded-full p-1">
+            <Tabs.Tab id="home" className={`${segment} w-16 min-w-16 font-medium`}>
+              主页
+              {indicator}
+            </Tabs.Tab>
+            <Tabs.Tab
+              id="chat"
+              aria-label={[LINE_NAMES[line], ...fresh.map((key) => `${LINE_NAMES[key]}有新消息`)].join("，")}
+              className={`${segment} font-semibold`}
+            >
+              <span {...(canSwitch ? press : {})} className="pressable relative flex h-9 items-center gap-1.5 pr-3 pl-1.5">
+                <img src="/pupu-avatar.png" alt="" className="size-6.5 rounded-full [image-rendering:pixelated]" />
+                {LINE_NAMES[line]}
+                {fresh.length > 0 && (
+                  <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />
+                )}
+              </span>
+              {indicator}
+            </Tabs.Tab>
+            <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium`}>
+              项目
+              {indicator}
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs.ListContainer>
+      </Tabs>
+      <Dropdown isOpen={menuOpen} onOpenChange={setMenuOpen}>
+        <Dropdown.Popover triggerRef={anchor} placement="bottom">
+          <Dropdown.Menu
+            aria-label="切换聊天"
+            onAction={(key) => {
+              setMenuOpen(false);
+              onOpenLine(key as LineKey);
+            }}
+          >
+            {(["main", "private"] as const).map((key) => (
+              <Dropdown.Item key={key} id={key} textValue={LINE_NAMES[key]}>
+                <Label>{LINE_NAMES[key]}</Label>
+                {key === line && <CheckIcon className="ml-auto" />}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    </>
+  );
+}
+
+/** 宽屏的左侧栏：主页、大家、私聊、全部项目；底下是这台电脑（只在电脑 App 里）和设置。 */
 function Sidebar({
   route,
   projects,
   current,
+  line,
+  canSwitch,
+  unread,
+  onOpenLine,
   onGo,
   onCreate,
   onOpenSettings,
@@ -398,6 +505,10 @@ function Sidebar({
   route: Route;
   projects: readonly Project[];
   current: string | undefined;
+  line: LineKey;
+  canSwitch: boolean;
+  unread: Record<LineKey, boolean>;
+  onOpenLine: (line: LineKey) => void;
   onGo: (route: Route) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
@@ -408,9 +519,24 @@ function Sidebar({
       <NavItem icon={<HomeIcon />} current={route.kind === "home"} onPress={() => onGo({ kind: "home" })}>
         主页
       </NavItem>
-      <NavItem icon={<ChatIcon />} current={route.kind === "chat"} onPress={() => onGo({ kind: "chat" })}>
-        聊天
+      <NavItem
+        icon={<ChatIcon />}
+        current={route.kind === "chat" && line === "main"}
+        unread={unread.main}
+        onPress={() => onOpenLine("main")}
+      >
+        {LINE_NAMES.main}
       </NavItem>
+      {canSwitch && (
+        <NavItem
+          icon={<LockIcon />}
+          current={route.kind === "chat" && line === "private"}
+          unread={unread.private}
+          onPress={() => onOpenLine("private")}
+        >
+          {LINE_NAMES.private}
+        </NavItem>
+      )}
       <div className="mt-3 flex h-8 shrink-0 items-center justify-between pl-2">
         <span className="text-caption font-medium text-muted">项目</span>
         <button
@@ -469,11 +595,13 @@ function Sidebar({
 function NavItem({
   icon,
   current = false,
+  unread = false,
   onPress,
   children
 }: {
   icon?: ReactNode;
   current?: boolean;
+  unread?: boolean;
   onPress: () => void;
   children: ReactNode;
 }) {
@@ -488,74 +616,43 @@ function NavItem({
     >
       {icon && <span className="shrink-0 text-[16px]">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
+      {unread && <span role="img" aria-label="有新消息" className="mr-1 size-2.5 shrink-0 rounded-full bg-danger" />}
     </button>
   );
 }
 
-/** 手机上切换项目：从底部弹出，第一行「新项目」，下面是全部项目，最近活动的在前。 */
-function ProjectSheet({
-  isOpen,
-  onOpenChange,
+/** 手机上切换项目：盖住内容区的整页列表，顶栏留在上面。第一行「新项目」，下面是全部项目，最近活动的在前。 */
+function ProjectList({
   projects,
   current,
   onOpen,
   onCreate
 }: {
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
   projects: readonly Project[];
   current: string | undefined;
   onOpen: (id: string) => void;
   onCreate: () => void;
 }) {
+  const row = "flex h-13 w-full items-center px-4 text-left text-body text-foreground active:bg-foreground/10";
   return (
-    <Drawer>
-      <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
-        <Drawer.Content placement="bottom">
-          <Drawer.Dialog className="max-h-[85dvh] rounded-t-panel">
-            <Drawer.Header>
-              <Drawer.Heading className="text-title">项目</Drawer.Heading>
-            </Drawer.Header>
-            <Drawer.Body className="flex flex-col gap-6 pb-6">
-              <button
-                type="button"
-                onClick={onCreate}
-                className="flex h-13 items-center gap-3 rounded-row bg-surface-inset px-4 text-left text-body text-foreground"
-              >
-                <PlusIcon className="text-[20px]" />
-                新项目
-              </button>
-              {projects.length > 0 && (
-                <div className="flex flex-col divide-y divide-foreground/10 overflow-hidden rounded-row bg-surface-inset">
-                  {projects.map((project) => (
-                    <button
-                      key={project.id}
-                      type="button"
-                      onClick={() => onOpen(project.id)}
-                      aria-current={project.id === current ? "page" : undefined}
-                      className="flex min-h-17 items-center gap-3 px-4 py-3 text-left text-foreground"
-                    >
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className={`truncate text-body ${project.id === current ? "font-semibold" : ""}`}>
-                          {project.name}
-                        </span>
-                        <span className="truncate text-subheadline text-muted">
-                          {project.progress || project.goal || "没写目标"}
-                        </span>
-                      </span>
-                      {project.id === current ? (
-                        <CheckIcon className="shrink-0 text-[18px]" />
-                      ) : (
-                        <span className="shrink-0 text-caption text-muted">{ago(project.updatedAt)}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Drawer.Body>
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
-    </Drawer>
+    <nav
+      aria-label="全部项目"
+      className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface-strong backdrop-blur-[28px] lg:hidden"
+    >
+      <button type="button" onClick={onCreate} className={row}>
+        新项目
+      </button>
+      {projects.map((project) => (
+        <button
+          key={project.id}
+          type="button"
+          onClick={() => onOpen(project.id)}
+          aria-current={project.id === current ? "page" : undefined}
+          className={`${row} ${project.id === current ? "font-semibold" : ""}`}
+        >
+          <span className="truncate">{project.name}</span>
+        </button>
+      ))}
+    </nav>
   );
 }

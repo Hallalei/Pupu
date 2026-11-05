@@ -20,7 +20,7 @@ export function ago(timestamp: number): string {
 
 /**
  * 主页：一眼看到 Pupu 手上的事。最上面「正在做」，下面是项目和电脑；对话生成的面板以后接在后面。
- * 底下的输入栏发的话进聊天。
+ * 底下的输入栏发的话进中间一段当前那条聊天。
  */
 export function Home({
   projects,
@@ -31,7 +31,8 @@ export function Home({
   onOpenAllProjects,
   onOpenSettings,
   onTakeback,
-  onSend
+  onSend,
+  placeholder
 }: {
   projects: readonly Project[];
   computers: readonly ComputerView[];
@@ -42,6 +43,7 @@ export function Home({
   onOpenSettings: () => void;
   onTakeback: (computerId: string) => Promise<void>;
   onSend: (text: string) => void;
+  placeholder: string;
 }) {
   const [draft, setDraft] = useState("");
   const busy = activity.filter(isBusy);
@@ -138,7 +140,7 @@ export function Home({
             value={draft}
             onChange={setDraft}
             onSend={send}
-            placeholder="给 Pupu 发消息"
+            placeholder={placeholder}
             canSend={Boolean(draft.trim())}
           />
         </div>

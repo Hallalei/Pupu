@@ -5,6 +5,7 @@ import type { DeviceView } from "../devices";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
+import { MAIN_SESSION, type ChatsView } from "../threads";
 
 /** 这个浏览器没有凭据，或者凭据被吊销了。页面换成登录。 */
 export class UnauthorizedError extends Error {}
@@ -81,6 +82,8 @@ export const api = {
     request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" })
 };
 
+const NO_CHATS: ChatsView = { main: { session: MAIN_SESSION, lastAt: null }, private: null };
+
 /**
  * 项目、电脑、请示、设备和项目报回聊天的结果。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
  * 被拒（没登录或者被吊销）时 `unauthorized` 是 true，接着轮询：别的标签页登录了，这里也会回来。
@@ -93,6 +96,7 @@ export function usePupuState() {
   const [activity, setActivity] = useState<PupuState["activity"]>([]);
   const [members, setMembers] = useState<PupuState["members"]>([]);
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
+  const [chats, setChats] = useState<ChatsView>(NO_CHATS);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -108,6 +112,7 @@ export function usePupuState() {
       setMembers(state.members);
       // 部署新云端之前的老 DO 没有这一项。
       setReports(state.reports ?? []);
+      setChats(state.chats ?? NO_CHATS);
       setError(null);
       setUnauthorized(false);
     } catch (cause) {
@@ -144,6 +149,7 @@ export function usePupuState() {
     members,
     applyActivity: setActivity,
     reports,
+    chats,
     error,
     unauthorized,
     loaded,

@@ -7,7 +7,11 @@ import { EMPTY_VIEW, reduceEvents } from "../view";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
-type State = SessionView & { readonly status: ConnectionStatus };
+type State = SessionView & {
+  readonly status: ConnectionStatus;
+  /** 这条聊天的内容到了。没到时不知道它是不是空的。 */
+  readonly synced: boolean;
+};
 
 /**
  * 通过 WebSocket 跟随 Pupu 的一个 pi 会话。服务端发 pi 自己的事件，这里用
@@ -21,7 +25,8 @@ export function usePiSession(
 ) {
   const [state, setState] = useState<State>({
     ...EMPTY_VIEW,
-    status: "connecting"
+    status: "connecting",
+    synced: false
   });
   const changed = useRef(onProjectsChanged);
   changed.current = onProjectsChanged;
@@ -49,7 +54,8 @@ export function usePiSession(
         case "events":
           setState((current) => ({
             ...current,
-            ...reduceEvents(current, message.events)
+            ...reduceEvents(current, message.events),
+            synced: true
           }));
           return;
         case "projects_changed":

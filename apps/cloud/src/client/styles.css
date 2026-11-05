@@ -84,21 +84,12 @@
 }
 
 :root {
-  --sky: linear-gradient(
-    180deg,
-    #34557f 0%,
-    #6f8fb3 28%,
-    #b9cad9 52%,
-    #e6e5df 76%,
-    #d6d0c4 100%
-  );
   --glass-fill: #ffffff59;
   --glass-rim: #0f172a24;
   --glass-highlight: #ffffffcc;
 }
 
 .dark {
-  --sky: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
   --color-surface-glass: #282c349e;
   --color-surface-strong: #24262cdb;
   --color-surface-inset: oklch(27.4% 0.006 286.033);
@@ -131,12 +122,35 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* 天空背景单独铺一层固定的，iOS 上 background-attachment: fixed 不可靠。 */
+/*
+ * 天空背景单独铺一层固定的，iOS 上 background-attachment: fixed 不可靠。
+ * 夜空叠在上面，切到私聊时淡入；渐变本身不能过渡。
+ */
 .sky {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: var(--sky);
+  background: linear-gradient(180deg, #34557f 0%, #6f8fb3 28%, #b9cad9 52%, #e6e5df 76%, #d6d0c4 100%);
+}
+.sky::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.dark .sky::after {
+  opacity: 1;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.fade-in {
+  animation: fade-in 0.2s;
 }
 
 /*

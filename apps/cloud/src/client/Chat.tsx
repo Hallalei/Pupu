@@ -54,7 +54,7 @@ export type ChatContext = {
 type ChatProps = {
   readonly session: string;
   readonly context: ChatContext;
-  /** 固定在对话顶上的东西，比如项目名。 */
+  /** 盖在对话顶上的东西，比如项目名。滚回最新消息时淡出，往回翻时出现。 */
   readonly top?: ReactNode;
   readonly empty: ReactNode;
   readonly placeholder: string;
@@ -83,6 +83,8 @@ export function Chat({
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   /** 用户往上翻了：右下角出现「回到底部」。 */
   const [away, setAway] = useState(false);
+  /** 用户翻回了最新消息，顶上的东西让开。 */
+  const [settled, setSettled] = useState(false);
   /** 长按或右键的那条消息的文字；菜单挂在 menuAnchor 上。 */
   const [menuText, setMenuText] = useState<string | null>(null);
   const menuAnchor = useRef<HTMLElement | null>(null);
@@ -151,23 +153,38 @@ export function Chat({
   }
 
   const isEmpty = rows.length === 0 && !pi.running;
+  const loading = isEmpty && !pi.synced;
   const canSend = Boolean(draft.trim()) && pi.status === "open";
 
   return (
-    <div className="relative flex h-full flex-col">
-      {top && <div className="relative z-10 flex shrink-0 justify-center px-4 pb-3">{top}</div>}
+    <div className="fade-in relative flex h-full flex-col">
+      {top && (
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 transition-opacity duration-200 ${settled ? "opacity-0" : ""}`}
+        >
+          {top}
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         <div
           ref={scroller}
           onScroll={(event) => {
             const node = event.currentTarget;
             stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < STICK_DISTANCE;
-            if (away === stick.current) setAway(!stick.current);
+            if (away === stick.current) {
+              setAway(!stick.current);
+              setSettled(stick.current);
+            }
           }}
           className="h-full overflow-y-auto"
         >
           <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pt-2 pb-4 lg:px-6">
-            {isEmpty && (
+            {loading && (
+              <div className="my-auto flex justify-center">
+                <Spinner size="sm" aria-label="正在打开" />
+              </div>
+            )}
+            {isEmpty && !loading && (
               <div className="my-auto flex flex-col items-center gap-5 py-8">
                 {empty}
                 {starters.length > 0 && (
@@ -282,8 +299,8 @@ export function Chat({
   );
 }
 
-/** 手机上长按、电脑上右键，都打开消息菜单。 */
-function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
+/** 手机上长按、电脑上右键，都打开菜单。 */
+export function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
 
