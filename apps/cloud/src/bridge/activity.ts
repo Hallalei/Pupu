@@ -3,7 +3,7 @@ import { describeAction } from "./policy.ts";
 import type { Action, ComputerView } from "./protocol.ts";
 
 /**
- * 每台电脑现在在干什么：主页的「正在做」和锁屏的实时活动用的是同一份。
+ * 每台电脑现在在干什么：聊天顶上的「正在做」和锁屏的实时活动用的是同一份。
  * 从三样东西算出来：电脑上正在跑的工具调用、等批的请示、屏幕授权。都在云端，不用桥另外报。
  */
 
@@ -114,6 +114,29 @@ export function computerActivity(input: {
     }
     return { ...base, ...quiet, state: "idle" };
   });
+}
+
+const BUSY_ORDER: readonly ActivityState[] = ["waiting", "working", "idle"];
+
+/**
+ * 「正在做」列哪些电脑：在做事的、停着等批的，还有闲着但屏幕控制没收回的。
+ * 屏幕控制开着的排最前：「收回」是安全出口，只摊开一行时也要看得到。
+ * 同级按 id 排：云端的 `computers` 按心跳排，每次心跳都可能换先后，只摊开的那一行不能跟着跳。
+ */
+export function busyComputers(activity: readonly ComputerActivity[]): ComputerActivity[] {
+  return activity
+    .filter((row) => row.state === "working" || row.state === "waiting" || (row.state === "idle" && row.screen))
+    .sort(
+      (a, b) =>
+        Number(b.screen) - Number(a.screen) ||
+        BUSY_ORDER.indexOf(a.state) - BUSY_ORDER.indexOf(b.state) ||
+        a.computerId.localeCompare(b.computerId)
+    );
+}
+
+/** 停在哪些项目里等你批。一台电脑只带得出最早那条请示的项目。 */
+export function waitingProjects(activity: readonly ComputerActivity[]): ReadonlySet<string> {
+  return new Set(activity.flatMap((row) => (row.state === "waiting" && row.project ? [row.project.id] : [])));
 }
 
 /**

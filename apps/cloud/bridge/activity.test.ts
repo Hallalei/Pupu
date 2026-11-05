@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CallSessions, computerActivity, describeDoing, type RunningCall } from "../src/bridge/activity.ts";
+import {
+  busyComputers,
+  CallSessions,
+  computerActivity,
+  describeDoing,
+  waitingProjects,
+  type ComputerActivity,
+  type RunningCall
+} from "../src/bridge/activity.ts";
 import type { ApprovalRow } from "../src/bridge/approvals.ts";
 import type { ComputerView } from "../src/bridge/protocol.ts";
 
@@ -132,6 +140,75 @@ test("在做什么说成一行：长命令截断，屏幕操作不报坐标", ()
   assert.equal(describeDoing({ kind: "computer", op: "screenshot" }), "看屏幕");
   assert.equal(describeDoing({ kind: "computer", op: "click", x: 10, y: 20 }), "点击屏幕");
   assert.equal(describeDoing({ kind: "read", path: "/Users/me/a.txt", maxBytes: 10 }), "读文件：/Users/me/a.txt");
+});
+
+function row(computerId: string, over: Partial<ComputerActivity>): ComputerActivity {
+  return {
+    computerId,
+    computerName: computerId,
+    state: "idle",
+    doing: null,
+    reason: null,
+    project: null,
+    since: null,
+    pending: 0,
+    running: 0,
+    screen: false,
+    ...over
+  };
+}
+
+const ids = (rows: readonly ComputerActivity[]) => rows.map((item) => item.computerId);
+
+test("「正在做」列在做事的、等批的，和闲着但屏幕控制没收回的", () => {
+  const rows = busyComputers([
+    row("idle", { state: "idle" }),
+    row("offline", { state: "offline" }),
+    row("offline-screen", { state: "offline", screen: true }),
+    row("working", { state: "working" }),
+    row("waiting", { state: "waiting" }),
+    row("idle-screen", { state: "idle", screen: true })
+  ]);
+  assert.deepEqual(ids(rows).sort(), ["idle-screen", "waiting", "working"]);
+});
+
+test("屏幕控制开着的排最前，其次等批的，再是在做事的", () => {
+  const rows = busyComputers([
+    row("working-1", { state: "working" }),
+    row("waiting-1", { state: "waiting" }),
+    row("working-2", { state: "working" }),
+    row("idle-screen", { state: "idle", screen: true }),
+    row("waiting-2", { state: "waiting" }),
+    row("working-screen", { state: "working", screen: true }),
+    row("waiting-screen", { state: "waiting", screen: true })
+  ]);
+  assert.deepEqual(ids(rows), [
+    "waiting-screen",
+    "working-screen",
+    "idle-screen",
+    "waiting-1",
+    "waiting-2",
+    "working-1",
+    "working-2"
+  ]);
+});
+
+test("云端按心跳排的先后变了，「正在做」的顺序不跟着跳", () => {
+  const a = row("a", { state: "working" });
+  const b = row("b", { state: "working" });
+  assert.deepEqual(ids(busyComputers([a, b])), ids(busyComputers([b, a])));
+});
+
+test("等批的项目只算停在等批、带着项目的电脑", () => {
+  const project = (id: string) => ({ id, name: id });
+  const waiting = waitingProjects([
+    row("a", { state: "waiting", project: project("p1") }),
+    row("b", { state: "waiting", project: project("p1") }),
+    row("c", { state: "waiting", project: null }),
+    row("d", { state: "working", project: project("p2") }),
+    row("e", { state: "waiting", project: project("p3") })
+  ]);
+  assert.deepEqual([...waiting].sort(), ["p1", "p3"]);
 });
 
 test("调用的会话只记最近的这些", () => {
