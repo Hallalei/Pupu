@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-- 网页和手机：「聊天」页的「给 Pupu 发消息」。
+- 网页和手机：「聊天」页的「发给大家和 Pupu」。私聊是「只发给 Pupu」，见 [private-chat.md](./private-chat.md)。
 - 项目页：「在「项目名」里说」。
 
 ## Driving it with ego-browser
@@ -20,7 +20,7 @@ Preconditions: 网页路径已打开。`chat.reply` 还要 `doctor.mjs` 里 DEEP
 
 - `chat.send`：
   ```js
-  await page.fill('loc=css:textarea[placeholder="给 Pupu 发消息"]', "你好");
+  await page.fill('loc=css:textarea[placeholder="发给大家和 Pupu"]', "你好");
   await page.click('loc=css:button[aria-label="发送"]');
   ```
   结果：快照里出现这条消息，随后出现回复或 `chat.model-error` 的文字。
