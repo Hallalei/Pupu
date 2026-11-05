@@ -30,7 +30,7 @@ import Waitlist from "../components/Waitlist.astro";
         <Cat variant="peek" class="peek" blink />
         <div class="phone panel" data-scene data-loop aria-label="示例：两个同事和 Pupu 在同一条聊天里">
           <div class="segments" aria-hidden="true">
-            <span>主页</span><span class="is-on">聊天</span><span>项目</span>
+            <span>主页</span><span class="is-on"><Cat variant="head" />大家</span><span>项目</span>
           </div>
           <div class="thread">
             <p class="stamp" data-step data-wait="300">上午 9:12</p>
@@ -63,7 +63,7 @@ import Waitlist from "../components/Waitlist.astro";
               </div>
             </div>
           </div>
-          <div class="fake-input" aria-hidden="true"><span>和 Pupu 说点什么</span><i></i></div>
+          <div class="fake-input" aria-hidden="true"><span>发给大家和 Pupu</span><i></i></div>
         </div>
       </div>
     </section>
@@ -115,6 +115,16 @@ import Waitlist from "../components/Waitlist.astro";
               <span class="avatar avatar--box"><Icon name="desktop" /></span>
             </div>
             <h3>电脑</h3>
+          </div>
+        </div>
+        <div class="lines">
+          <div class="line line--day">
+            <h3>大家</h3>
+            <p>组织的事放这里，所有人都看得到</p>
+          </div>
+          <div class="line line--night">
+            <h3>私聊</h3>
+            <p>只有你和 Pupu，创建者在 App 里也看不到</p>
           </div>
         </div>
       </div>
