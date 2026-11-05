@@ -4,7 +4,7 @@ import type { AgentEventStream } from "@earendil-works/pi-durable";
 import type { Connection, ConnectionContext } from "agents/lifecycle";
 import type { WebSocketMessage, WebSocketsOptions } from "agents/websockets";
 import type { PiHarness, PiSessionId } from "agents/harness/pi";
-import { THREAD_REFUSED_CLOSE_CODE, type ClientMessage, type ServerMessage } from "./protocol.ts";
+import type { ClientMessage, ServerMessage } from "./protocol";
 import type { BridgeSocket } from "./bridge/hub";
 import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices.ts";
 import { sentInput, type Sender } from "./messages.ts";
@@ -101,9 +101,11 @@ export class PiSessionSockets {
       getConnectionTags: (_connection, ctx) => {
         const route = this.#routeOf(ctx.request);
         if (route) return [route.tag, ...(route.tags?.(ctx.request) ?? [])];
-        const session = sessionTag(sessionFromRequest(ctx.request));
+        const session = sessionFromRequest(ctx.request);
         const device = ctx.request.headers.get(DEVICE_HEADER);
-        return device ? [session, deviceTag(device)] : [session];
+        // 在这里拒：这一步还没接受连接。接受之后、101 回去之前 close，关闭帧发不出去，对面一直挂着。
+        if (!this.#mayOpen(session, device)) throw new Error("打不开这条聊天");
+        return device ? [sessionTag(session), deviceTag(device)] : [sessionTag(session)];
       },
       handlers: {
         onConnect: (connection, ctx) => {
@@ -171,10 +173,6 @@ export class PiSessionSockets {
 
   async #onConnect(connection: Connection, ctx: ConnectionContext) {
     const session = sessionFromRequest(ctx.request);
-    if (!this.#mayOpen(session, deviceOfTags(connection.tags))) {
-      connection.close(THREAD_REFUSED_CLOSE_CODE, "打不开这条聊天");
-      return;
-    }
     send(connection, { type: "hello", session });
     await this.#watch(connection, session);
   }

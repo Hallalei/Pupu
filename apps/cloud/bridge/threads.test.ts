@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import { ProjectStore } from "../src/projects.ts";
-import { THREAD_REFUSED_CLOSE_CODE } from "../src/protocol.ts";
 import { PiSessionSockets } from "../src/sockets.ts";
 import { MAIN_SESSION, mayOpen, seesWork, ThreadStore } from "../src/threads.ts";
 import { sqlStorage } from "./sql-memory.ts";
@@ -118,17 +117,14 @@ describe("谁看得到私聊里发起的事", () => {
   });
 });
 
-/** 只留这里用得到的：记下发给这条连接的帧和关闭码。 */
+/** 只留这里用得到的：记下发给这条连接的帧。 */
 function fakeConnection(session: string, device: string | null) {
   const sent: { type: string; id?: string; message?: string }[] = [];
-  const closed: number[] = [];
   return {
     tags: [`pi-session:${session}`, ...(device ? [`pupu-device:${device}`] : [])],
     readyState: 1,
     send: (raw: string) => sent.push(JSON.parse(raw)),
-    close: (code: number) => closed.push(code),
-    sent,
-    closed
+    sent
   };
 }
 
@@ -150,18 +146,27 @@ function sockets(owner: Record<string, string>) {
       abort: async () => null
     })
   };
-  const handlers = new PiSessionSockets(
+  const options = new PiSessionSockets(
     harness as never,
     () => [],
     () => [],
     () => {},
     () => null,
     (session, device) => mayOpen(threads.of(session), device === null ? null : (owner[device] ?? null))
-  ).options().handlers;
-  const connect = (connection: ReturnType<typeof fakeConnection>, session: string) =>
-    handlers.onConnect!(connection as never, {
-      request: new Request(`https://pupu.test/agents/pupu/me?session=${session}`)
-    } as never);
+  ).options();
+  const handlers = options.handlers;
+  /** 和运行时的顺序一样：先要标签，抛错就不接受这条连接；接受了才 onConnect。 */
+  const connect = async (session: string, device: string | null) => {
+    const request = new Request(`https://pupu.test/agents/pupu/me?session=${session}`, {
+      headers: device ? { "x-pupu-device": device } : {}
+    });
+    const connection = {
+      ...fakeConnection(session, device),
+      tags: await options.getConnectionTags!({} as never, { request })
+    };
+    await handlers.onConnect!(connection as never, { request } as never);
+    return connection;
+  };
   const message = (connection: ReturnType<typeof fakeConnection>, body: unknown) =>
     handlers.onMessage!(connection as never, JSON.stringify(body));
   return { threads, submitted, watched, connect, message };
@@ -204,12 +209,10 @@ describe("私聊的连接", () => {
   test("本人能打开、能发", async () => {
     const pupu = sockets(owner);
     await pupu.threads.ensurePrivateChat("m1", async () => "7", 100);
-    const connection = fakeConnection("7", "lin");
 
-    await pupu.connect(connection, "7");
+    const connection = await pupu.connect("7", "lin");
     await pupu.message(connection, { type: "submit", id: "a", input: "下周哪天有空" });
 
-    assert.deepEqual(connection.closed, []);
     assert.deepEqual(pupu.watched, ["7"]);
     assert.deepEqual(pupu.submitted, [{ session: "7", input: "下周哪天有空" }]);
   });
@@ -217,32 +220,22 @@ describe("私聊的连接", () => {
   test("别人连不上，也看不到内容", async () => {
     const pupu = sockets(owner);
     await pupu.threads.ensurePrivateChat("m1", async () => "7", 100);
-    const connection = fakeConnection("7", "zhou");
 
-    await pupu.connect(connection, "7");
-
-    assert.deepEqual(connection.closed, [THREAD_REFUSED_CLOSE_CODE]);
+    await assert.rejects(pupu.connect("7", "zhou"), /打不开这条聊天/);
     assert.deepEqual(pupu.watched, []);
-    assert.deepEqual(connection.sent, []);
   });
 
   test("没带身份的连不上", async () => {
     const pupu = sockets(owner);
     await pupu.threads.ensurePrivateChat("m1", async () => "7", 100);
-    const connection = fakeConnection("7", null);
 
-    await pupu.connect(connection, "7");
-
-    assert.deepEqual(connection.closed, [THREAD_REFUSED_CLOSE_CODE]);
+    await assert.rejects(pupu.connect("7", null), /打不开这条聊天/);
   });
 
   test("查不到的会话不让开", async () => {
     const pupu = sockets(owner);
-    const connection = fakeConnection("99", "lin");
 
-    await pupu.connect(connection, "99");
-
-    assert.deepEqual(connection.closed, [THREAD_REFUSED_CLOSE_CODE]);
+    await assert.rejects(pupu.connect("99", "lin"), /打不开这条聊天/);
     assert.deepEqual(pupu.watched, []);
   });
 
@@ -261,11 +254,9 @@ describe("私聊的连接", () => {
 
   test("主会话谁都能开", async () => {
     const pupu = sockets(owner);
-    const connection = fakeConnection("1", "zhou");
 
-    await pupu.connect(connection, "1");
+    await pupu.connect("1", "zhou");
 
-    assert.deepEqual(connection.closed, []);
     assert.deepEqual(pupu.watched, ["1"]);
   });
 });

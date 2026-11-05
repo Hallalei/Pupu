@@ -30,7 +30,7 @@ export type ReportRow = {
   /** 一句结果。还在做时是空串。 */
   readonly summary: string;
   /**
-   * 替谁做的：发起这件事的人。聊天是大家共用的，报告卡人人都看得到；多人用时卡上写明替谁做、@ 那个人。
+   * 替谁做的：发起这件事的人。主会话的报告卡人人都看得到，多人用时卡上写明替谁做、@ 那个人。
    * 现在还没有成员，是 null。
    */
   readonly owner: string | null;
