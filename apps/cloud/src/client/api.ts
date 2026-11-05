@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
@@ -9,6 +9,14 @@ import { MAIN_SESSION, type ChatsView } from "../threads";
 
 /** 这个浏览器没有凭据，或者凭据被吊销了。页面换成登录。 */
 export class UnauthorizedError extends Error {}
+
+/** 网络半通时请求不成功也不报错，不设上限就一直停在「加载中」。 */
+const STATE_TIMEOUT_MS = 10_000;
+
+/** 请求没到云端：超时，或者 fetch 自己失败。云端回的错误照原话显示。 */
+function isUnreachable(cause: unknown): boolean {
+  return cause instanceof TypeError || (cause instanceof DOMException && cause.name === "TimeoutError");
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -33,7 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 
 export const api = {
-  state: () => request<PupuState>("/api/state"),
+  state: () => request<PupuState>("/api/state", { signal: AbortSignal.timeout(STATE_TIMEOUT_MS) }),
   /** 开没开 Google 登录。见 src/auth/routes.ts。 */
   googleEnabled: async () => (await request<{ enabled: boolean }>("/api/auth/google")).enabled,
   createProject: (name: string, goal: string) =>
@@ -101,7 +109,10 @@ export function usePupuState() {
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
+  const fetching = useRef(0);
+
   const refresh = useCallback(async () => {
+    fetching.current += 1;
     try {
       const state = await api.state();
       setProjects(state.projects);
@@ -115,14 +126,17 @@ export function usePupuState() {
       setChats(state.chats ?? NO_CHATS);
       setError(null);
       setUnauthorized(false);
+      setLoaded(true);
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
         setUnauthorized(true);
+        setLoaded(true);
         return;
       }
-      setError(cause instanceof Error ? cause.message : String(cause));
+      // 一次都没取到时不算加载完：空列表会让人以为真的没有项目。
+      setError(isUnreachable(cause) ? "连不上 Pupu，正在重试。" : cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoaded(true);
+      fetching.current -= 1;
     }
   }, []);
 
@@ -131,7 +145,7 @@ export function usePupuState() {
     const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible" && fetching.current === 0) void refresh();
     }, 5000);
     return () => {
       window.removeEventListener("focus", onFocus);

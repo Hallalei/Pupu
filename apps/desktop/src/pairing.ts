@@ -53,10 +53,12 @@ export async function pairComputer(origin: string, desktopToken: string, name: s
   return credentialOf(await call<PairBody>(origin, "/api/pair", { kind: "computer", name, code }));
 }
 
-/** 这个 Pupu 开没开 Google 登录。连不上当没开，还能用配对码。 */
+/** 这个 Pupu 开没开 Google 登录。连不上或者等太久都当没开，配对窗口不能空等，还能用配对码。 */
 export async function googleEnabled(origin: string): Promise<boolean> {
   try {
-    const response = await net.fetch(new URL("/api/auth/google", origin).toString());
+    const response = await net.fetch(new URL("/api/auth/google", origin).toString(), {
+      signal: AbortSignal.timeout(5000)
+    });
     const body = (await response.json().catch(() => null)) as { enabled?: unknown } | null;
     return response.ok && body?.enabled === true;
   } catch {
