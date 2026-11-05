@@ -6,6 +6,7 @@ final class Store {
     static let shared = Store()
 
     private(set) var projects: [Project] = []
+    private(set) var chats: Chats = .mainOnly
     private(set) var computers: [Computer] = []
     private(set) var approvals: [Approval] = []
     private(set) var devices: [Device] = []
@@ -47,6 +48,18 @@ final class Store {
         computers.first { $0.id == id }
     }
 
+    /// 该出现在这条聊天里的报告卡。
+    func reports(in session: String) -> [ReportCard] {
+        reports.filter { ($0.chat ?? Chats.mainOnly.main.session) == session }
+    }
+
+    /// 刚建好的项目：不等下一次拉状态就能打开。
+    func added(_ project: Project) {
+        guard self.project(id: project.id) == nil else { return }
+        projects.insert(project, at: 0)
+        notify()
+    }
+
     /// 注册一个回调，状态变了就调；返回的令牌释放时自动注销。
     func observe(_ callback: @escaping () -> Void) -> StoreToken {
         let id = UUID()
@@ -80,6 +93,7 @@ final class Store {
             do {
                 let state = try await api.state()
                 projects = state.projects
+                chats = state.chats ?? .mainOnly
                 computers = state.computers
                 approvals = state.approvals ?? []
                 devices = state.devices ?? []
@@ -112,6 +126,7 @@ final class Store {
 
     private func reset() {
         projects = []
+        chats = .mainOnly
         computers = []
         approvals = []
         devices = []

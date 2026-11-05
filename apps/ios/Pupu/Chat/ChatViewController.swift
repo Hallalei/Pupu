@@ -5,10 +5,18 @@ import UIKit
 /// 这几处的做法参考了 Signal-iOS 的 ConversationViewController（只看思路，没有搬代码）：
 /// 输入栏是贴着 keyboardLayoutGuide 的普通子视图，列表的底部留白跟着输入栏的位置改。
 final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGestureRecognizerDelegate {
+    /// 空会话的样子。聊天：Pupu 先介绍自己，再给三个开场建议。项目：一张写着项目名和目标的卡片。
+    enum Opening {
+        case intro(String)
+        case project(Project)
+    }
+
     let session: String
+    /// 用户滚动时告诉外面到没到最新的消息。
+    var onScroll: ((Bool) -> Void)?
     private let placeholder: String
     private let projectTags: Bool
-    private let emptyProject: Project?
+    private let opening: Opening
     private let openProject: (String) -> Void
 
     private static let starters = ["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事", "我现在有哪些项目？"]
@@ -36,6 +44,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private let scrim = UIView()
     private let empty = UIStackView()
     private let flow = FlowView()
+    private let spinner = UIActivityIndicatorView(style: .medium)
     /// 往上翻了才出现：右下角的玻璃圆按钮，点了回到最新的消息。
     private let jump = UIButton(configuration: .glass())
 
@@ -55,13 +64,13 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         session: String,
         placeholder: String,
         projectTags: Bool,
-        emptyProject: Project? = nil,
+        opening: Opening,
         openProject: @escaping (String) -> Void
     ) {
         self.session = session
         self.placeholder = placeholder
         self.projectTags = projectTags
-        self.emptyProject = emptyProject
+        self.opening = opening
         self.openProject = openProject
         super.init(nibName: nil, bundle: nil)
     }
@@ -116,8 +125,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(60))
         let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
         let section = NSCollectionLayoutSection(group: group)
+        // 项目对话的第一条让开项目名胶囊：对话短到滚不动时，它不能一直盖着字。
+        var clearance: CGFloat = 0
+        if case .project = opening { clearance = ProjectPill.height + Theme.Space.s2 }
         section.contentInsets = NSDirectionalEdgeInsets(
-            top: Theme.Space.s2,
+            top: Theme.Space.s2 + clearance,
             leading: Theme.Space.s4,
             bottom: Theme.Space.s4,
             trailing: Theme.Space.s4
@@ -173,13 +185,13 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         }
     }
 
-    /// 聊天：Pupu 先介绍自己，再给三个开场建议。项目：一张写着项目名和目标的卡片。
     private func setUpEmpty() {
         empty.axis = .vertical
         empty.alignment = .center
         empty.spacing = Theme.Space.s5
         empty.translatesAutoresizingMaskIntoConstraints = false
-        if let project = emptyProject {
+        switch opening {
+        case .project(let project):
             let card = SurfaceView(.strong, radius: Theme.Radius.panel, lifted: true)
             let name = UILabel(text: project.name, style: .headline, lines: 0)
             let goal = UILabel(
@@ -195,7 +207,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             stack.pin(to: card.contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: Theme.Space.s4, bottom: Theme.Space.s4, right: Theme.Space.s4))
             empty.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: empty.widthAnchor).isActive = true
-        } else {
+        case .intro(let text):
             let greeting = UILabel(text: "我是 Pupu", style: .greeting, color: Theme.inkSky)
             greeting.accessibilityTraits = .header
             let intro = UILabel(style: .message, color: Theme.inkSky, lines: 0)
@@ -205,7 +217,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             var centered = attributes
             centered[.paragraphStyle] = paragraph
             intro.attributedText = NSAttributedString(
-                string: "这是我们的聊天，会一直接着聊下去。\n小事我直接办，要持续推进的事放进项目里。",
+                string: text,
                 attributes: centered
             )
             let words = UIStackView(arrangedSubviews: [greeting, intro])
@@ -268,6 +280,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         quotePreview.isHidden = true
         statusLabel.textAlignment = .center
         statusLabel.isHidden = true
+        spinner.color = Theme.inkSky
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
 
         bottom.axis = .vertical
         bottom.spacing = Theme.Space.s2
@@ -291,6 +307,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             bottom.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -Theme.Space.s3),
             middle.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             middle.bottomAnchor.constraint(equalTo: bottom.topAnchor),
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
             empty.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
             empty.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.Space.s6),
             empty.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Theme.Space.s6)
@@ -353,7 +371,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             computers: store.computers,
             approvals: store.approvals,
             members: store.members,
-            reports: projectTags ? store.reports : [],
+            reports: store.reports(in: session),
             toggled: toggled
         )
         let rows = ChatRows.build(state, context: context)
@@ -381,6 +399,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         }
 
         empty.isHidden = !(loaded && ids.isEmpty)
+        if loaded { spinner.stopAnimating() } else { spinner.startAnimating() }
         composer.running = state.running
         composer.connected = status == .open
         updateStatus()
@@ -606,6 +625,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
         stick = distanceFromBottom < Self.stickDistance
+        onScroll?(stick)
     }
 
     /// 点状态栏回到顶上，不算拖动，也要记下已经不在底部。
