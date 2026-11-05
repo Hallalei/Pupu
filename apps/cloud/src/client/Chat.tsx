@@ -73,9 +73,9 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   const [away, setAway] = useState(false);
   /** 用户翻回了最新消息，顶上的东西让开。 */
   const [settled, setSettled] = useState(false);
-  /** 长按或右键的那条消息的文字；菜单挂在 menuAnchor 上。 */
-  const [menuText, setMenuText] = useState<string | null>(null);
-  const menuAnchor = useRef<HTMLElement | null>(null);
+  /** 长按或右键的那条消息的文字，和菜单弹出的位置：鼠标在光标处，长按在消息下沿。 */
+  const [menu, setMenu] = useState<{ text: string; x: number; y: number } | null>(null);
+  const menuAnchor = useRef<HTMLSpanElement | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -115,19 +115,19 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
     node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
   }
 
-  function openMenu(anchor: HTMLElement, text: string) {
-    menuAnchor.current = anchor;
-    setMenuText(text);
+  function openMenu(anchor: HTMLElement, text: string, point?: MenuPoint) {
+    const box = anchor.getBoundingClientRect();
+    setMenu({ text, ...(point ?? { x: box.left + box.width / 2, y: box.bottom }) });
   }
 
   function onMenuAction(key: string) {
-    if (menuText === null) return;
-    if (key === "copy") void navigator.clipboard?.writeText(menuText);
+    if (menu === null) return;
+    if (key === "copy") void navigator.clipboard?.writeText(menu.text);
     if (key === "reply") {
-      setQuote(menuText);
+      setQuote(menu.text);
       input.current?.focus();
     }
-    setMenuText(null);
+    setMenu(null);
   }
 
   const isEmpty = rows.length === 0 && !pi.running;
@@ -144,6 +144,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
         </div>
       )}
       <div className="relative min-h-0 flex-1">
+        <div className="scroll-fade" aria-hidden="true" />
         <div
           ref={scroller}
           onScroll={(event) => {
@@ -156,7 +157,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
           }}
           className="h-full overflow-y-auto"
         >
-          <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pt-2 pb-4 lg:px-6">
+          <div className="scroll-body mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pb-4 lg:px-6">
             {loading && (
               <div className="my-auto flex justify-center">
                 <Spinner size="sm" aria-label="正在打开" />
@@ -172,7 +173,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
                         key={starter}
                         type="button"
                         onClick={() => send(starter)}
-                        className="soft rounded-full px-3.5 py-2 text-subheadline"
+                        className="soft lift tap rounded-full px-3.5 py-2 text-subheadline"
                       >
                         {starter}
                       </button>
@@ -194,7 +195,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
               type="button"
               aria-label="回到底部"
               onClick={toBottom}
-              className="glass pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
+              className="glass lift tap pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
             >
               <ChevronDownIcon />
             </button>
@@ -224,7 +225,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
                 variant="ghost"
                 aria-label="取消回复"
                 onPress={() => setQuote(null)}
-                className="glass size-9 min-w-9 rounded-full"
+                className="glass lift tap size-9 min-w-9 rounded-full"
               >
                 <CloseIcon />
               </Button>
@@ -254,13 +255,14 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
         </div>
       </div>
 
+      <span ref={menuAnchor} aria-hidden="true" className="fixed size-0" style={{ left: menu?.x, top: menu?.y }} />
       <Dropdown
-        isOpen={menuText !== null}
+        isOpen={menu !== null}
         onOpenChange={(open) => {
-          if (!open) setMenuText(null);
+          if (!open) setMenu(null);
         }}
       >
-        <Dropdown.Popover triggerRef={menuAnchor} placement="bottom">
+        <Dropdown.Popover triggerRef={menuAnchor} placement="bottom start" className="w-fit min-w-32">
           <Dropdown.Menu aria-label="消息操作" onAction={(key) => onMenuAction(String(key))}>
             <Dropdown.Item id="copy" textValue="复制">
               <CopyIcon />
@@ -278,9 +280,11 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
 }
 
 /** 手机上长按、电脑上右键，都打开菜单。 */
-export function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
+export function usePressMenu(onMenu: (anchor: HTMLElement, point?: MenuPoint) => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  /** 长按弹了菜单：手指抬起时的那次点击不算数。 */
+  const pressed = useRef(false);
 
   function cancel() {
     if (timer.current) clearTimeout(timer.current);
@@ -290,11 +294,13 @@ export function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
 
   return {
     onPointerDown(event: ReactPointerEvent<HTMLElement>) {
+      pressed.current = false;
       if (event.pointerType === "mouse") return;
       const target = event.currentTarget;
       start.current = { x: event.clientX, y: event.clientY };
       timer.current = setTimeout(() => {
         cancel();
+        pressed.current = true;
         navigator.vibrate?.(10);
         onMenu(target);
       }, 450);
@@ -312,12 +318,19 @@ export function usePressMenu(onMenu: (anchor: HTMLElement) => void) {
     onContextMenu(event: ReactMouseEvent<HTMLElement>) {
       event.preventDefault();
       cancel();
-      onMenu(event.currentTarget);
+      onMenu(event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : undefined);
+    },
+    onClickCapture(event: ReactMouseEvent<HTMLElement>) {
+      if (!pressed.current) return;
+      pressed.current = false;
+      event.preventDefault();
+      event.stopPropagation();
     }
   };
 }
 
-type MenuOpener = (anchor: HTMLElement, text: string) => void;
+type MenuPoint = { readonly x: number; readonly y: number };
+type MenuOpener = (anchor: HTMLElement, text: string, point?: MenuPoint) => void;
 
 function Row({
   row,
@@ -385,7 +398,7 @@ function Row({
 }
 
 function UserMessage({ body, quote, onMenu }: { body: string; quote: string | null; onMenu: MenuOpener }) {
-  const press = usePressMenu((anchor) => onMenu(anchor, body));
+  const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
     <div className="flex flex-col items-end gap-1">
       {quote && <QuoteStrip quote={quote} className="max-w-[85%]" />}
@@ -420,7 +433,7 @@ function OtherMessage({
   sender: Sender;
   onMenu: MenuOpener;
 }) {
-  const press = usePressMenu((anchor) => onMenu(anchor, body));
+  const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
     <div className="flex max-w-[85%] items-start gap-2">
       <Avatar name={sender.name} />
@@ -448,7 +461,7 @@ function Avatar({ name }: { name: string }) {
 }
 
 function AssistantText({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
-  const press = usePressMenu((anchor) => onMenu(anchor, text));
+  const press = usePressMenu((anchor, point) => onMenu(anchor, text, point));
   return (
     <div {...press} className="pressable strong bubble w-fit max-w-[85%] rounded-bubble px-4 py-2.5">
       <Streamdown className="sd-theme text-message" controls={false}>
@@ -504,31 +517,27 @@ function ProjectTag({
 }
 
 /**
- * 项目报回来的结果：项目名、状态、一句结果，点「去项目看」过去。同一个项目没看过的几条合成这一张。
+ * 项目报回来的结果：项目名、状态、一句结果，整张卡点过去。同一个项目没看过的几条合成这一张。
  * 长按或右键能引用回复，引用里带着项目名，聊天里的 Pupu 就知道在说哪个项目。
  */
 function ReportBubble({ card, context, onMenu }: { card: ReportCard; context: ChatContext; onMenu: MenuOpener }) {
-  const press = usePressMenu((anchor) => onMenu(anchor, reportQuote(card)));
+  const press = usePressMenu((anchor, point) => onMenu(anchor, reportQuote(card), point));
   return (
-    <div {...press} className="pressable strong flex w-full max-w-[85%] flex-col rounded-row sm:max-w-96">
-      <div className="flex items-center gap-2 px-3 pt-2.5">
+    <button
+      type="button"
+      {...press}
+      onClick={() => context.onOpenProject(card.projectId)}
+      className="pressable strong lift flex w-full max-w-[85%] flex-col gap-1 rounded-row px-3 py-2.5 text-left sm:max-w-96"
+    >
+      <span className="flex w-full items-center gap-2">
         <FolderIcon className="shrink-0 text-[15px] text-muted pointer-fine:text-[13px]" />
         <span className="min-w-0 flex-1 truncate text-footnote font-semibold">{card.projectName}</span>
         <ReportStatusMark status={card.status} />
-      </div>
-      <div className="px-3 pt-1 text-subheadline [overflow-wrap:anywhere]">{card.summary}</div>
-      <div className="flex min-h-10 items-center gap-2 px-3 pointer-fine:min-h-9">
-        {card.more > 0 && <span className="text-caption text-muted">还有 {card.more} 条</span>}
-        <button
-          type="button"
-          onClick={() => context.onOpenProject(card.projectId)}
-          className="ml-auto flex h-8 items-center gap-0.5 text-footnote font-semibold pointer-fine:h-7"
-        >
-          去项目看
-          <ChevronRightIcon className="text-[14px] pointer-fine:text-[12px]" />
-        </button>
-      </div>
-    </div>
+        <ChevronRightIcon className="shrink-0 text-[14px] text-muted pointer-fine:text-[12px]" />
+      </span>
+      <span className="text-subheadline [overflow-wrap:anywhere]">{card.summary}</span>
+      {card.more > 0 && <span className="text-caption text-muted">还有 {card.more} 条</span>}
+    </button>
   );
 }
 
@@ -618,7 +627,7 @@ function StepCard({
           type="button"
           aria-expanded={expanded}
           onClick={onToggle}
-          className="flex min-h-10 w-full items-center gap-2 px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
+          className="lift flex min-h-10 w-full items-center gap-2 rounded-row px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
         >
           {header}
         </button>
@@ -643,7 +652,7 @@ function StepStatusMark({ status, failures }: { status: StepStatus; failures: nu
     case "running":
       return <Spinner size="sm" aria-label="在做" className="shrink-0" />;
     case "done":
-      return <span className="shrink-0 text-caption text-muted">完成</span>;
+      return null;
     case "failed":
       return (
         <span className="shrink-0 text-caption text-danger-ink">

@@ -2,7 +2,7 @@
 const params = new URLSearchParams(location.search);
 const target = params.get("url");
 const host = params.get("host");
-if (host) document.getElementById("lead").textContent = `连不上 ${host}。网络通了会自动再试，桥也会自己重连。`;
+if (host) document.getElementById("lead").textContent = `连不上 ${host}。网络通了会自动再试。`;
 
 function retry() {
   if (target) location.href = target;

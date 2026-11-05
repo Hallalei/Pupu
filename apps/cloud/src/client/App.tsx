@@ -1,4 +1,4 @@
-import { Button, Dropdown, Label, Tabs } from "@heroui/react";
+import { Button, Dropdown, Label, Spinner, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import { actorOf } from "../members";
@@ -9,7 +9,7 @@ import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
 import { useDesktopComputer } from "./desktop";
 import { Doing } from "./Doing";
-import { ChatIcon, CheckIcon, FolderIcon, LockIcon, MenuIcon, PlusIcon } from "./icons";
+import { ChatIcon, CheckIcon, LockIcon, MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { Settings } from "./Settings";
@@ -126,8 +126,8 @@ export function App() {
     [projects, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind]
   );
 
-  // 夜空是私聊的记号；项目是公开的，不用。
-  const night = line === "private" && route.kind === "chat" && !unauthorized;
+  // 夜空是私聊的记号；项目是公开的，不用。登录页也是夜空，衬着左边的大图。
+  const night = unauthorized || (line === "private" && route.kind === "chat");
   useEffect(() => {
     setNight(night);
   }, [night]);
@@ -164,6 +164,10 @@ export function App() {
     go({ kind: "chat" });
   };
   const waiting = waitingProjects(activity);
+  // 停在审批上的电脑，审批卡就在正上方，同一件事不写两遍。屏幕控制开着的留着，「收回」在这一行上。
+  const doing = busyComputers(activity).filter(
+    (row) => row.screen || row.state !== "waiting" || !approvals.some((item) => item.computerId === row.computerId)
+  );
 
   let body;
   if (route.kind === "chat") {
@@ -176,22 +180,10 @@ export function App() {
         empty={
           <div className="flex flex-col gap-2 text-center text-ink-sky">
             <div className="text-greeting">我是 Pupu</div>
-            {line === "main" ? (
-              <div className="text-message">
-                这是大家和我的聊天，会一直接着聊下去。
-                <br />
-                小事我直接办，要持续推进的事放进项目里。
-              </div>
-            ) : (
-              <div className="text-message">
-                这里只有你和我，别人看不到。
-                <br />
-                要转到项目的时候，我先跟你说一声。
-              </div>
-            )}
+            {line === "private" && <div className="text-message">这里只有你和我，别人看不到。</div>}
           </div>
         }
-        starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事", "我现在有哪些项目？"]}
+        starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事"]}
       />
     );
   } else if (project) {
@@ -200,16 +192,16 @@ export function App() {
         key={project.session}
         session={project.session}
         context={chat}
-        placeholder={`在「${project.name}」里说`}
+        placeholder="给 Pupu 发消息"
         top={
           <span className="glass flex h-7 max-w-full items-center rounded-full px-3 text-footnote text-foreground lg:hidden">
             <span className="truncate">{project.name}</span>
           </span>
         }
         empty={
-          <div className="strong bubble mx-auto flex max-w-md flex-col gap-1 rounded-panel px-5 py-4 text-center">
-            <div className="text-headline">{project.name}</div>
-            {project.goal && <div className="text-subheadline text-muted">{project.goal}</div>}
+          <div className="flex max-w-md flex-col gap-2 text-center text-ink-sky">
+            <div className="text-greeting">{project.name}</div>
+            {project.goal && <div className="text-message">{project.goal}</div>}
           </div>
         }
       />
@@ -217,32 +209,29 @@ export function App() {
   } else {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-        <div className="text-message text-ink-sky">
-          {!loaded
-            ? "加载中…"
-            : route.kind === "project"
-              ? "找不到这个项目。"
-              : "还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个；也可以自己建。"}
-        </div>
-        {loaded && (
-          <Button
-            variant="ghost"
-            onPress={() => setCreating(true)}
-            className="glass h-control rounded-full px-4 text-body font-semibold text-foreground"
-          >
-            <PlusIcon />
-            新项目
-          </Button>
+        {!loaded ? (
+          <Spinner size="sm" aria-label="正在打开" />
+        ) : (
+          <>
+            {route.kind === "project" && <div className="text-message text-ink-sky">找不到这个项目</div>}
+            <Button
+              variant="ghost"
+              onPress={() => setCreating(true)}
+              className="glass lift tap h-control rounded-full px-4 text-body font-semibold text-foreground"
+            >
+              <PlusIcon />
+              新项目
+            </Button>
+          </>
         )}
       </div>
     );
   }
 
-  const title = route.kind === "chat" ? LINE_NAMES[line] : (project?.name ?? "项目");
-
   return (
     <div className="flex h-dvh">
       <div className="sky" />
+      <div className="window-drag" />
       <Sidebar
         route={route}
         loaded={loaded}
@@ -258,16 +247,16 @@ export function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         thisComputer={thisComputer}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)] lg:pt-0">
-          <div className="flex h-11 items-center justify-between px-4 lg:hidden">
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)] lg:hidden">
+          <div className="titlebar-lead flex h-11 items-center justify-between px-4">
             {section === "projects" ? (
               <button
                 type="button"
                 aria-label="全部项目"
                 aria-expanded={listOpen}
                 onClick={() => setListOpen((open) => !open)}
-                className="glass grid size-11 place-items-center rounded-full text-[20px]"
+                className="glass lift tap grid size-11 place-items-center rounded-full text-[20px]"
               >
                 <MenuIcon />
               </button>
@@ -286,42 +275,39 @@ export function App() {
               type="button"
               aria-label="设置"
               onClick={() => setSettingsOpen(true)}
-              className="glass grid size-11 place-items-center rounded-full text-subheadline font-semibold"
+              className="glass lift tap grid size-11 place-items-center rounded-full text-subheadline font-semibold"
             >
               我
             </button>
           </div>
-          <div className="hidden h-13 items-center justify-center gap-2 px-6 text-on-sky-strong lg:flex">
-            {project && <FolderIcon className="shrink-0 text-[16px]" />}
-            <span className="truncate text-headline">{title}</span>
-            {project?.goal && <span className="truncate text-footnote opacity-80">· {project.goal}</span>}
-          </div>
-          <div className="h-2 lg:hidden" />
+          <div className="h-2" />
         </header>
         {error && (
-          <div className="strong relative z-10 mx-auto mb-2 rounded-full px-3 py-1 text-caption text-danger-ink">
-            {error}
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
+            <div className="strong bubble rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
           </div>
         )}
-        <Approvals
-          approvals={approvals}
-          canAllow={canAllow}
-          phonePaired={devices.some((device) => device.kind === "phone")}
-          onDecide={async (id, decision) => {
-            await api.decideApproval(id, decision);
-            await refresh();
-          }}
-        />
-        {route.kind === "chat" && (
-          <Doing
-            rows={busyComputers(activity)}
-            onOpenProject={(id) => go({ kind: "project", id })}
-            onTakeback={async (id) => {
-              await api.takeback(id);
+        <div className="status relative z-10 flex shrink-0 flex-col lg:[&:not(:empty)]:pt-3">
+          <Approvals
+            approvals={approvals}
+            canAllow={canAllow}
+            phonePaired={devices.some((device) => device.kind === "phone")}
+            onDecide={async (id, decision) => {
+              await api.decideApproval(id, decision);
               await refresh();
             }}
           />
-        )}
+          {route.kind === "chat" && (
+            <Doing
+              rows={doing}
+              onOpenProject={(id) => go({ kind: "project", id })}
+              onTakeback={async (id) => {
+                await api.takeback(id);
+                await refresh();
+              }}
+            />
+          )}
+        </div>
         <main className="relative min-h-0 flex-1">
           {body}
           {listOpen && (
@@ -490,7 +476,7 @@ function Sidebar({
   thisComputer: ReturnType<typeof useDesktopComputer>;
 }) {
   return (
-    <aside className="soft relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col gap-0.5 overflow-hidden rounded-panel p-2 lg:flex">
+    <aside className="sidebar soft relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col gap-0.5 overflow-hidden rounded-panel p-2 lg:flex">
       <NavItem
         icon={<ChatIcon />}
         current={route.kind === "chat" && line === "main"}
@@ -515,15 +501,12 @@ function Sidebar({
           type="button"
           aria-label="新项目"
           onClick={onCreate}
-          className="grid size-control-sm place-items-center rounded-lg text-[16px] text-muted hover:bg-default"
+          className="grid size-control-sm place-items-center rounded-tag text-[16px] text-muted hover:bg-foreground/6 hover:text-foreground"
         >
           <PlusIcon />
         </button>
       </div>
       <nav aria-label="项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-        {loaded && projects.length === 0 && (
-          <p className="px-2 py-1 text-footnote text-muted">还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个。</p>
-        )}
         {projects.map((project) => (
           <NavItem
             key={project.id}
@@ -536,32 +519,33 @@ function Sidebar({
           </NavItem>
         ))}
       </nav>
-      {thisComputer && (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="mt-1 flex shrink-0 items-center gap-2 border-t border-foreground/10 px-2 pt-2.5 pb-1.5 text-left"
+      <div className="mt-1 flex shrink-0 flex-col gap-0.5 border-t border-foreground/10 pt-1">
+        {thisComputer && (
+          <NavItem
+            icon={
+              <span className="grid size-5 place-items-center" aria-hidden="true">
+                <span
+                  className={`size-2 rounded-full ${thisComputer.status === "offline" ? "bg-offline" : "bg-online"}`}
+                />
+              </span>
+            }
+            detail={thisComputer.title}
+            onPress={onOpenSettings}
+          >
+            这台电脑
+          </NavItem>
+        )}
+        <NavItem
+          icon={
+            <span className="grid size-5 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background">
+              我
+            </span>
+          }
+          onPress={onOpenSettings}
         >
-          <span
-            className={`size-2 shrink-0 rounded-full ${thisComputer.status === "offline" ? "bg-offline" : "bg-online"}`}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-footnote font-semibold">这台电脑 · {thisComputer.name}</span>
-            <span className="block truncate text-caption text-muted">{thisComputer.title}</span>
-          </span>
-        </button>
-      )}
-      <NavItem
-        icon={
-          <span className="grid size-5 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background">
-            我
-          </span>
-        }
-        onPress={onOpenSettings}
-      >
-        设置
-      </NavItem>
+          设置
+        </NavItem>
+      </div>
     </aside>
   );
 }
@@ -588,11 +572,11 @@ function NavItem({
       type="button"
       onClick={onPress}
       aria-current={current ? "page" : undefined}
-      className={`flex min-h-control shrink-0 items-center gap-2 rounded-[10px] px-2 py-1 text-left text-body ${
-        current ? "strong font-semibold" : "hover:bg-default/60"
+      className={`flex min-h-control shrink-0 items-center gap-2 rounded-tag px-2 py-1 text-left text-body ${
+        current ? "bg-nav-current font-semibold" : "hover:bg-foreground/6"
       }`}
     >
-      {icon && <span className="shrink-0 text-[16px]">{icon}</span>}
+      {icon && <span className="grid size-5 shrink-0 place-items-center text-[16px]">{icon}</span>}
       <span className="min-w-0 flex-1">
         <span className="block truncate">{children}</span>
         {detail && <span className="block truncate text-caption font-normal text-muted">{detail}</span>}

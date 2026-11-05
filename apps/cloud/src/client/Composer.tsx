@@ -56,7 +56,7 @@ export function Composer({
 
   return (
     <form
-      className="glass flex min-h-11 items-end gap-2 rounded-composer p-1 pl-4"
+      className="glass composer flex min-h-11 items-end gap-2 rounded-composer p-1 pl-4"
       onSubmit={(event) => {
         event.preventDefault();
         onSend();
@@ -87,7 +87,7 @@ export function Composer({
           isIconOnly
           aria-label="停止"
           onPress={onStop}
-          className="size-9 min-w-9 rounded-full bg-foreground text-background"
+          className="tap size-9 min-w-9 rounded-full bg-foreground text-background"
         >
           <StopIcon />
         </Button>
@@ -97,7 +97,7 @@ export function Composer({
           type="submit"
           aria-label={sendLabel}
           isDisabled={!canSend}
-          className="size-9 min-w-9 rounded-full bg-foreground text-base text-background"
+          className="tap size-9 min-w-9 rounded-full bg-foreground text-base text-background disabled:bg-foreground/10 disabled:text-muted disabled:opacity-100"
         >
           <ArrowUpIcon />
         </Button>

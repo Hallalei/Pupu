@@ -35,6 +35,7 @@ import { PupuTray } from "./tray.ts";
 import type { TrayAction } from "./tray-menu.ts";
 import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, originOf, sameOrigin } from "./urls.ts";
 import { computerView } from "./view.ts";
+import { windowChrome } from "./window-chrome.ts";
 
 /** 和 apps/cloud/src/server.ts 里的 TOKEN_COOKIE 一样：窗口的凭据放进 HttpOnly cookie。 */
 const TOKEN_COOKIE = "pupu_token";
@@ -419,7 +420,7 @@ async function openMain(): Promise<void> {
     minWidth: 380,
     minHeight: 520,
     title: "Pupu",
-    backgroundColor: "#6f8fb3",
+    ...windowChrome(),
     show: false,
     webPreferences: {
       preload: dist("preload.cjs"),

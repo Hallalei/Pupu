@@ -2,25 +2,28 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'" />
     <title>连上 Pupu</title>
     <link rel="stylesheet" href="page.css" />
   </head>
-  <body>
-    <form class="card" id="form">
-      <h1 id="title">连上 Pupu</h1>
-      <p id="lead">在已经连上的手机或浏览器上打开设置，点「生成配对码」，把码填在这里。</p>
-      <input id="code" type="text" placeholder="比如 7K3M-Q9TX" autocomplete="one-time-code" spellcheck="false" autofocus />
-      <label class="check" id="adopt-row" hidden>
-        <input id="adopt" type="checkbox" checked />
-        <span id="adopt-label"></span>
-      </label>
-      <p class="error" id="error" role="alert" hidden></p>
-      <button id="google" type="button" hidden>用 Google 登录</button>
-      <button id="submit" type="submit">连上</button>
-      <button id="switch" class="link" type="button" hidden>用配对码</button>
+  <body class="pair">
+    <div class="art" aria-hidden="true"></div>
+    <div class="side">
+      <form class="stack" id="form">
+        <h1 id="title">Pupu</h1>
+        <p id="lead"></p>
+        <button id="google" class="light" type="button" hidden></button>
+        <div class="or" id="or" hidden>或</div>
+        <input id="code" type="text" placeholder="配对码" aria-label="配对码" autocomplete="one-time-code" spellcheck="false" />
+        <label class="check" id="adopt-row" hidden>
+          <input id="adopt" type="checkbox" checked />
+          <span id="adopt-label"></span>
+        </label>
+        <button id="submit" type="submit">继续</button>
+        <p class="error" id="error" role="alert" hidden></p>
+      </form>
       <p class="hint" id="hint"></p>
-    </form>
+    </div>
     <script src="pair.js"></script>
   </body>
 </html>

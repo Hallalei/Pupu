@@ -10,6 +10,9 @@
  * 正文色和次要色用 HeroUI 的 foreground、muted，和规范的 ink、ink-muted 是同一个值。
  */
 @theme {
+  --text-display: 40px;
+  --text-display--line-height: 48px;
+  --text-display--font-weight: 600;
   --text-greeting: 28px;
   --text-greeting--line-height: 34px;
   --text-greeting--font-weight: 600;
@@ -46,6 +49,7 @@
   --color-surface-glass: #ffffff9e;
   --color-surface-strong: #ffffffd1;
   --color-surface-inset: oklch(94% 0.001 286.375);
+  --color-nav-current: #ffffffd1;
   --color-bubble-user: #d6e0ecb8;
   --color-line-glass: #ffffff8c;
   --color-ink-sky: #1c2634;
@@ -93,6 +97,7 @@
   --color-surface-glass: #282c349e;
   --color-surface-strong: #24262cdb;
   --color-surface-inset: oklch(27.4% 0.006 286.033);
+  --color-nav-current: #ffffff1f;
   --color-bubble-user: #ffffff1f;
   --color-line-glass: #ffffff14;
   --color-ink-sky: #ffffffe6;
@@ -103,6 +108,14 @@
   --glass-fill: #ffffff1a;
   --glass-rim: #00000080;
   --glass-highlight: #ffffff40;
+}
+
+/* 规范：主操作是墨色，不用品牌色。HeroUI 的主按钮、开关、链接、焦点环都跟着走。 */
+:root,
+.dark {
+  --accent: var(--foreground);
+  --accent-foreground: var(--background);
+  --focus: var(--foreground);
 }
 
 html,
@@ -142,6 +155,81 @@ body {
 }
 .dark .sky::after {
   opacity: 1;
+}
+
+/*
+ * 电脑 App 的窗口没有系统标题栏：红绿灯浮在页面左上角，顶上一条用来拖窗口。
+ * `--titlebar` 是侧栏给红绿灯让的高度，`--traffic-lights` 是窄窗口顶栏让的宽度。
+ * 浏览器和老版本的 App 里 data-titlebar 不存在，这些都不生效。
+ */
+:root {
+  --titlebar: 0px;
+  --traffic-lights: 0px;
+}
+:root[data-titlebar="inset"] {
+  --titlebar: 28px;
+  --traffic-lights: 88px;
+}
+.window-drag {
+  display: none;
+}
+:root[data-titlebar="inset"] .window-drag {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto;
+  height: 40px;
+  -webkit-app-region: drag;
+}
+:root[data-titlebar="inset"] :is(button, a, input, textarea, [role="tab"], [role="menuitem"]) {
+  -webkit-app-region: no-drag;
+}
+.titlebar-lead {
+  padding-left: max(var(--spacing) * 4, var(--traffic-lights));
+}
+.sidebar {
+  padding-top: calc(var(--spacing) * 2 + var(--titlebar));
+}
+
+/*
+ * 宽屏没有顶栏：对话铺到窗口顶上，上沿模糊淡出（照 Hark），控件和内容不用抢位置。
+ * 上面挂着审批或「正在做」时，对话从它们下面开始，不用再留这么多。
+ */
+:root {
+  --chat-top: calc(var(--spacing) * 2);
+}
+@media (min-width: 1024px) {
+  .status:empty + main {
+    --chat-top: calc(var(--spacing) * 12);
+  }
+}
+.scroll-body {
+  padding-top: var(--chat-top);
+}
+.scroll-fade {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  height: var(--chat-top);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent);
+}
+
+/*
+ * 登录页左边的大图：像素猫贴着底边铺满宽度，图顶上的深色接着往上铺，看不出接缝。
+ * 窗口再宽也不超过高度，不然猫的耳朵会被裁掉。
+ */
+.login {
+  padding: calc(var(--spacing) * 3);
+  padding-top: calc(var(--spacing) * 3 + var(--titlebar));
+}
+.login-art {
+  max-width: calc(100dvh - var(--spacing) * 6 - var(--titlebar));
+  border-radius: var(--radius-panel);
+  background: #16181f url("/pupu-avatar.png") bottom / 100% auto no-repeat;
+  image-rendering: pixelated;
 }
 
 @keyframes fade-in {
@@ -185,10 +273,54 @@ body {
   -webkit-backdrop-filter: blur(10px) saturate(1.8);
 }
 
+/* 输入栏聚焦时边变实，不用再画一圈。 */
+.composer {
+  transition: outline-color 0.15s;
+}
+.composer:focus-within {
+  outline-color: color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+
 .bubble {
   box-shadow:
     0 1px 2px rgb(15 23 42 / 0.06),
     0 6px 20px rgb(15 23 42 / 0.06);
+}
+
+/* 能点的东西：鼠标放上去有反馈，键盘走到时有焦点环。 */
+button,
+[role="tab"] {
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    opacity 0.15s,
+    filter 0.15s,
+    scale 0.12s;
+}
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (pointer: fine) {
+  button:not(:disabled),
+  [role="tab"],
+  [role="menuitem"] {
+    cursor: pointer;
+  }
+  .lift:hover {
+    filter: brightness(1.04);
+  }
+  .dark .lift:hover {
+    filter: brightness(1.25);
+  }
+  /* 鼠标用户的滚动条常驻，收细一点，不抢内容。 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-offline) transparent;
+  }
+}
+.tap:active:not(:disabled) {
+  scale: 0.96;
 }
 
 /* 手机上长按消息要弹菜单，不要系统的选字和放大镜。 */
@@ -205,20 +337,22 @@ body {
   --color-primary: var(--accent);
   --color-primary-foreground: var(--accent-foreground);
   --color-foreground: var(--foreground);
-  --color-background: var(--surface);
-  --color-muted: var(--default);
+  --color-background: transparent;
+  --color-sidebar: transparent;
+  --color-muted: var(--color-surface-inset);
   --color-muted-foreground: var(--muted);
-  --color-border: var(--border);
+  --color-border: color-mix(in srgb, var(--foreground) 12%, transparent);
   overflow-wrap: break-word;
   word-break: break-word;
 }
-.sd-theme pre {
-  overflow-x: auto;
-  background: var(--color-surface-inset);
-  border-radius: var(--radius-tag);
-  padding: 8px 12px;
-  font-size: var(--text-code);
-  line-height: var(--text-code--line-height);
+.sd-theme > * + * {
+  margin-top: calc(var(--spacing) * 3);
+}
+.sd-theme > :first-child {
+  margin-top: 0;
+}
+.sd-theme > :last-child {
+  margin-bottom: 0;
 }
 .sd-theme code {
   font-size: 0.92em;
@@ -227,11 +361,42 @@ body {
 .sd-theme :not(pre) > code {
   background: var(--color-surface-inset);
 }
-.sd-theme > :first-child {
-  margin-top: 0;
-}
-.sd-theme > :last-child {
+/* 表格和代码块在气泡里只要一层：Streamdown 默认是外框套内框，再加语言名和行号。 */
+.sd-theme [data-streamdown="table-wrapper"],
+.sd-theme [data-streamdown="code-block"] {
+  gap: 0;
   margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.sd-theme :is([data-streamdown="table-wrapper"], [data-streamdown="table-wrapper"] > div, [data-streamdown="code-block"]) {
+  background: transparent;
+}
+.sd-theme [data-streamdown="table-wrapper"] > div {
+  border-radius: var(--radius-tag);
+}
+.sd-theme [data-streamdown="table-header"] {
+  background: var(--color-surface-inset);
+}
+.sd-theme :is([data-streamdown="table-header-cell"], [data-streamdown="table-cell"]) {
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  font-size: var(--text-subheadline);
+  line-height: var(--text-subheadline--line-height);
+}
+.sd-theme [data-streamdown="code-block-header"] {
+  display: none;
+}
+.sd-theme [data-streamdown="code-block-body"] {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border: 0;
+  border-radius: var(--radius-tag);
+  background: var(--color-surface-inset);
+  font-size: var(--text-code);
+  line-height: var(--text-code--line-height);
+}
+.sd-theme [data-streamdown="code-block-body"] code > span::before {
+  display: none;
 }
 
 .pb-safe {

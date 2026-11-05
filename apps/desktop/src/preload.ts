@@ -15,6 +15,7 @@ const origin = process.argv.find((arg) => arg.startsWith(ORIGIN_ARG))?.slice(ORI
 if (origin && window.location.origin === origin) {
   const api: PupuDesktop = {
     version: 1,
+    ...(process.platform === "darwin" ? { titleBar: "inset" as const } : {}),
     computer: () => ipcRenderer.invoke("pupu:computer") as Promise<DesktopComputer>,
     onComputer(listener) {
       const handler = (_event: unknown, computer: DesktopComputer) => listener(computer);

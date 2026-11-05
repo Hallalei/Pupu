@@ -100,7 +100,7 @@ function DoingRow({
       </span>
     </>
   );
-  const main = "flex min-w-0 flex-1 items-center gap-3 text-left";
+  const main = "flex min-w-0 flex-1 items-center gap-3 text-left enabled:hover:opacity-75";
 
   return (
     <div className="strong flex items-center gap-3 rounded-row px-4 py-2">

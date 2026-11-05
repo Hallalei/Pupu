@@ -26,6 +26,8 @@ export type PrivacyPane = "screen" | "accessibility";
 
 export type PupuDesktop = {
   readonly version: 1;
+  /** 窗口没有系统标题栏，红绿灯浮在页面上，页面要让位、要留出能拖窗口的地方。老版本的 App 没有这一项。 */
+  readonly titleBar?: "inset";
   computer(): Promise<DesktopComputer>;
   /** 状态变了就回调。返回取消订阅的函数。 */
   onComputer(listener: (computer: DesktopComputer) => void): () => void;
@@ -45,6 +47,11 @@ declare global {
 
 export function desktop(): PupuDesktop | null {
   return typeof window !== "undefined" && window.pupuDesktop?.version === 1 ? window.pupuDesktop : null;
+}
+
+/** 在 html 上记下窗口有没有系统标题栏，styles.css 按它让位。 */
+export function followWindowChrome() {
+  if (desktop()?.titleBar === "inset") document.documentElement.dataset.titlebar = "inset";
 }
 
 /** 在电脑 App 里返回这台电脑的状态，普通浏览器里一直是 null。 */

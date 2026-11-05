@@ -17,10 +17,6 @@ export function NewProject({
   const [error, setError] = useState<string | null>(null);
 
   async function create() {
-    if (!name.trim()) {
-      setError("先给项目起个名字");
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
@@ -39,33 +35,33 @@ export function NewProject({
     <Modal>
       <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Modal.Container placement="center">
-          <Modal.Dialog className="w-[min(92vw,420px)]">
+          <Modal.Dialog className="w-[min(92vw,420px)] rounded-panel">
             <Modal.Header>
-              <Modal.Heading>新项目</Modal.Heading>
+              <Modal.Heading className="text-title">新项目</Modal.Heading>
             </Modal.Header>
             <Modal.Body className="flex flex-col gap-3">
               <Input
                 aria-label="项目名"
-                placeholder="项目名，比如「登录改版」"
+                placeholder="名字"
                 value={name}
                 autoFocus
                 onChange={(event) => setName(event.target.value)}
               />
               <TextArea
                 aria-label="目标"
-                placeholder="这个项目要达成什么（可以不填）"
+                placeholder="目标（选填）"
                 rows={3}
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
               />
-              {error && <div className="text-sm text-danger">{error}</div>}
+              {error && <div className="text-subheadline text-danger-ink">{error}</div>}
             </Modal.Body>
             <Modal.Footer>
               <Button slot="close" variant="tertiary">
                 取消
               </Button>
-              <Button isPending={busy} onPress={() => void create()}>
-                建立
+              <Button isPending={busy} isDisabled={!name.trim()} onPress={() => void create()}>
+                新建
               </Button>
             </Modal.Footer>
           </Modal.Dialog>

@@ -5,7 +5,7 @@
 ## Sub-features
 
 - `desktop.pair`：配对码连上。
-- `desktop.online`：电脑在云端显示在线，主窗口显示「这台电脑 · 已连上 Pupu」。
+- `desktop.online`：电脑在云端显示在线，主窗口左侧栏显示「这台电脑」和它的状态。
 
 ## How to get to it (user POV)
 

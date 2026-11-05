@@ -1,5 +1,5 @@
 import { Button, Input } from "@heroui/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { desktop } from "./desktop";
 
@@ -13,6 +13,38 @@ function takeSignInError(): string | null {
   return message;
 }
 
+/** Google 自己规定的彩色 G，登录按钮上不能换色。 */
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 18 18" width="1.2em" height="1.2em" aria-hidden="true">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z" />
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.33-1.58-5.04-3.7H.96v2.33A9 9 0 0 0 9 18z" />
+      <path fill="#FBBC05" d="M3.96 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.28-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.05l3-2.33z" />
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3 2.33C4.67 5.16 6.66 3.58 9 3.58z" />
+    </svg>
+  );
+}
+
+/** 登录的版式：左边一块 Pupu 的大图，右边一列居中。窄窗口只留右边。 */
+function Shell({ lead, children }: { lead: string; children: ReactNode }) {
+  return (
+    <div className="login relative flex h-dvh gap-3">
+      <div className="sky" />
+      <div className="window-drag" />
+      <div aria-hidden="true" className="login-art hidden flex-1 lg:block" />
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6">
+        <div className="flex w-full max-w-sm flex-col gap-3 py-6 text-center">
+          <h1 className="m-0 text-display text-ink-sky">Pupu</h1>
+          <p className="m-0 mb-5 text-message text-ink-sky-muted">{lead}</p>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const PILL = "tap h-12 w-full rounded-full text-body font-semibold";
+
 /**
  * 这个浏览器还没有凭据，或者被吊销了。开了 Google 登录时用自己的 Google 账号登录（要在成员名单上）；
  * 也能填配对码（在已经连上的手机或浏览器的设置里生成），手边一台连上的都没有时用访问口令。
@@ -20,10 +52,10 @@ function takeSignInError(): string | null {
 export function Login() {
   const app = desktop();
   const [google, setGoogle] = useState(false);
-  const [manual, setManual] = useState(false);
   const [useToken, setUseToken] = useState(false);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(takeSignInError);
 
   useEffect(() => {
@@ -33,10 +65,7 @@ export function Login() {
 
   async function submit() {
     const text = value.trim();
-    if (!text) {
-      setError(useToken ? "先填访问口令" : "先填配对码");
-      return;
-    }
+    if (!text) return;
     setBusy(true);
     setError(null);
     try {
@@ -58,74 +87,43 @@ export function Login() {
   // 电脑 App 的窗口不在网页上配对：凭据由 App 管，配对走 App 自己的窗口。
   if (app) {
     return (
-      <div className="flex h-dvh flex-col items-center justify-center px-4">
-        <div className="sky" />
-        <div className="strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-panel p-6">
-          <div className="flex flex-col gap-1.5">
-            <h1 className="text-xl font-semibold">这个窗口没连上 Pupu</h1>
-            <p className="text-[15px] leading-6 text-muted">它的授权失效了，多半是在别的设备上吊销了。重新配对一次就好。</p>
-          </div>
-          <Button className="w-full" onPress={() => void app.repair()}>
-            重新配对
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (google && !manual) {
-    return (
-      <div className="flex h-dvh flex-col items-center justify-center px-4">
-        <div className="sky" />
-        <div className="strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-panel p-6">
-          <div className="flex flex-col gap-1.5">
-            <h1 className="text-xl font-semibold">连上 Pupu</h1>
-            <p className="text-[15px] leading-6 text-muted">用你的 Google 账号登录，这个浏览器就连上了。</p>
-          </div>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <Button
-            className="w-full"
-            isPending={busy}
-            onPress={() => {
-              setBusy(true);
-              window.location.assign("/api/auth/google/start?client=browser");
-            }}
-          >
-            用 Google 登录
-          </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setManual(true);
-              setError(null);
-            }}
-            className="text-sm text-muted"
-          >
-            用配对码或访问口令
-          </button>
-        </div>
-      </div>
+      <Shell lead="这个窗口的授权失效了，重新配对一次就好。">
+        <Button className={PILL} onPress={() => void app.repair()}>
+          重新配对
+        </Button>
+      </Shell>
     );
   }
 
   return (
-    <div className="flex h-dvh flex-col items-center justify-center px-4">
-      <div className="sky" />
+    <Shell lead="组织大脑，让智能在组织间流动。">
+      {google && (
+        <>
+          <Button
+            isPending={leaving}
+            onPress={() => {
+              setLeaving(true);
+              window.location.assign("/api/auth/google/start?client=browser");
+            }}
+            className={`${PILL} lift bg-white text-[#1d1d1f]`}
+          >
+            <GoogleMark />
+            通过 Google 继续
+          </Button>
+          <div className="my-2 flex items-center gap-3 text-footnote text-ink-sky-muted">
+            <span className="h-px flex-1 bg-foreground/15" />
+            或
+            <span className="h-px flex-1 bg-foreground/15" />
+          </div>
+        </>
+      )}
       <form
-        className="strong bubble relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-panel p-6"
+        className="flex flex-col gap-3"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-xl font-semibold">连上 Pupu</h1>
-          <p className="text-[15px] leading-6 text-muted">
-            {useToken
-              ? "访问口令只用这一次，换成这个浏览器自己的凭据，之后不用再填。"
-              : "在已经连上的手机或浏览器上打开设置，点「生成配对码」，把码填在这里。"}
-          </p>
-        </div>
         {useToken ? (
           <Input
             key="token"
@@ -136,42 +134,30 @@ export function Login() {
             autoFocus
             value={value}
             onChange={(event) => setValue(event.target.value)}
+            className="h-12 rounded-full bg-foreground/8 text-center text-body shadow-none"
           />
         ) : (
           <Input
             key="code"
             aria-label="配对码"
-            placeholder="比如 7K3M-Q9TX"
+            placeholder="配对码"
             autoComplete="one-time-code"
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            autoFocus
-            className="text-center font-mono text-lg tracking-widest"
             value={value}
             onChange={(event) => setValue(event.target.value.toUpperCase())}
+            className="h-12 rounded-full bg-foreground/8 text-center text-body tracking-widest shadow-none placeholder:tracking-normal"
           />
         )}
-        {error && <p className="text-sm text-danger">{error}</p>}
-        <Button type="submit" isPending={busy} className="w-full">
-          连上
+        <Button type="submit" isPending={busy} isDisabled={!value.trim()} className={PILL}>
+          继续
         </Button>
-        <button type="button" onClick={toggle} className="text-sm text-muted">
-          {useToken ? "用配对码" : "手边没有连上的设备？用访问口令"}
-        </button>
-        {google && (
-          <button
-            type="button"
-            onClick={() => {
-              setManual(false);
-              setError(null);
-            }}
-            className="text-sm text-muted"
-          >
-            用 Google 登录
-          </button>
-        )}
       </form>
-    </div>
+      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
+      <button type="button" onClick={toggle} className="mt-2 text-footnote text-ink-sky-muted hover:text-ink-sky">
+        {useToken ? "用配对码" : "手边没有连上的设备？用访问口令"}
+      </button>
+    </Shell>
   );
 }

@@ -32,22 +32,22 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-muted">这台电脑</h3>
-      <div className="flex flex-col gap-3 rounded-2xl bg-default px-3 py-3">
+      <h3 className="m-0 px-1 text-footnote text-muted">这台电脑</h3>
+      <div className="flex flex-col gap-3 rounded-row bg-default px-3 py-3">
         <div className="flex items-center gap-3">
           <span
             className={`size-2 shrink-0 rounded-full ${
-              computer.status === "offline" ? "bg-foreground/25" : "bg-emerald-600"
+              computer.status === "offline" ? "bg-offline" : "bg-online"
             }`}
             aria-hidden="true"
           />
           <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{computer.name}</div>
-            <div className="text-sm text-muted">{computer.title}</div>
+            <div className="truncate text-body font-medium">{computer.name}</div>
+            <div className="truncate text-subheadline text-muted">{computer.title}</div>
           </div>
         </div>
         {computer.lines.length > 0 && (
-          <ul className="flex flex-col gap-0.5 text-xs leading-5 text-muted">
+          <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-caption text-muted">
             {computer.lines.slice(0, 6).map((line) => (
               <li key={line} className="truncate font-mono">
                 {line}
@@ -57,7 +57,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
         )}
         {!computer.paired ? (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-sm leading-6 text-muted">这台电脑的授权被吊销了，Pupu 现在用不了它。</p>
+            <p className="m-0 text-subheadline text-muted">这台电脑的授权被吊销了，Pupu 现在用不了它。</p>
             <Button size="sm" variant="secondary" onPress={() => void run(() => app.repair())}>
               重新授权
             </Button>
@@ -91,8 +91,8 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             >
               <Switch.Content className="flex w-full items-start gap-3">
                 <span className="min-w-0 flex-1">
-                  <Label className="block text-sm font-medium">{label}</Label>
-                  <span className="block text-xs leading-5 text-muted">{hint}</span>
+                  <Label className="block text-subheadline font-medium">{label}</Label>
+                  <span className="block text-caption text-muted">{hint}</span>
                 </span>
                 <Switch.Control className="mt-0.5 shrink-0">
                   <Switch.Thumb />
@@ -103,7 +103,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
         </div>
         <div className="flex flex-col gap-1.5 border-t border-foreground/10 pt-3">
           {PERMISSIONS.map(([pane, label]) => (
-            <div key={pane} className="flex items-center gap-2 text-sm">
+            <div key={pane} className="flex items-center gap-2 text-subheadline">
               <span className="flex-1">
                 {label}
                 <span className="text-muted">{computer.permissions[pane] ? " · 已允许" : " · 还没允许"}</span>
@@ -111,7 +111,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
               {!computer.permissions[pane] && (
                 <button
                   type="button"
-                  className="shrink-0 text-sm text-accent"
+                  className="shrink-0 text-subheadline font-semibold hover:opacity-75"
                   onClick={() => void run(() => app.openPrivacySettings(pane))}
                 >
                   去打开
@@ -119,11 +119,11 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
               )}
             </div>
           ))}
-          <p className="text-xs leading-5 text-muted">
-            截屏和点鼠标要这两项。在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。
-          </p>
+          {PERMISSIONS.some(([pane]) => !computer.permissions[pane]) && (
+            <p className="m-0 text-caption text-muted">在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。</p>
+          )}
         </div>
-        {error && <p className="text-sm text-danger">{error}</p>}
+        {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </div>
     </section>
   );

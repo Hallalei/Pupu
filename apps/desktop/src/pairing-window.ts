@@ -1,4 +1,5 @@
 import { app, BrowserWindow } from "electron";
+import { windowChrome } from "./window-chrome.ts";
 
 /** 配对窗口打开时要显示什么。 */
 export type PairingInfo = {
@@ -37,12 +38,12 @@ export function createPairWindow(
   reveal: (window: BrowserWindow) => void
 ): BrowserWindow {
   const window = new BrowserWindow({
-    width: 440,
-    height: 560,
+    width: 960,
+    height: 640,
     resizable: false,
     fullscreenable: false,
     title: "连上 Pupu",
-    backgroundColor: "#6f8fb3",
+    ...windowChrome(),
     show: false,
     webPreferences: {
       preload,

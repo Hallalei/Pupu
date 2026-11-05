@@ -6,6 +6,7 @@ import type { ComputerView } from "../bridge/protocol";
 import { mayChangePolicy, type DeviceView } from "../devices";
 import { mayInvite, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
 import { ago } from "./ago";
+import { CheckIcon } from "./icons";
 import { useDesktopComputer } from "./desktop";
 import { ThisComputer } from "./ThisComputer";
 
@@ -94,30 +95,30 @@ export function Settings({
     <>
       {thisComputer && <ThisComputer computer={thisComputer} />}
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-muted">电脑</h3>
+        <h3 className="m-0 px-1 text-footnote text-muted">电脑</h3>
         {computers.length === 0 ? (
-          <p className="text-sm leading-6 text-muted">还没有授权的电脑。</p>
+          <p className="m-0 text-subheadline text-muted">还没有授权的电脑。</p>
         ) : (
           computers.map((computer) => (
             <div
               key={computer.id}
-              className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
+              className="flex flex-col gap-2 rounded-row bg-default px-3 py-3"
             >
               <div className="flex items-center gap-3">
                 <span
                   className={`size-2 shrink-0 rounded-full ${
-                    computer.online ? "bg-emerald-600" : "bg-foreground/25"
+                    computer.online ? "bg-online" : "bg-offline"
                   }`}
                   aria-hidden="true"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">
+                  <div className="truncate text-body font-medium">
                     {computer.name}
                     {computer.id === thisComputer?.computerId && (
                       <span className="font-normal text-muted"> · 这台电脑</span>
                     )}
                   </div>
-                  <div className="truncate text-sm text-muted">
+                  <div className="truncate text-subheadline text-muted">
                     {computerLabel(computer)}
                     {computer.ownerId && emails.has(computer.ownerId) ? ` · ${emails.get(computer.ownerId)}` : ""}
                     {computer.screen ? " · 屏幕已授权" : ""}
@@ -126,7 +127,7 @@ export function Settings({
                 {confirmId !== computer.id && mayRevoke(actor, computer.ownerId) && (
                   <button
                     type="button"
-                    className="shrink-0 text-sm text-danger"
+                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
                     onClick={() => {
                       setError(null);
                       setConfirmId(computer.id);
@@ -136,7 +137,7 @@ export function Settings({
                   </button>
                 )}
               </div>
-              <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col gap-1">
+              <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col">
                 {POLICIES.map(([policy, label, hint]) => {
                   const selected = computer.policy === policy;
                   const locked = !mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
@@ -150,30 +151,25 @@ export function Settings({
                       onClick={() => {
                         if (!selected) void setPolicy(computer.id, policy);
                       }}
-                      className={`flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left ${
-                        selected ? "bg-background" : ""
-                      } ${locked ? "opacity-60" : ""}`}
+                      className={`flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 ${
+                        locked ? "opacity-60" : ""
+                      }`}
                     >
-                      <span
-                        aria-hidden="true"
-                        className={`mt-1 size-3.5 shrink-0 rounded-full border-2 ${
-                          selected ? "border-foreground bg-foreground" : "border-foreground/30"
-                        }`}
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-subheadline font-medium">
                           {label}
                           {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
                         </span>
-                        <span className="block text-xs leading-5 text-muted">{hint}</span>
+                        {selected && <span className="block text-caption text-muted">{hint}</span>}
                       </span>
+                      {selected && <CheckIcon className="shrink-0 text-[14px]" />}
                     </button>
                   );
                 })}
               </div>
               {confirmId === computer.id && (
                 <div className="flex flex-col gap-2">
-                  <p className="text-sm leading-6 text-muted">
+                  <p className="m-0 text-subheadline text-muted">
                     吊销后「{computer.name}」会断开。要再用，就在那台电脑上重新配对。
                   </p>
                   <div className="flex justify-end gap-2">
@@ -198,17 +194,7 @@ export function Settings({
             </div>
           ))
         )}
-        {error && <p className="text-sm text-danger">{error}</p>}
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-muted">这台电脑能做的</h3>
-        <p className="text-sm leading-6">
-          跑命令，读写主目录里的文件，列目录。也能看主屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。
-        </p>
-        <p className="text-sm leading-6 text-muted">
-          电脑菜单栏上有 Pupu 的图标：能看到它在跑什么、是不是在操作屏幕，一键收回屏幕控制，也能在那台电脑上关掉跑命令或操作屏幕。在电脑上关掉的，批准了也不做。
-        </p>
+        {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </section>
 
       <Members
@@ -225,18 +211,18 @@ export function Settings({
       />
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-muted">手机、浏览器和电脑 App</h3>
+        <h3 className="m-0 px-1 text-footnote text-muted">手机、浏览器和电脑 App</h3>
         {devices.length === 0 ? (
-          <p className="text-sm leading-6 text-muted">还没有配对的手机、浏览器或电脑 App。</p>
+          <p className="m-0 text-subheadline text-muted">还没有配对的手机、浏览器或电脑 App。</p>
         ) : (
           devices.map((device) => (
             <div
               key={device.id}
-              className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3"
+              className="flex flex-col gap-2 rounded-row bg-default px-3 py-3"
             >
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">
+                  <div className="truncate text-body font-medium">
                     {device.name}
                     {device.current && (
                       <span className="font-normal text-muted">
@@ -244,12 +230,12 @@ export function Settings({
                       </span>
                     )}
                   </div>
-                  <div className="truncate text-sm text-muted">{deviceLabel(device)}</div>
+                  <div className="truncate text-subheadline text-muted">{deviceLabel(device)}</div>
                 </div>
                 {confirmId !== device.id && mayRevoke(actor, device.memberId) && (
                   <button
                     type="button"
-                    className="shrink-0 text-sm text-danger"
+                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
                     onClick={() => {
                       setError(null);
                       setConfirmId(device.id);
@@ -261,7 +247,7 @@ export function Settings({
               </div>
               {confirmId === device.id && (
                 <div className="flex flex-col gap-2">
-                  <p className="text-sm leading-6 text-muted">
+                  <p className="m-0 text-subheadline text-muted">
                     {device.current
                       ? device.kind === "desktop"
                         ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
@@ -296,17 +282,18 @@ export function Settings({
     </>
   );
 
-  // 电脑上是居中的弹窗，宽 560；手机上是从右边滑出的抽屉。
+  // 电脑上是居中的弹窗，宽 520；手机上是从右边滑出的抽屉。
   if (wide) {
     return (
       <Modal>
         <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
           <Modal.Container placement="center" scroll="inside">
-            <Modal.Dialog className="max-h-[85dvh] w-[min(92vw,560px)] rounded-panel">
+            <Modal.Dialog className="max-h-[85dvh] w-[min(92vw,520px)] rounded-panel">
+              <Modal.CloseTrigger aria-label="关闭" />
               <Modal.Header>
                 <Modal.Heading className="text-title">设置</Modal.Heading>
               </Modal.Header>
-              <Modal.Body className="flex flex-col gap-6">{body}</Modal.Body>
+              <Modal.Body className="flex flex-col gap-6 pt-3">{body}</Modal.Body>
             </Modal.Dialog>
           </Modal.Container>
         </Modal.Backdrop>
@@ -386,28 +373,28 @@ function Members({
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-muted">成员</h3>
+      <h3 className="m-0 px-1 text-footnote text-muted">成员</h3>
       {members.map((member) => (
-        <div key={member.id} className="flex flex-col gap-2 rounded-2xl bg-default px-3 py-3">
+        <div key={member.id} className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <div className="truncate font-medium">
+              <div className="truncate text-body font-medium">
                 {member.email}
                 {member.current && <span className="font-normal text-muted"> · 你</span>}
               </div>
-              <div className="text-sm text-muted">
+              <div className="text-subheadline text-muted">
                 {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
               </div>
             </div>
             {confirmId !== member.id && mayRemoveMember(actor, member) && (
-              <button type="button" className="shrink-0 text-sm text-danger" onClick={() => onConfirm(member.id)}>
+              <button type="button" className="shrink-0 text-subheadline text-danger-ink hover:opacity-75" onClick={() => onConfirm(member.id)}>
                 移除
               </button>
             )}
           </div>
           {confirmId === member.id && (
             <div className="flex flex-col gap-2">
-              <p className="text-sm leading-6 text-muted">
+              <p className="m-0 text-subheadline text-muted">
                 移除后 {member.email} 不能再登录，他名下的手机、浏览器、电脑 App 和电脑马上断开。
               </p>
               <div className="flex justify-end gap-2">
@@ -436,7 +423,7 @@ function Members({
             placeholder="要邀请的 Google 邮箱"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="min-w-0 flex-1 rounded-xl bg-default px-3 py-2 text-sm"
+            className="min-w-0 flex-1 rounded-tag bg-default px-3 py-1.5 text-subheadline"
           />
           <Button size="sm" type="submit" isPending={inviting} isDisabled={!email.trim()}>
             邀请
@@ -444,10 +431,10 @@ function Members({
         </form>
       ) : (
         actor?.role === "creator" && (
-          <p className="text-sm leading-6 text-muted">邀请新成员要在手机 App 的设置里做：加一个人等于放宽权限。</p>
+          <p className="m-0 text-subheadline text-muted">邀请成员要在手机 App 的设置里做。</p>
         )
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
     </section>
   );
 }
@@ -459,7 +446,7 @@ function deviceLabel(device: DeviceView): string {
 }
 
 /**
- * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑填码。
+ * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑 App 填码。
  * 连过手机以后，网页生成的码配不了新手机（见 `mayPair`），要在旧手机上生成。
  * 用这个码的设备连上了，或者码过期了，就收起来。
  */
@@ -516,30 +503,23 @@ function PairNew({
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-muted">连接新设备</h3>
+      <h3 className="m-0 px-1 text-footnote text-muted">连接新设备</h3>
       {pairing && left > 0 ? (
-        <div className="flex flex-col gap-3 rounded-2xl bg-default px-3 py-3">
+        <div className="flex flex-col gap-3 rounded-row bg-default px-3 py-3">
           <div className="flex items-center gap-3">
             <QrCode text={link} label="配对二维码，用 iPhone 相机扫" />
             <div className="flex min-w-0 flex-col gap-1">
               <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
                 {pairing.code}
               </div>
-              <div className="text-sm text-muted" aria-live="polite">
+              <div className="text-subheadline text-muted" aria-live="polite">
                 {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 后过期
               </div>
             </div>
           </div>
-          <ul className="flex flex-col gap-1.5 text-sm leading-6">
-            <li>
-              手机：用相机扫二维码，在 Pupu App 里打开；或者在 App 的连接页填这个码。连过手机的，新手机要用旧手机设置里生成的码。
-            </li>
-            <li>浏览器：打开 {origin}，填这个码。</li>
-            <li>电脑：打开 Pupu 电脑 App，填这个码。还没装 App 的，在 apps/cloud 目录里运行</li>
-          </ul>
-          <pre className="overflow-x-auto rounded-xl bg-background px-3 py-2 text-xs leading-5">
-            {`npm run bridge -- pair --url ${origin} --code ${pairing.code}\nnpm run bridge -- install`}
-          </pre>
+          <p className="m-0 text-subheadline text-muted">
+            手机扫码或在 App 里填码，浏览器和电脑 App 填码。连过手机的，新手机要用旧手机设置里生成的码。
+          </p>
           <div className="flex justify-end">
             <Button size="sm" variant="tertiary" onPress={() => setPairing(null)}>
               不用了
@@ -547,20 +527,16 @@ function PairNew({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col items-start gap-2">
-          <p className="text-sm leading-6 text-muted">
-            {joined
-              ? `「${joined}」连上了。`
-              : pairing
-                ? "配对码过期了，再生成一个。"
-                : "手机、浏览器和电脑都用配对码连。码 10 分钟内有效，用一次就作废。"}
-          </p>
+        <div className="flex flex-col items-start gap-2 px-1">
+          {(joined || pairing) && (
+            <p className="m-0 text-subheadline text-muted">{joined ? `「${joined}」连上了。` : "配对码过期了，再生成一个。"}</p>
+          )}
           <Button size="sm" variant="secondary" isPending={busy} onPress={() => void create()}>
             {joined || pairing ? "再生成一个" : "生成配对码"}
           </Button>
         </div>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
     </section>
   );
 }
@@ -578,7 +554,7 @@ function QrCode({ text, label }: { text: string; label: string }) {
     return { size: qr.size, path: d };
   }, [text]);
   return (
-    <div className="shrink-0 rounded-xl bg-white p-2">
+    <div className="shrink-0 rounded-tag bg-white p-2">
       <svg
         role="img"
         aria-label={label}

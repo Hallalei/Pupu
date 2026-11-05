@@ -68,11 +68,6 @@ export function Approvals({
     }
   }
 
-  const minutes = approval ? Math.max(1, Math.round((approval.expiresAt - now) / 60000)) : 0;
-  const why = approval
-    ? [approval.reason, `${minutes} 分钟内没回应就按拒绝处理。`].filter(Boolean).join("。")
-    : "";
-
   return (
     <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
       {approval && (
@@ -83,7 +78,9 @@ export function Approvals({
           <div className="flex items-center gap-2">
             <WaitingChip />
             <span className="min-w-0 flex-1 truncate text-caption text-muted">
-              {approval.computerName} · {ago(approval.createdAt)}
+              {approval.title.includes(approval.computerName)
+                ? ago(approval.createdAt)
+                : `${approval.computerName} · ${ago(approval.createdAt)}`}
             </span>
             {visible.length > 1 && (
               <span className="shrink-0 text-caption text-muted">还有 {visible.length - 1} 条</span>
@@ -98,7 +95,7 @@ export function Approvals({
               {approval.detail}
             </pre>
           )}
-          <p className="m-0 text-subheadline text-muted">{why}</p>
+          {approval.reason && <p className="m-0 text-subheadline text-muted">{approval.reason}</p>}
           {!canAllow && !phonePaired && (
             <p className="m-0 text-subheadline text-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
           )}
@@ -108,7 +105,7 @@ export function Approvals({
               isPending={pending === "deny"}
               isDisabled={pending !== null}
               onPress={() => void decide(approval.id, "deny")}
-              className="glass h-control w-full rounded-full text-body font-semibold text-foreground"
+              className="glass lift tap h-control w-full rounded-full text-body font-semibold text-foreground"
             >
               拒绝
             </Button>
@@ -117,7 +114,7 @@ export function Approvals({
                 isPending={pending === "allow"}
                 isDisabled={pending !== null}
                 onPress={() => void decide(approval.id, "allow")}
-                className="h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
+                className="tap h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
               >
                 允许
               </Button>
