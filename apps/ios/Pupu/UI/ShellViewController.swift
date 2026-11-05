@@ -279,8 +279,8 @@ final class ShellViewController: UIViewController {
         shown = next
         setContentScrollView(next.contentScrollView(for: .top), for: .top)
 
-        // 深色是私聊的记号。天空和导航栏都在这个控制器外面，要从最外层改才盖得到。
-        let style: UIUserInterfaceStyle = next === laneChats[.private] ? .dark : .unspecified
+        // 深色是私聊的记号，主页的输入栏也发到私聊，所以主页跟着变。天空和导航栏都在这个控制器外面，要从最外层改才盖得到。
+        let style: UIUserInterfaceStyle = lane == .private && (next === laneChats[.private] || next === home) ? .dark : .unspecified
         if let root = navigationController?.parent, root.overrideUserInterfaceStyle != style {
             UIView.transition(with: root.view, duration: 0.2, options: .transitionCrossDissolve) {
                 root.overrideUserInterfaceStyle = style
