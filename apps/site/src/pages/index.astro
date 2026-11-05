@@ -21,7 +21,7 @@ import Waitlist from "../components/Waitlist.astro";
         <h1 id="hero-title" lang="en">Context,<br />Not Control.</h1>
         <p class="hero__line">组织大脑，让智能在组织间流动。</p>
         <p class="lede">
-          一个团体共用一个 Pupu。大家的聊天和项目都在一起，谁接手都不用从头讲。它常驻云端，在你们授权的电脑上把事做完。
+          一个团体共用一个 Pupu。组织的事放在大家共用的聊天和项目里，谁接手都不用从头讲。它常驻云端，在你们授权的电脑上把事做完。
         </p>
         <Waitlist id="email-top" />
       </div>
@@ -91,7 +91,7 @@ import Waitlist from "../components/Waitlist.astro";
         <div class="brain__head">
           <h2 id="brain-title">一个团体，一个大脑。</h2>
           <p class="lede">
-            Pupu 常驻云端，一个团体只要一个。每个人用自己的账号登录，和它在同一条聊天里说话。只有这一个大脑，事情不用在几个助手之间交接，也不会各记各的。
+            Pupu 常驻云端，一个团体只要一个。每个人用自己的账号登录，在大家共用的聊天里和它说话。只有这一个大脑，事情不用在几个助手之间交接，也不会各记各的。
           </p>
         </div>
         <div class="flow">
@@ -102,13 +102,11 @@ import Waitlist from "../components/Waitlist.astro";
               <span class="avatar avatar--c">陈</span>
             </div>
             <h3>人</h3>
-            <p>一起聊，一起让 Pupu 做事</p>
           </div>
           <span class="link" aria-hidden="true"></span>
           <div class="node node--pupu">
             <Cat variant="full" blink />
             <h3>Pupu</h3>
-            <p>常驻云端，手机关了它还在</p>
           </div>
           <span class="link" aria-hidden="true"></span>
           <div class="node">
@@ -117,7 +115,6 @@ import Waitlist from "../components/Waitlist.astro";
               <span class="avatar avatar--box"><Icon name="desktop" /></span>
             </div>
             <h3>电脑</h3>
-            <p>挂在主人名下，替 Pupu 动手</p>
           </div>
         </div>
       </div>
@@ -175,7 +172,7 @@ import Waitlist from "../components/Waitlist.astro";
       <div class="split__copy reveal">
         <h2 id="computer-title">知道了，<br />就能接着做。</h2>
         <p class="lede">
-          Pupu 在你们授权的电脑上跑命令、读写文件、操作屏幕，把事情做完，做了什么在项目里都看得到。电脑掉线了，Pupu 还在，照常聊，也会如实告诉你们。
+          Pupu 在你们授权的电脑上跑命令、读写文件、操作屏幕，也能用成员连上的账号，做了什么在项目里都看得到。电脑掉线了，Pupu 还在，照常聊。人在外面，也能在手机上直接看和操作自己的电脑。
         </p>
       </div>
       <div class="split__demo" data-scene>
@@ -193,6 +190,12 @@ import Waitlist from "../components/Waitlist.astro";
               <span class="avatar avatar--box"><Icon name="desktop" /></span>
               <div><strong>林夏的 MacBook</strong><span><i class="dot"></i>离线 · 3 分钟前</span></div>
             </li>
+          </ul>
+          <ul class="chips" aria-label="能连上的账号">
+            <li>Gmail</li>
+            <li>Google 日历</li>
+            <li>云端硬盘</li>
+            <li>GitHub</li>
           </ul>
           <div class="tool" data-step data-wait="400">
             <p><Icon name="doc" />读了 合同/北辰/续约草稿.docx</p>
@@ -212,9 +215,9 @@ updated 3 clauses</code></pre>
     <!-- 安全底线 -->
     <section class="split band-ink" aria-labelledby="safe-title">
       <div class="split__copy reveal">
-        <h2 id="safe-title">电脑是谁的，<br />就由谁批准。</h2>
+        <h2 id="safe-title">电脑和账号是谁的，<br />就由谁批准。</h2>
         <p class="lede">
-          上下文大家共享，电脑还是主人说了算。删除、推代码、发布这类高风险动作，先到主人手机上问一句，锁屏上就能批。操作屏幕要先授权，随时一键收回。
+          上下文大家共享，电脑和账号还是主人说了算。删除、发布、发信这类动作，先到主人手机上问一句，锁屏上就能批。操作屏幕要先授权，随时一键收回。
         </p>
       </div>
       <div class="split__demo">
@@ -227,7 +230,6 @@ updated 3 clauses</code></pre>
             <p class="badge" data-badge><Icon name="hand" />等你批准</p>
             <h3>Pupu 想在「工作室 Mac」上发布网站</h3>
             <pre lang="en"><code>npm run deploy</code></pre>
-            <p class="approve__who">这是你的电脑，只有你的手机能批</p>
             <div class="approve__actions" data-actions>
               <button type="button" class="btn btn--ghost" data-decide="no">拒绝</button>
               <button type="button" class="btn btn--ink" data-decide="yes">允许</button>
