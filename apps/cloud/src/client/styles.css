@@ -218,8 +218,8 @@ body {
 }
 
 /*
- * 登录页左边的大图：像素猫贴着底边铺满宽度，图顶上的深色接着往上铺，看不出接缝。
- * 窗口再宽也不超过高度，不然猫的耳朵会被裁掉。
+ * 登录页左边的 3D 场景（pupu-art.ts）。背景的静态头像是没有 WebGL2 时的退路。
+ * 窗口再宽也不超过高度。
  */
 .login {
   padding: calc(var(--spacing) * 3);
@@ -230,6 +230,14 @@ body {
   border-radius: var(--radius-panel);
   background: #16181f url("/pupu-avatar.png") bottom / 100% auto no-repeat;
   image-rendering: pixelated;
+  position: relative;
+  overflow: hidden;
+}
+.login-art canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 @keyframes fade-in {
