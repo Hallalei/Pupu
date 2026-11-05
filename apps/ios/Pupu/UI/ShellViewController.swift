@@ -1,18 +1,18 @@
 import UIKit
 
-/// 主界面：顶栏的三段切换（主页、聊天、项目），右边设置，项目页左边打开整页项目列表。
-/// 顶栏下方是等你批准的请示（哪一页都在），出现时把页面内容往下挤，不盖住对话。
+/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边打开整页项目列表。
+/// 顶栏下方是等你批准的请示（哪一页都在）和聊天段的「正在做」，出现时把页面内容往下挤，不盖住对话。
 /// 项目名胶囊盖在内容上，不挤内容。
 final class ShellViewController: UIViewController {
     private enum Section: Int {
-        case home, chat, projects
+        case chat, projects
     }
 
     private static let lastProjectKey = "pupu.last-project"
     /// 每条聊天看到过的 lastAt，按 session 记。用云端的时间比，手机时钟不准也不会亮错。
     private static let seenKey = "pupu.chat-seen"
 
-    private let segments = SectionSwitch(titles: ["主页", Lane.main.title, "项目"], selected: Section.chat.rawValue)
+    private let segments = SectionSwitch(titles: [Lane.main.title, "项目"], selected: Section.chat.rawValue)
     private let container = UIView()
     private let approvals = ApprovalStackView()
     private let pill = ProjectPill()
@@ -27,15 +27,12 @@ final class ShellViewController: UIViewController {
     private var atLatest = false
     private var storeToken: StoreToken?
 
-    private lazy var home = HomeViewController(
+    private lazy var doing = DoingView(
         openProject: { [weak self] project in self?.open(project) },
-        openChat: { [weak self] in self?.show(.chat) },
-        openAllProjects: { [weak self] in
-            self?.setSwitcher(open: true)
-            self?.show(.projects)
-        },
-        openSettings: { [weak self] in self?.openSettings() },
-        send: { [weak self] text in self?.sendFromHome(text) }
+        relayout: { [weak self] in
+            self?.view.setNeedsLayout()
+            self?.view.layoutIfNeeded()
+        }
     )
     private lazy var switcher = ProjectSwitcher(
         open: { [weak self] project in
@@ -91,7 +88,9 @@ final class ShellViewController: UIViewController {
 
         approvals.isHidden = true
         top.axis = .vertical
+        top.spacing = Theme.Space.s2
         top.addArrangedSubview(approvals)
+        top.addArrangedSubview(doing)
         top.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(top)
         pill.alpha = 0
@@ -115,7 +114,7 @@ final class ShellViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let height = approvals.isHidden ? 0 : top.bounds.height + Theme.Space.s3
+        let height = top.arrangedSubviews.allSatisfy(\.isHidden) ? 0 : top.bounds.height + Theme.Space.s3
         guard abs(height - topInset) > 0.5 else { return }
         topInset = height
         shown?.additionalSafeAreaInsets.top = height
@@ -143,8 +142,8 @@ final class ShellViewController: UIViewController {
     }
 
     private func render() {
+        doing.update(section == .chat ? ComputerActivity.busy(Store.shared.activity) : [])
         switch section {
-        case .home: display(home)
         case .chat: display(laneChat)
         case .projects: showProjects()
         }
@@ -155,10 +154,9 @@ final class ShellViewController: UIViewController {
     private func setLane(_ next: Lane) {
         lane = next
         segments.chatTitle = next.title
-        home.placeholder = next.placeholder
     }
 
-    /// 长按中间一段的菜单。没有私聊时不弹。
+    /// 长按聊天段的菜单。没有私聊时不弹。
     private func laneMenu() -> UIMenu? {
         guard Store.shared.chats.private != nil else { return nil }
         return UIMenu(children: Lane.allCases.map { item in
@@ -279,8 +277,8 @@ final class ShellViewController: UIViewController {
         shown = next
         setContentScrollView(next.contentScrollView(for: .top), for: .top)
 
-        // 深色是私聊的记号，主页的输入栏也发到私聊，所以主页跟着变。天空和导航栏都在这个控制器外面，要从最外层改才盖得到。
-        let style: UIUserInterfaceStyle = lane == .private && (next === laneChats[.private] || next === home) ? .dark : .unspecified
+        // 深色是私聊的记号。天空和导航栏都在这个控制器外面，要从最外层改才盖得到。
+        let style: UIUserInterfaceStyle = lane == .private && next === laneChats[.private] ? .dark : .unspecified
         if let root = navigationController?.parent, root.overrideUserInterfaceStyle != style {
             UIView.transition(with: root.view, duration: 0.2, options: .transitionCrossDissolve) {
                 root.overrideUserInterfaceStyle = style
@@ -297,12 +295,6 @@ final class ShellViewController: UIViewController {
         } completion: { _ in
             remove()
         }
-    }
-
-    /// 主页输入栏发的话：切到聊天，由聊天连上以后发出去。
-    private func sendFromHome(_ text: String) {
-        show(.chat)
-        laneChat.deliver(text)
     }
 
     private func open(_ project: Project) {
@@ -399,7 +391,7 @@ final class NoProjectViewController: UIViewController {
     }
 }
 
-/// 项目页三段下方的小胶囊，只写项目名，不接点击。
+/// 项目页顶栏下方的小胶囊，只写项目名，不接点击。
 final class ProjectPill: UIView {
     static let height: CGFloat = 28
 

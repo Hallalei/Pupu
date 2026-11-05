@@ -1,17 +1,17 @@
 import UIKit
 
-/// 顶栏中间的三段切换：玻璃胶囊底，选中的一段用 action 填充、on-action 写字，其余用 ink。
-/// 中间一段是 Pupu 的头像加当前那条聊天，长按切换大家和私聊。
+/// 顶栏中间的两段切换：玻璃胶囊底，选中的一段用 action 填充、on-action 写字，其余用 ink。
+/// 聊天段是 Pupu 的头像加当前那条聊天，长按切换大家和私聊。
 /// 不用 UISegmentedControl：iOS 26 把它放进导航栏后，选中段画成玻璃透镜，selectedSegmentTintColor 不生效，
 /// 选中的字成了浅底白字，看不清。
 final class SectionSwitch: UIControl {
     private static let inset: CGFloat = 4
-    private static let widths: [CGFloat] = [64, 82, 64]
-    private static let chatIndex = 1
+    private static let widths: [CGFloat] = [82, 64]
+    private static let chatIndex = 0
 
     private(set) var selectedIndex: Int
 
-    /// 中间一段写的那条聊天。
+    /// 聊天段写的那条聊天。
     var chatTitle: String {
         get { labels[Self.chatIndex].text ?? "" }
         set {
@@ -28,7 +28,7 @@ final class SectionSwitch: UIControl {
         }
     }
 
-    /// 长按中间一段弹的菜单，nil 就不弹。
+    /// 长按聊天段弹的菜单，nil 就不弹。
     var chatMenu: (() -> UIMenu?)? {
         get { chat.menu }
         set { chat.menu = newValue }
@@ -74,7 +74,7 @@ final class SectionSwitch: UIControl {
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
         isAccessibilityElement = false
         accessibilityTraits = .tabBar
-        accessibilityElements = [labels[0], chat, labels[2]]
+        accessibilityElements = [chat, labels[1]]
         update()
     }
 
@@ -141,7 +141,7 @@ final class SectionSwitch: UIControl {
     }
 }
 
-/// 中间一段。长按走 UIControl 自带的菜单：从这一段弹出来，不把它抬起来。
+/// 聊天段。长按走 UIControl 自带的菜单：从这一段弹出来，不把它抬起来。
 private final class ChatSegment: UIControl {
     var menu: (() -> UIMenu?)?
 

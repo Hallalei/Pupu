@@ -9,7 +9,6 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
     /// 最新进展一句：Pupu 在这个项目里最后一次回复的第一行。还没回复过是空串；旧版云端不给。
     let progress: String?
     let createdAt: Double
-    let updatedAt: Double
 
     /// 列表第二行：有进展说进展，没有说目标。都没有是 nil。
     var summary: String? {
@@ -124,7 +123,7 @@ nonisolated struct Paired: Decodable, Sendable {
     let token: String
 }
 
-/// 一台电脑现在在干什么。主页的「正在做」和锁屏的实时活动用这一份，云端 src/bridge/activity.ts 算出来。
+/// 一台电脑现在在干什么。聊天顶上的「正在做」和锁屏的实时活动用这一份，云端 src/bridge/activity.ts 算出来。
 nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
     enum State: String, Sendable {
         /// 没连上，或者心跳停了。
@@ -160,6 +159,29 @@ nonisolated struct ComputerActivity: Decodable, Sendable, Hashable {
     let screen: Bool
 
     var currentState: State { State(rawValue: state) ?? .idle }
+
+    /// 「正在做」列哪些电脑：在做事的、停着等批的，还有闲着但屏幕控制没收回的。
+    /// 屏幕控制开着的排最前：「收回」是安全出口，只摊开一行时也要看得到。
+    /// 同级按 id 排：云端按心跳排，每次心跳都可能换先后。同样的规则网页写在云端 busyComputers。
+    static func busy(_ all: [ComputerActivity]) -> [ComputerActivity] {
+        let listed = all.filter {
+            switch $0.currentState {
+            case .working, .waiting: true
+            case .idle: $0.screen
+            case .offline: false
+            }
+        }.sorted { $0.computerId < $1.computerId }
+        return [true, false].flatMap { screen in
+            [State.waiting, .working, .idle].flatMap { state in
+                listed.filter { $0.screen == screen && $0.currentState == state }
+            }
+        }
+    }
+
+    /// 停在哪些项目里等你批。一台电脑只带得出最早那条请示的项目。
+    static func waitingProjects(_ all: [ComputerActivity]) -> Set<String> {
+        Set(all.compactMap { $0.currentState == .waiting ? $0.project?.id : nil })
+    }
 }
 
 /// 一起用这个 Pupu 的人。创建者在前（需求说明 4.7）。
