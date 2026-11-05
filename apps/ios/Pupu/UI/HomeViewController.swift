@@ -1,9 +1,9 @@
 import UIKit
 
 /// 主页：一眼看到 Pupu 手上的事。最上面「正在做」，下面是「项目」和「电脑」。
-/// 底下的输入栏发的话进聊天。
+/// 底下的输入栏发的话进中间一段当前那条聊天。
 final class HomeViewController: UIViewController {
-    /// 主页上最多列这么多个项目，其余的在项目 sheet 里。
+    /// 主页上最多列这么多个项目，其余的在整页项目列表里。
     private static let projectLimit = 5
 
     private let scroll = UIScrollView()
@@ -15,6 +15,12 @@ final class HomeViewController: UIViewController {
     private let openSettings: () -> Void
     private let send: (String) -> Void
     private var token: StoreToken?
+
+    var placeholder: String {
+        get { composer.placeholder }
+        set { composer.placeholder = newValue }
+    }
+
     /// 正在收回屏幕控制的电脑。收回的请求在路上时按钮转圈，重画面板也不丢。
     private var takingBack: Set<String> = []
     /// 上次收回失败的电脑和原因，显示在那一行的第二行。
@@ -63,7 +69,6 @@ final class HomeViewController: UIViewController {
         fill.priority = .defaultHigh
         fill.isActive = true
 
-        composer.placeholder = "给 Pupu 发消息"
         composer.connected = true
         composer.onSend = { [weak self] text in
             let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -228,7 +233,7 @@ final class HomeViewController: UIViewController {
         return rows
     }
 
-    /// 面板末行「全部 N 个项目」，高 44，点开项目 sheet。
+    /// 面板末行「全部 N 个项目」，高 44，点开整页项目列表。
     private func allProjectsRow(count: Int) -> UIView {
         let title = UILabel(text: "全部 \(count) 个项目", style: .subheadline)
         title.font = Theme.font(.subheadline, weight: .medium)

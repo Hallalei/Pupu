@@ -59,7 +59,7 @@ nonisolated struct ChatContext: Sendable {
     var projects: [Project] = []
     var computers: [Computer] = []
     var approvals: [Approval] = []
-    /// 项目报回聊天的结果，按时间先后。只有聊天里有。
+    /// 该出现在这条聊天里的项目报告，按时间先后。项目里没有。
     var reports: [ReportCard] = []
     /// 用户点开或收起过的行，和默认状态相反。
     var toggled: Set<String> = []

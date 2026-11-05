@@ -25,6 +25,7 @@ final class RootViewController: UIViewController {
         }
         // 凭据没了（被吊销、换了 Pupu）或者刚连上：设置这类浮层先收起来，别盖在新页面上。
         if presentedViewController != nil { dismiss(animated: true) }
+        overrideUserInterfaceStyle = .unspecified
         if let current {
             current.willMove(toParent: nil)
             current.view.removeFromSuperview()
