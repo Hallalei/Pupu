@@ -124,12 +124,13 @@ export function App() {
       projectTags: route.kind === "chat",
       computers,
       approvals,
+      members,
       reports: route.kind === "chat" ? reports : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
-    [projects, computers, approvals, reports, refresh, applyActivity, go, route.kind]
+    [projects, computers, approvals, members, reports, refresh, applyActivity, go, route.kind]
   );
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。

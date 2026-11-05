@@ -8,6 +8,7 @@ import type {
   UserMessage
 } from "@earendil-works/pi-ai";
 import type { EntryRecord } from "@earendil-works/pi-durable";
+import { SENT_ENTRY, type Sender } from "./messages.ts";
 
 /**
  * This app's display model for a transcript. The harness returns pi's own
@@ -42,6 +43,8 @@ export type PiMessage = {
   readonly timestamp: number;
   readonly stopReason?: string;
   readonly error?: string;
+  /** 成员发的用户消息才有。早期的消息和本机开发没带凭据发的没有。 */
+  readonly sender?: Sender;
 };
 
 function userParts(content: UserMessage["content"]): PiMessagePart[] {
@@ -129,7 +132,14 @@ export function projectEntry(entry: EntryRecord): PiMessage | undefined {
     };
   }
   if (entry.kind === "pi.system" || message === undefined) return undefined;
-  return projectMessage(message, String(entry.id));
+  const projected = projectMessage(message, String(entry.id));
+  // 模型看到的正文带着名字，界面上显示原话。
+  return entry.kind === SENT_ENTRY ? { ...projected, ...sentView(entry.data) } : projected;
+}
+
+function sentView(data: EntryRecord["data"]): Pick<PiMessage, "parts" | "sender"> {
+  const { sender, input } = data as { sender: Sender; input: UserMessage["content"] };
+  return { parts: userParts(input), sender };
 }
 
 export function projectEntries(entries: readonly EntryRecord[]): PiMessage[] {

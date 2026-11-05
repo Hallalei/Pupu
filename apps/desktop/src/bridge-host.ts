@@ -4,6 +4,7 @@
  * 状态发回主进程给托盘和窗口，托盘上点的收回、停命令、本机开关发过来。
  */
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
+import { usePrebuiltHelper } from "../../cloud/bridge/computer.ts";
 import type { MenubarAction } from "../../cloud/bridge/menubar.ts";
 import { runBridge, type RunningBridge } from "../../cloud/bridge/run.ts";
 import type { FromBridge, ToBridge } from "./messages.ts";
@@ -42,7 +43,14 @@ function start(blocked: readonly string[]): void {
         }
       };
     },
-    blocked
+    blocked,
+    capture(command) {
+      post({ type: "capture", command });
+    },
+    // 假画面时输入只记日志，不动这台电脑的真鼠标。
+    ...(process.env.PUPU_FAKE_SCREEN === "1"
+      ? { inputSink: { send: (event) => console.log(`假输入：${JSON.stringify(event)}`), stop() {} } }
+      : {})
   });
 }
 
@@ -59,10 +67,13 @@ port.on("message", (event) => {
   const message = event.data as ToBridge;
   if (message.type === "config") {
     config = message.config;
+    if (message.helper) usePrebuiltHelper(message.helper);
     for (const resolve of waiting.splice(0)) resolve(message.config);
     if (!bridge) start(message.blocked);
   } else if (message.type === "action") {
     onAction?.(message.action);
+  } else if (message.type === "capture") {
+    bridge?.fromCapture(message.event);
   } else if (message.type === "stop") {
     void stop();
   }

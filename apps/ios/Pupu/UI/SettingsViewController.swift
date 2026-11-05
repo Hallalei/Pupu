@@ -45,6 +45,7 @@ final class SettingsViewController: UICollectionViewController {
         case connected
         case services
         case computers
+        case remoteDesktop
         case policy(computerId: String)
         case abilities
         case revokeComputer
@@ -63,6 +64,7 @@ final class SettingsViewController: UICollectionViewController {
         case service(Connectors.Service, busy: Bool)
         case computer(Computer)
         case noComputer
+        case remoteDesktop(Computer)
         case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case revokeComputer(Computer)
         case notifications(Push.Status, busy: Bool)
@@ -240,12 +242,18 @@ final class SettingsViewController: UICollectionViewController {
             return
         }
         title = computer.name
+        // 只有主人自己的手机能开，云端也这么判。
+        let me = Store.shared.members.first(where: \.current)
+        if computer.ownerId == nil || computer.ownerId == me?.id {
+            snapshot.appendSections([.remoteDesktop])
+            snapshot.appendItems([.remoteDesktop(computer)], toSection: .remoteDesktop)
+        }
         snapshot.appendSections([.policy(computerId: id), .abilities])
         snapshot.appendItems(Computer.Policy.allCases.map {
             .policy(computerId: id, policy: $0, selected: computer.currentPolicy == $0)
         }, toSection: .policy(computerId: id))
         snapshot.appendItems([
-            .note("跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能（开发版叫 Electron）。")
+            .note("跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。")
         ], toSection: .abilities)
         if mayRevoke(owner: computer.ownerId) {
             snapshot.appendSections([.revokeComputer])
@@ -377,6 +385,12 @@ final class SettingsViewController: UICollectionViewController {
         case .noComputer:
             content.text = "还没有授权的电脑"
             content.secondaryText = "在下面生成配对码，在电脑上配对之后，这里会显示它在不在线。"
+        case .remoteDesktop(let computer):
+            content.text = "远程桌面"
+            content.secondaryText = computer.online ? "看这台电脑的屏幕，用手机操作" : "这台电脑离线，连上才能打开"
+            content.image = UIImage(systemName: "display")
+            content.imageProperties.tintColor = Theme.ink
+            cell.accessories = computer.online ? [.disclosureIndicator()] : []
         case .policy(_, let policy, let selected):
             content.text = policy.title
             content.secondaryText = policy.detail
@@ -487,7 +501,7 @@ final class SettingsViewController: UICollectionViewController {
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
-        case .link, .computer, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .link, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
         default: false
         }
     }
@@ -499,6 +513,9 @@ final class SettingsViewController: UICollectionViewController {
             navigationController?.pushViewController(SettingsViewController(page: target), animated: true)
         case .computer(let computer):
             navigationController?.pushViewController(SettingsViewController(page: .computer(computer.id)), animated: true)
+        case .remoteDesktop(let computer):
+            guard computer.online, let endpoint = Connection.shared.endpoint else { return }
+            RemoteDesktopViewController.open(computer, endpoint: endpoint, from: self)
         case .policy(let computerId, let policy, let selected):
             guard !selected, let api = Store.shared.api else { return }
             Task {

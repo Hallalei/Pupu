@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ComputerAction, UpFrame } from "../src/bridge/protocol.ts";
 import type { ActionHost } from "./actions.ts";
+import { yieldToHuman } from "./remote.ts";
 import { ensureSwiftBinary } from "./swift.ts";
 
 const SOURCE = fileURLToPath(new URL("./computer.swift", import.meta.url));
@@ -59,6 +60,7 @@ export async function performComputer(
   }
   const shot = lastShot;
   if (!shot) throw new Error("还没有截图。先截一张，再用图上的坐标。");
+  await yieldToHuman();
   if (action.op === "type") {
     const text = action.text ?? "";
     if (!text.trim()) throw new Error("没有要输入的文字。");
@@ -139,7 +141,15 @@ function requiredNumber(value: Record<string, unknown>, key: string): number {
   return number;
 }
 
+let prebuilt: string | null = null;
+
+/** 电脑 App 的正式包带着编好、签好名的屏幕助手，用它，不在本机编。 */
+export function usePrebuiltHelper(bin: string): void {
+  prebuilt = bin;
+}
+
 function ensureHelper(): Promise<string> {
+  if (prebuilt) return Promise.resolve(prebuilt);
   return ensureSwiftBinary({ source: SOURCE, name: "pupu-computer-use" });
 }
 

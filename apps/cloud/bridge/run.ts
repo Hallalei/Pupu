@@ -1,7 +1,10 @@
 import { onActivity, runningCommands, screenActivity, stopAllJobs } from "./actions.ts";
+import type { DesktopInput } from "../src/bridge/desktop.ts";
 import type { BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
 import { menubarState, type Menubar, type MenubarAction, type MenubarProblem } from "./menubar.ts";
+import { InputHelper } from "./input.ts";
+import { RemoteAgent, type CaptureCommand, type CaptureEvent } from "./remote.ts";
 import { openBridge, type BridgeConnection } from "./session.ts";
 
 /**
@@ -17,10 +20,16 @@ export type RunOptions = {
   readonly ui: (onAction: (action: MenubarAction) => void) => Menubar;
   /** 文件工具不让碰的路径，挡住凭据文件。 */
   readonly blocked: readonly string[];
+  /** 远程桌面的推流窗口。命令行的桥没有，手机上会说要用电脑 App。 */
+  readonly capture?: (command: CaptureCommand) => void;
+  /** 开发测试时换掉输入助手，不动真鼠标。 */
+  readonly inputSink?: { send(event: DesktopInput): void; stop(): void };
 };
 
 export type RunningBridge = {
   readonly done: Promise<void>;
+  /** 推流窗口发来的。 */
+  fromCapture(event: CaptureEvent): void;
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
@@ -37,7 +46,17 @@ export function runBridge(options: RunOptions): RunningBridge {
   let takebackQueued = false;
   let wake: (() => void) | null = null;
 
+  const input = options.inputSink ?? new InputHelper((message) => remote.inputFailed(message));
+  const remote: RemoteAgent = new RemoteAgent({
+    send: (session, message) => current?.send({ type: "desktop", session, message }),
+    capture: options.capture ?? null,
+    allowScreen: () => switches.allowScreen,
+    input,
+    onChange: () => refresh()
+  });
+
   const takeback = () => {
+    remote.stop("takeback");
     cloud = { ...cloud, screen: false };
     takebackQueued = !current?.send({ type: "takeback" });
   };
@@ -46,6 +65,8 @@ export function runBridge(options: RunOptions): RunningBridge {
       takeback();
     } else if (action.action === "stopJobs") {
       stopAllJobs();
+    } else if (action.action === "stopRemote") {
+      remote.stop("takeback");
     } else if (action.action === "setAllowCommands") {
       switches = { ...switches, allowCommands: action.value };
       await writeLocal(switches);
@@ -74,7 +95,8 @@ export function runBridge(options: RunOptions): RunningBridge {
         allowCommands: switches.allowCommands,
         allowScreen: switches.allowScreen,
         url: config?.url ?? "",
-        name: config?.name ?? ""
+        name: config?.name ?? "",
+        remote: remote.status
       })
     );
   };
@@ -115,6 +137,9 @@ export function runBridge(options: RunOptions): RunningBridge {
             cloud = { pending: status.pending, screen: status.screen };
             refresh();
           },
+          onDesktop(frame) {
+            remote.handle(frame.session, frame.message);
+          },
           onClosed() {
             connected = false;
             cloud = { pending: [], screen: false };
@@ -154,9 +179,11 @@ export function runBridge(options: RunOptions): RunningBridge {
 
   return {
     done,
+    fromCapture: (event) => remote.fromCapture(event),
     stop() {
       if (stopped) return;
       stopped = true;
+      remote.stop("offline");
       stopAllJobs();
       current?.close();
       wake?.();

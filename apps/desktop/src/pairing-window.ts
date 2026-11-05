@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 
 /** 配对窗口打开时要显示什么。 */
 export type PairingInfo = {
@@ -50,6 +50,7 @@ export function createPairWindow(
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      devTools: !app.isPackaged,
       // 和主窗口分开：这里不需要 Pupu 的 cookie。
       partition: "pupu-pairing"
     }

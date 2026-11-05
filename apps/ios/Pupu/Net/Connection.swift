@@ -23,6 +23,13 @@ nonisolated struct Endpoint: Equatable, Sendable {
         return components.url!
     }
 
+    /// 远程桌面的信令：`/api/desktop/:id`。
+    func desktopURL(computer id: String) -> URL {
+        var components = URLComponents(url: base.appending(path: "api/desktop/\(id)"), resolvingAgainstBaseURL: false)!
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        return components.url!
+    }
+
     func authorize(_ request: inout URLRequest) {
         if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

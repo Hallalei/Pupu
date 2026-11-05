@@ -1,5 +1,6 @@
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
+import type { CaptureCommand, CaptureEvent } from "../../cloud/bridge/remote.ts";
 
 /**
  * 主进程和托管的桥之间的消息，走 utilityProcess 的 MessagePort。
@@ -11,11 +12,17 @@ export type ToBridge =
       readonly config: BridgeConfig;
       /** 文件工具不让碰的路径：App 的凭据文件，还有命令行桥的 bridge.json。 */
       readonly blocked: readonly string[];
+      /** 正式包里预先编好、签好名的屏幕助手。开发版是 null，桥自己编。 */
+      readonly helper: string | null;
     }
   | { readonly type: "action"; readonly action: MenubarAction }
+  /** 推流窗口发来的 offer、候选、输入。 */
+  | { readonly type: "capture"; readonly event: CaptureEvent }
   | { readonly type: "stop" };
 
 export type FromBridge =
   | { readonly type: "state"; readonly state: MenubarState }
+  /** 让推流窗口做事。 */
+  | { readonly type: "capture"; readonly command: CaptureCommand }
   /** 云端拒了这份凭据：这台电脑被吊销了。桥停下来等新凭据。 */
   | { readonly type: "rejected" };

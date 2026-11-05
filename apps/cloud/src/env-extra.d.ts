@@ -16,6 +16,9 @@ interface Env {
   readonly CREATOR_EMAIL?: string;
   /** 只在本机开发用：假的 Google（授权、换 token、公钥都在这个地址下），不用真去 Google 建客户端。线上不要设。 */
   readonly GOOGLE_OIDC_DEV_BASE?: string;
+  /** Cloudflare Realtime 的 TURN key。两个都设了才签 TURN 凭证，不然只用 STUN。 */
+  readonly TURN_KEY_ID?: string;
+  readonly TURN_KEY_TOKEN?: string;
   /** 部署好的 open-connector 地址。和 CONNECTOR_TOKEN 都设了才开「账户」（连接器），见 src/connectors/client.ts。 */
   readonly CONNECTOR_URL?: string;
   /** open-connector 的 OOMOL_CONNECT_ADMIN_TOKEN。 */

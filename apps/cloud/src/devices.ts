@@ -64,8 +64,15 @@ const SEEN_INTERVAL_MS = 60_000;
 /** Worker 认出是哪台设备后，用这个请求头告诉 Durable Object，给它的 WebSocket 打标签。 */
 export const DEVICE_HEADER = "x-pupu-device";
 
+const DEVICE_TAG_PREFIX = "pupu-device:";
+
 export function deviceTag(id: string): string {
-  return `pupu-device:${id}`;
+  return `${DEVICE_TAG_PREFIX}${id}`;
+}
+
+/** 连接的标签里记着的设备。本机开发没带凭据时没有。 */
+export function deviceOfTags(tags: readonly string[]): string | null {
+  return tags.find((tag) => tag.startsWith(DEVICE_TAG_PREFIX))?.slice(DEVICE_TAG_PREFIX.length) ?? null;
 }
 
 // Crockford base32：没有 I、L、O、U，念和输都不容易错。

@@ -1,0 +1,55 @@
+# 电脑 App 的正式包（技术方案 5.5）。用 `npm run dist` 跑 package.mjs，别直接调 electron-builder：
+# 屏幕助手要先编好、签好名，签名身份和公证凭据由它找好了传进来，DMG 也由它另外签名、公证。
+# 写法参考 paseo 的 electron-builder.yml 和 emdash 的 electron-builder.config.ts，看思路自己写的。
+appId: com.leizi.pupu.desktop
+productName: Pupu
+copyright: Copyright © 2026 Lei Wang
+npmRebuild: false
+directories:
+  output: release
+  buildResources: build
+# 主进程、preload、桥都由 build.mjs 打成单个文件，包里不带 node_modules。
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+  - "!dist/computer.swift"
+# 照 Cindy 正式包收紧入口：别的程序不能借 Pupu 的身份和授权跑自己的代码。
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+  grantFileProtocolExtraPrivileges: false
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  artifactName: Pupu-${version}-${arch}.${ext}
+  category: public.app-category.productivity
+  # 屏幕助手截屏用的 SCScreenshotManager 要 macOS 14。
+  minimumSystemVersion: "14.0"
+  darkModeSupport: true
+  icon: icons/icon.icns
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # package.mjs 已经用同一个身份签好了屏幕助手（不带 JIT 那些 entitlements），这里别再签一遍。
+  signIgnore:
+    - /Contents/Resources/helpers/pupu-computer-use$
+  # package.mjs 发正式包时打开。
+  notarize: false
+  extraResources:
+    # macOS 26 用 Assets.car 里的 AppIcon，深色、着色由系统接管；icon.icns 给更早的系统和 DMG。
+    - from: icons/Assets.car
+      to: Assets.car
+    - from: out/pupu-computer-use
+      to: helpers/pupu-computer-use
+  extendInfo:
+    CFBundleIconName: AppIcon
+    NSAppleEventsUsageDescription: Pupu 替你在这台电脑上跑的命令要控制别的 App。
+dmg:
+  title: Pupu
+  # package.mjs 签名、公证、staple。
+  sign: false

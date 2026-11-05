@@ -30,6 +30,7 @@ export type BridgeConnection = {
 export type BridgeHooks = {
   onReady?(): void;
   onStatus?(status: Extract<DownFrame, { type: "status" }>): void;
+  onDesktop?(frame: Extract<DownFrame, { type: "desktop" }>): void;
   onClosed?(): void;
 };
 
@@ -104,6 +105,10 @@ export function openBridge(
       }
       if (frame.type === "status") {
         hooks.onStatus?.(frame);
+        return;
+      }
+      if (frame.type === "desktop") {
+        hooks.onDesktop?.(frame);
         return;
       }
       if (frame.type === "cancel") controlJob(frame.requestId, "kill");

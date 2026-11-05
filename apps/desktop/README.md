@@ -59,7 +59,7 @@ curl -s http://127.0.0.1:9333/json   # 找到页面，用它的 webSocketDebugge
 
 `PUPU_BACKGROUND=1` 时点「用 Google 登录」不开系统浏览器（它会跑到前台），登录地址写进 `~/Library/Logs/Pupu Dev/main.log`（「后台测试，不开浏览器：…」那一行），用 curl 带着 cookie 走完它就行，配合 `apps/cloud/dev/fake-google.mjs`。
 
-`PUPU_USER_DATA` 换一份 App 数据（凭据、cookie），`PUPU_DIR` 换一份桥的数据（代替 `~/.pupu`），这样能同时跑两套，也不碰正在用的配对。这几个环境变量只在开发版里认，正式包不认 `PUPU_BACKGROUND`、`PUPU_URL`、`PUPU_USER_DATA`。配对、吊销、桥重启、开关、退出这些主进程的事，尽量用 CDP 调 `window.pupuPairing` / `window.pupuDesktop`，或者对本机 wrangler dev 发请求来验，不开窗口给人看。
+`PUPU_USER_DATA` 换一份 App 数据（凭据、cookie），`PUPU_DIR` 换一份桥的数据（代替 `~/.pupu`），这样能同时跑两套，也不碰正在用的配对。这几个环境变量只在开发版里认：正式包启动时把 `PUPU_` 开头的环境变量全删掉，桥也跟着不认。配对、吊销、桥重启、开关、退出这些主进程的事，尽量用 CDP 调 `window.pupuPairing` / `window.pupuDesktop`，或者对本机 wrangler dev 发请求来验，不开窗口给人看。
 
 ### 系统授权
 
@@ -76,7 +76,65 @@ curl -s http://127.0.0.1:9333/json   # 找到页面，用它的 webSocketDebugge
 open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 ```
 
-开发版 Electron 是临时签名，换 Electron 版本后授权要重开。签名、公证、收紧入口（Fuses）、自动更新、开机自启在 M4。
+开发版 Electron 是临时签名，换 Electron 版本后授权要重开。正式包见下面「打包和发布」；自动更新、开机自启还没做。
+
+## 打包和发布
+
+`npm run dist` 跑 `package.mjs`，出能发给别人装的正式包，产物在 `release/`：`mac-arm64/Pupu.app` 和 `Pupu-<版本>-arm64.dmg`。只出 Apple 芯片版本。
+
+### 第一次打包前
+
+1. **Developer ID 证书**：Xcode → Settings → Accounts → 选团队 → Manage Certificates → 左下角 + → Developer ID Application。
+2. **公证凭据**：在 account.apple.com → 登录与安全 → App 专用密码 里新建一个，再在终端里存进钥匙串（第二行会提示粘贴密码）：
+
+   ```bash
+   TEAM=$(security find-identity -v -p codesigning | sed -nE 's/.*Developer ID Application: .*\(([A-Z0-9]{10})\).*/\1/p' | head -1)
+   xcrun notarytool store-credentials pupu-notary --apple-id <Apple ID 邮箱> --team-id "$TEAM"
+   ```
+
+   凭据名默认 `pupu-notary`，用别的名字时设 `PUPU_NOTARY_PROFILE`。第一次签名时系统会问 codesign 能不能用钥匙串里的私钥，点「始终允许」。
+
+### 打包
+
+```bash
+npm install
+npm run dist
+```
+
+依次做这几件事，哪一步不过就停下：
+
+1. 找钥匙串里的 Developer ID Application 证书，确认 notarytool 的凭据在；
+2. `build.mjs` 打出 `dist/`；
+3. 把桥的 `computer.swift` 编成屏幕助手 `out/pupu-computer-use`（`-target arm64-apple-macos14.0`），用同一个证书签名，开 hardened runtime，不带 entitlements；
+4. electron-builder 按 `electron-builder.yml` 打 Pupu.app：写 Fuses、签名（hardened runtime，entitlements 在 `build/`）、提交公证、staple，再打 DMG；
+5. DMG 签名、公证、staple；
+6. 验收：`codesign --verify --deep --strict`、`spctl --assess`（App 和 DMG 都要显示 `source=Notarized Developer ID`）、`xcrun stapler validate`，再打出 Fuses 的状态。
+
+公证每次要几分钟。`npm run dist -- --local` 是本机试打包：临时签名、不开 hardened runtime、不公证，只用来看打包本身对不对，别拿去装，也别给它开系统授权（会记在临时签名名下，正式包用不上）。
+
+### 正式包和开发版的区别
+
+| | 开发版 | 正式包 |
+|---|---|---|
+| 程序 | `node_modules/electron/dist/Electron.app` 跑 `apps/desktop` | `Pupu.app`，bundle id `com.leizi.pupu.desktop` |
+| 签名 | Electron 自带的临时签名 | Developer ID，hardened runtime，公证过 |
+| 连哪个 Pupu | 线上，或者 `PUPU_URL` | 只连线上 |
+| 数据 | `~/Library/Application Support/Pupu Dev`，日志在 `~/Library/Logs/Pupu Dev/` | `~/Library/Application Support/Pupu`，日志在 `~/Library/Logs/Pupu/` |
+| 屏幕助手 | 桥在本机编到 `~/.pupu/bin/pupu-computer-use` | 包里编好、签好的 `Contents/Resources/helpers/pupu-computer-use`，主进程经 MessagePort 把路径告诉桥 |
+| 调试 | 认 `PUPU_*` 环境变量，能开 DevTools、`--remote-debugging-port` | 删掉 `PUPU_*`，关 DevTools；带 `--remote-debugging-port`、`--inspect`、`--js-flags` 这类参数启动就直接退出 |
+
+收紧入口照 Cindy 正式包的 Fuses：关 RunAsNode、`NODE_OPTIONS`、`--inspect`，开 asar 完整性校验、只从 asar 加载、cookie 加密，关 file:// 的额外权限。桥走 `utilityProcess`，不受 RunAsNode 影响。
+
+entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，屏幕助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
+
+### 第一次装正式包
+
+1. 打开 DMG，把 Pupu 拖进「应用程序」，从那里打开。
+2. 系统会问 Pupu 能不能用钥匙串里的「Pupu Safe Storage」（开发版建的，存凭据的密钥），点「始终允许」。
+3. 弹配对窗口：在手机或浏览器的设置里生成一个配对码填进去。这台电脑用命令行或开发版配过对时，配对窗口会问要不要沿用 `~/.pupu/bridge.json` 的授权，沿用就还是同一台电脑，不会多出一台。
+4. 让 Pupu 截一次屏、点一次，按提示在系统设置里给「Pupu」开屏幕录制和辅助功能。
+
+正式包和开发版不能同时连着：云端只认先连上的那个桥，后连的那个托盘上显示「这台电脑已经有别的桥连着」。换着用时先退出另一个。
 
 ## 图标
 
@@ -84,10 +142,9 @@ open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 
 - **菜单栏**：`static/icons/tray-*.png`，单色模板图。空闲时气泡是空的；忙和看屏幕时气泡里有输入点；等你批准时右上角多一个圆点；离线和没配对时变淡。
 - **程序坞**：开发版跑的是 Electron.app，启动时用 `static/icons/dock.png` 换掉 Electron 的图标。
-- **打包（M4）**：`icons/` 里两份都要放进 App 包。
-  - `icon.icns` 放进 `Contents/Resources`，Info.plist 写 `CFBundleIconFile = icon`，给 macOS 26 以前的系统和 DMG 用。
-  - `Assets.car` 也放进 `Contents/Resources`，写 `CFBundleIconName = AppIcon`，macOS 26 用它，深色、着色模式由系统接管。
-  - electron-builder 的写法：`mac.icon` 指向 icns，`extraResources` 带上 `Assets.car`，`mac.extendInfo` 加 `CFBundleIconName`。Forge 的写法照 comm 的 `desktop/forge.config.cjs`。
+- **正式包**：`icons/` 里两份都放进 App 包（`electron-builder.yml`）。
+  - `icon.icns` 由 `mac.icon` 放进 `Contents/Resources`，Info.plist 里是 `CFBundleIconFile = icon.icns`，给 macOS 26 以前的系统和 DMG 用。
+  - `Assets.car` 由 `extraResources` 放进 `Contents/Resources`，`mac.extendInfo` 写 `CFBundleIconName = AppIcon`，macOS 26 用它，深色、着色模式由系统接管。
   - 实测（macOS 26.3）：只放 icns 也不会被套灰底，因为图案本身是标准圆角方块。
 
 ## 参考
@@ -96,5 +153,7 @@ open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 - Paseo `packages/desktop`（Apache-2.0）：sandbox 里的 preload 只能 `require("electron")`，要打成单个文件；窗口的跳转拦截。
 - VS Code `extensions/github-authentication`（MIT）：在系统浏览器里登录、回调送到本机回环端口（`listen(0, "127.0.0.1")`）再跳一个本地结果页的写法（RFC 8252）。
 - deepchat `src/main`（Apache-2.0）：`utilityProcess` 宿主的拉起、消息和退出重启（`scheduler/schedulerProcessManager.ts`），托盘模板图。
+- Paseo `packages/desktop/electron-builder.yml`、emdash `apps/emdash-desktop/electron-builder.config.ts`：electron-builder 的签名、hardened runtime、entitlements 和 `electronFuses` 写法。
+- Cindy `apps/desktop/forge.config.ts`、`scripts/ci/lib.mjs`：正式包的 Fuses 取值，Swift 助手先签再签整个 App，DMG 单独签名、公证。deepchat `scripts/notarize-dmg.js` 和 `mac.signIgnore`：自带的 Computer Use 助手自己签、electron-builder 跳过它，DMG 另外公证。
 
 都是看思路自己写的，没搬代码。

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- V8 要 JIT。 -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- 桥跑的命令（osascript 之类）算在 Pupu 头上，开了 hardened runtime 要这一项才能控制别的 App。 -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

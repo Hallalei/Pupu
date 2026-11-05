@@ -11,6 +11,12 @@ nonisolated enum Part: Equatable, Sendable {
     case toolResult(id: String, name: String, text: String, details: JSON?, error: Bool)
 }
 
+/// 发这条消息的成员。名字是发的时候的名字，和云端 src/messages.ts 的 Sender 一样。
+nonisolated struct Sender: Equatable, Sendable {
+    let id: String
+    let name: String
+}
+
 nonisolated struct Message: Equatable, Sendable {
     enum Role: String, Sendable {
         case user, assistant, tool, notice
@@ -23,6 +29,8 @@ nonisolated struct Message: Equatable, Sendable {
     let timestamp: Double
     var stopReason: String?
     var error: String?
+    /// 成员发的用户消息才有。早期的消息没有。
+    var sender: Sender?
 
     var text: String {
         parts.map { part in
@@ -41,6 +49,8 @@ nonisolated struct Message: Equatable, Sendable {
 
 nonisolated enum Transcript {
     static let liveID = "live"
+    /// 成员发的消息在 pi 里的 entry 种类，和云端 src/messages.ts 的 SENT_ENTRY 一样。
+    static let sentEntry = "pupu.sent"
 
     static func project(message: JSON, id: String) -> Message {
         let timestamp = message["timestamp"]?.number ?? 0
@@ -89,7 +99,14 @@ nonisolated enum Transcript {
             return Message(id: id, role: .notice, parts: [.text("上下文已重置")], timestamp: 0)
         }
         guard kind != "pi.system", let message = entry["model"]?[0] else { return nil }
-        return project(message: message, id: id)
+        var projected = project(message: message, id: id)
+        // 模型看到的正文带着名字，界面上显示原话。
+        if kind == sentEntry, let data = entry["data"], let sender = data["sender"],
+           let senderId = sender["id"]?.string, let name = sender["name"]?.string {
+            projected.parts = userParts(data["input"])
+            projected.sender = Sender(id: senderId, name: name)
+        }
+        return projected
     }
 
     static func project(entries: [JSON]) -> [Message] {

@@ -2,6 +2,7 @@ import { utilityProcess, type UtilityProcess } from "electron";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import { bridgeEnv } from "./env.ts";
+import type { CaptureCommand, CaptureEvent } from "../../cloud/bridge/remote.ts";
 import type { FromBridge, ToBridge } from "./messages.ts";
 
 /** 跑了这么久才退出的，退避从头算。 */
@@ -11,6 +12,8 @@ const MAX_DELAY_MS = 60_000;
 export type SupervisorHooks = {
   onState(state: MenubarState): void;
   onRejected(): void;
+  /** 桥让推流窗口做事。 */
+  onCapture(command: CaptureCommand): void;
   /** 桥意外退出，`delay` 毫秒后重启。 */
   onCrash(code: number, delay: number): void;
   log(line: string): void;
@@ -40,15 +43,19 @@ export class BridgeSupervisor {
   }
 
   /** 给桥一份凭据。还没起就拉起来，已经在跑就换上新的。 */
-  start(config: BridgeConfig, blocked: readonly string[]): void {
+  start(config: BridgeConfig, blocked: readonly string[], helper: string | null): void {
     this.#stopping = false;
-    this.#config = { type: "config", config, blocked };
+    this.#config = { type: "config", config, blocked, helper };
     if (this.#child) this.#send(this.#config);
     else if (!this.#timer) this.#spawn();
   }
 
   action(action: MenubarAction): void {
     this.#send({ type: "action", action });
+  }
+
+  capture(event: CaptureEvent): void {
+    this.#send({ type: "capture", event });
   }
 
   /** 让桥停掉命令、断开连接再退出；等不到就直接杀。 */
@@ -101,6 +108,7 @@ export class BridgeSupervisor {
     child.on("message", (message: FromBridge) => {
       if (message.type === "state") this.#hooks.onState(message.state);
       else if (message.type === "rejected") this.#hooks.onRejected();
+      else if (message.type === "capture") this.#hooks.onCapture(message.command);
     });
     child.on("exit", (code) => {
       if (this.#child === child) this.#child = null;

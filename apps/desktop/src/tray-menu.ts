@@ -45,6 +45,9 @@ export function trayMenu(view: TrayView, send: (action: TrayAction) => void): Me
     { label: state.title, enabled: false },
     ...state.lines.slice(0, 8).map((line): MenuItemConstructorOptions => ({ label: `  ${line}`, enabled: false })),
     { type: "separator" },
+    ...(state.remote
+      ? [{ label: "断开远程桌面", click: click({ action: "stopRemote" }) } satisfies MenuItemConstructorOptions]
+      : []),
     {
       label: "收回屏幕控制",
       enabled: state.screenGrant || state.status === "screen",
