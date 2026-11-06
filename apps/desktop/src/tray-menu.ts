@@ -6,6 +6,7 @@ export type TrayAction =
   | MenubarAction
   | { readonly action: "open" }
   | { readonly action: "pair" }
+  | { readonly action: "update" }
   | { readonly action: "quit" };
 
 /** 托盘要显示的：桥报来的状态，加上这台电脑配没配好。 */
@@ -13,6 +14,8 @@ export type TrayView = {
   readonly state: MenubarState | null;
   /** 还没配对，或者凭据被吊销了：菜单里给「配对」。 */
   readonly needsPairing: boolean;
+  /** 下好了、等重启的新版本。 */
+  readonly update: string | null;
 };
 
 export function trayTooltip(view: TrayView): string {
@@ -31,6 +34,7 @@ export function trayMenu(view: TrayView, send: (action: TrayAction) => void): Me
     { label: "打开 Pupu", click: click({ action: "open" }) },
     ...(view.needsPairing ? [{ label: "配对这台电脑…", click: click({ action: "pair" }) }] : []),
     { type: "separator" },
+    ...(view.update ? [{ label: `重启并更新到 ${view.update}`, click: click({ action: "update" }) }] : []),
     { label: "退出 Pupu（这台电脑会下线）", click: click({ action: "quit" }) }
   ];
   const state = view.state;

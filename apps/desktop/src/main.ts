@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   app,
+  autoUpdater,
   BrowserWindow,
   ipcMain,
   Menu,
@@ -33,6 +34,7 @@ import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingReq
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
 import type { TrayAction } from "./tray-menu.ts";
+import { startUpdates } from "./updates.ts";
 import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, originOf, sameOrigin } from "./urls.ts";
 import { computerView } from "./view.ts";
 import { windowChrome } from "./window-chrome.ts";
@@ -78,6 +80,8 @@ let signIn: AbortController | null = null;
 let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
+/** 下好了、等重启的新版本。 */
+let update: string | null = null;
 
 const LOAD_TIMEOUT_MS = 15_000;
 
@@ -519,7 +523,7 @@ function sendComputer(): void {
 }
 
 function render(): void {
-  tray?.render({ state: bridgeState, needsPairing: !pairing.desktop || !pairing.computer });
+  tray?.render({ state: bridgeState, needsPairing: !pairing.desktop || !pairing.computer, update });
   sendComputer();
 }
 
@@ -593,6 +597,7 @@ function registerIpc(): void {
 function onTray(action: TrayAction): void {
   if (action.action === "open") void openMain();
   else if (action.action === "pair") openPairWindow();
+  else if (action.action === "update") autoUpdater.quitAndInstall();
   else if (action.action === "quit") app.quit();
   else void bridgeAction(action).catch((error: unknown) => log(message(error)));
 }
@@ -643,6 +648,10 @@ async function boot(): Promise<void> {
   pairing = await loadPairing();
   startBridge();
   render();
+  startUpdates((version) => {
+    update = version;
+    render();
+  }, log);
   if (pairing.desktop) await openMain();
   else openPairWindow();
 }

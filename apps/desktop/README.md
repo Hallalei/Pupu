@@ -80,7 +80,7 @@ open -n -a "$PWD/node_modules/electron/dist/Electron.app" --args "$PWD"
 
 ## 打包和发布
 
-`npm run dist` 跑 `package.mjs`，出能发给别人装的正式包，产物在 `release/`：`mac-arm64/Pupu.app` 和 `Pupu-<版本>-arm64.dmg`。只出 Apple 芯片版本。
+`npm run dist` 跑 `package.mjs`，出能发给别人装的正式包，产物在 `release/`：`mac-arm64/Pupu.app`、`Pupu-<版本>-arm64.dmg` 和自动更新用的 `Pupu-<版本>-arm64.zip`。只出 Apple 芯片版本。
 
 ### 第一次打包前
 
@@ -126,6 +126,14 @@ npm run dist
 收紧入口照 Cindy 正式包的 Fuses：关 RunAsNode、`NODE_OPTIONS`、`--inspect`，开 asar 完整性校验、只从 asar 加载、cookie 加密，关 file:// 的额外权限。桥走 `utilityProcess`，不受 RunAsNode 影响。
 
 entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，屏幕助手和输入助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
+
+### 发新版
+
+1. 改 `package.json` 的 `version`。
+2. `npm run dist`。
+3. `npm run release`，把 zip、DMG 和清单 `mac-arm64.json` 传到 R2 的 `pupu-downloads` 桶，公开域名是 `dl.getpupu.com`。
+
+已装的 App 启动时和每 4 小时查一次清单，有新版本就在后台下好，托盘里多一项「重启并更新到 x.x.x」。第一次安装用 `https://dl.getpupu.com/Pupu-arm64.dmg`。
 
 ### 第一次装正式包
 

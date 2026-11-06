@@ -1,7 +1,7 @@
 {
   "name": "@pupu/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pupu 的电脑 App：托管桥、托盘、加载网页界面",
   "main": "dist/main.cjs",
   "scripts": {
@@ -9,7 +9,8 @@
     "dev": "node build.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/*.test.ts",
-    "dist": "node package.mjs"
+    "dist": "node package.mjs",
+    "release": "node release.mjs"
   },
   "devDependencies": {
     "@electron/fuses": "1.8.0",

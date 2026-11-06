@@ -45,7 +45,7 @@ export class PupuTray {
   constructor(onAction: (action: TrayAction) => void) {
     this.#onAction = onAction;
     this.#tray = new Tray(icon("offline") ?? nativeImage.createEmpty());
-    this.render({ state: null, needsPairing: false });
+    this.render({ state: null, needsPairing: false, update: null });
   }
 
   render(view: TrayView): void {

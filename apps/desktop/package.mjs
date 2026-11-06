@@ -1,9 +1,9 @@
 // 出电脑 App 的正式包（技术方案 5.5），产物在 release/：
 // 1. build.mjs 打出 dist/；
 // 2. 屏幕助手 computer.swift、输入助手 input.swift 编到 out/，用同一个身份签名、开 hardened runtime；
-// 3. electron-builder 按 electron-builder.yml 打 Pupu.app（Fuses、签名、公证并 staple）和 DMG；
+// 3. electron-builder 按 electron-builder.yml 打 Pupu.app（Fuses、签名、公证并 staple）、DMG 和自动更新用的 zip；
 // 4. DMG 签名、公证、staple；
-// 5. 验签名、Gatekeeper、公证票据、Fuses 和 entitlements。
+// 5. 验签名、Gatekeeper、公证票据、Fuses 和 entitlements，zip 解开来也验一遍。
 //
 //   npm run dist               正式包。钥匙串里要有 Developer ID Application 证书，notarytool 要存好凭据
 //                              （默认叫 pupu-notary，PUPU_NOTARY_PROFILE 换名字），见 README。
@@ -11,7 +11,8 @@
 //
 // 签名顺序和 DMG 单独公证参考 cindy 的 scripts/ci/lib.mjs、deepchat 的 scripts/notarize-dmg.js。
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
@@ -27,6 +28,7 @@ const helpers = [
 ];
 const app = path.join(root, "release", "mac-arm64", "Pupu.app");
 const dmg = path.join(root, "release", `Pupu-${version}-arm64.dmg`);
+const zip = path.join(root, "release", `Pupu-${version}-arm64.zip`);
 
 /** 跑一个命令，输出直接打到终端；`capture` 时收下 stdout 返回。 */
 function run(command, args, { capture = false } = {}) {
@@ -104,6 +106,10 @@ async function verify() {
   await run("xcrun", ["stapler", "validate", app]);
   await run("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "-vv", dmg]);
   await run("xcrun", ["stapler", "validate", dmg]);
+  const unpacked = await mkdtemp(path.join(tmpdir(), "pupu-zip-"));
+  await run("ditto", ["-x", "-k", zip, unpacked]);
+  await run("spctl", ["--assess", "--type", "execute", "-vv", path.join(unpacked, "Pupu.app")]);
+  await run("xcrun", ["stapler", "validate", path.join(unpacked, "Pupu.app")]);
 }
 
 const identity = local ? null : await signingIdentity();
@@ -112,7 +118,7 @@ await run("node", ["build.mjs"]);
 await buildHelpers(identity);
 if (!local) process.env.APPLE_KEYCHAIN_PROFILE = profile;
 await build({
-  targets: Platform.MAC.createTarget(["dmg"], Arch.arm64),
+  targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64),
   publish: "never",
   // 临时签名开 hardened runtime 要关库校验，本机试打包就不开了。
   config: local
