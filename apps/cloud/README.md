@@ -129,7 +129,7 @@ ID token 的校验步骤对照了 [panva/oauth4webapi](https://github.com/panva/
 
 ### 让新账号自己开 Pupu
 
-`wrangler.jsonc` 的 `PUPU_SEATS` 是名额，`0` 是不开放，这时和只有一个 Pupu 时一样。改成 `20` 再部署，不在成员名单上的 Google 账号第一次登录时就开一个自己的 Pupu，满了就被拒。`PUPU_DAILY_USD` 是每个 Pupu 每天的模型费用上限，美元，到了当天不再接新消息。
+`wrangler.jsonc` 的 `PUPU_SEATS` 是名额，`0` 是不开放，这时和只有一个 Pupu 时一样。大于 0 时，不在成员名单上的 Google 账号要填邀请码才开自己的 Pupu。`PUPU_DAILY_USD` 是每个 Pupu 每天的模型费用上限，美元，到了当天不再接新消息。
 
 新账号登录 Google 后要填邀请码才开 Pupu。第一个 Pupu 的创建者在网页设置里生成和作废，没用掉的码也占名额。被邀请进别人 Pupu 的成员不用码。
 
