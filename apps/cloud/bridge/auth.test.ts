@@ -12,7 +12,7 @@ import {
   type KeySource,
   type OidcClient
 } from "../src/auth/oidc.ts";
-import { handleAuth, type AuthBackend, type RedeemResult, type SignInGrant } from "../src/auth/routes.ts";
+import { handleAuth, type AuthBackend, type RedeemResult, type InviteResult, type SignInGrant } from "../src/auth/routes.ts";
 import {
   CONFIRM_TTL_MS,
   GRANT_TTL_MS,
@@ -304,6 +304,7 @@ describe("登录记录", () => {
 
 function fakeBackend() {
   const flows = new Map<string, SignInFlow>();
+  const held = new Map<string, SignInFlow>();
   const calls: { finished: { email: string; name: string }[]; redeemed: unknown[] } = { finished: [], redeemed: [] };
   const backend: AuthBackend = {
     addSignInFlow: async (value) => void flows.set(value.state, value),
@@ -315,8 +316,20 @@ function fakeBackend() {
     // 名单由 Pupu 那边管：这里假装只有 owner 在名单上。
     finishSignIn: async (input): Promise<SignInGrant> => {
       calls.finished.push({ email: input.email, name: input.name });
+      if (input.email === "new@example.com") {
+        held.set("held-token", input.flow);
+        return { kind: "invite", token: "held-token" };
+      }
       if (input.email !== "owner@example.com") return { kind: "refused", error: "这个 Google 账号不在这个 Pupu 的成员名单上。" };
       return input.flow.client === "browser" ? { kind: "cookie", token: "pbd_browser" } : { kind: "code", code: "one-time" };
+    },
+    activate: async (token, code): Promise<InviteResult> => {
+      const flow = held.get(token);
+      if (!flow) return { status: "gone" };
+      if (code !== "GOOD-CODE") return { status: "retry", error: "<邀请码不对>" };
+      held.delete(token);
+      const grant: SignInGrant = flow.client === "browser" ? { kind: "cookie", token: "pbd_new" } : { kind: "code", code: "new-code" };
+      return { status: "ok", flow, grant };
     },
     redeemSignIn: async (input): Promise<RedeemResult> => {
       calls.redeemed.push(input);
@@ -354,6 +367,78 @@ async function get(path: string, ctx: ReturnType<typeof context>, cookie?: strin
   assert.ok(response, `${path} 应该被登录接口接住`);
   return response;
 }
+
+async function postInvite(code: string, ctx: ReturnType<typeof context>, cookie?: string): Promise<Response> {
+  const url = new URL("/api/auth/invite", "https://pupu.example");
+  const body = new URLSearchParams({ code });
+  const headers = { "Content-Type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) };
+  const response = await handleAuth(new Request(url, { method: "POST", body, headers }), url, ctx);
+  assert.ok(response, "邀请码应该被登录接口接住");
+  return response;
+}
+
+/** 走到 Google 回调，账号是 `new@example.com`。 */
+async function signInNewAccount(start: string, backend: AuthBackend) {
+  let nonce = "";
+  const ctx = context(backend, fakeGoogle(() => sign(claims({ nonce, email: "new@example.com" }))).fetcher);
+  const started = await get(start, ctx);
+  const location = new URL(started.headers.get("location") ?? "");
+  const state = location.searchParams.get("state") ?? "";
+  nonce = location.searchParams.get("nonce") ?? "";
+  const done = await get(`/api/auth/google/callback?state=${state}&code=abc`, ctx, `pupu_sign_in=${state}`);
+  return { ctx, done };
+}
+
+describe("邀请码这一步", () => {
+  test("浏览器：没有 Pupu 的账号先到填码页，填错留在这页，填对种 cookie 回首页", async () => {
+    const { backend } = fakeBackend();
+    const { ctx, done } = await signInNewAccount("/api/auth/google/start?client=browser", backend);
+    assert.equal(done.status, 302);
+    assert.equal(done.headers.get("location"), "/api/auth/invite");
+    const cookies = done.headers.getSetCookie();
+    assert.ok(cookies.some((value) => /^pupu_invite=held-token;.*Path=\/api\/auth; HttpOnly; Secure; SameSite=Lax/.test(value)));
+    assert.ok(!cookies.some((value) => value.startsWith("pupu_token=")));
+
+    const cookie = "pupu_invite=held-token";
+    const form = await get("/api/auth/invite", ctx, cookie);
+    assert.equal(form.status, 200);
+    assert.match(await form.text(), /<form method="post" action="\/api\/auth\/invite">/);
+
+    const wrong = await postInvite("NOPE", ctx, cookie);
+    assert.equal(wrong.status, 400);
+    assert.match(await wrong.text(), /&#60;邀请码不对&#62;/);
+
+    const right = await postInvite("GOOD-CODE", ctx, cookie);
+    assert.equal(right.headers.get("location"), "/");
+    const set = right.headers.getSetCookie();
+    assert.ok(set.includes("pupu_token=pbd_new"));
+    assert.ok(set.some((value) => value.startsWith("pupu_invite=;")));
+  });
+
+  test("手机：填对后跳回 pupu://auth，手机 App 不用改", async () => {
+    const { backend } = fakeBackend();
+    const challenge = await pkceChallenge(randomToken());
+    const { ctx } = await signInNewAccount(`/api/auth/google/start?client=phone&challenge=${challenge}`, backend);
+    const right = await postInvite("GOOD-CODE", ctx, "pupu_invite=held-token");
+    assert.equal(right.headers.get("location"), "pupu://auth?code=new-code");
+  });
+
+  test("没有这次登录的 cookie，别的网站发来的表单不算", async () => {
+    const { backend } = fakeBackend();
+    const { ctx } = await signInNewAccount("/api/auth/google/start?client=browser", backend);
+    const forged = await postInvite("GOOD-CODE", ctx);
+    assert.equal(forged.status, 410);
+    assert.equal(forged.headers.get("location"), null);
+  });
+
+  test("这次登录作废了，清掉 cookie，让人重新登录", async () => {
+    const { backend } = fakeBackend();
+    const ctx = context(backend, fakeGoogle(() => sign(claims())).fetcher);
+    const gone = await postInvite("GOOD-CODE", ctx, "pupu_invite=old");
+    assert.equal(gone.status, 410);
+    assert.ok(gone.headers.getSetCookie().some((value) => value.startsWith("pupu_invite=;")));
+  });
+});
 
 describe("登录接口", () => {
   test("浏览器：跳到 Google，带 PKCE、state、nonce，state 放进 cookie；回来后种设备 cookie", async () => {

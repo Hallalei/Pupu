@@ -14,10 +14,11 @@ import {
 import { FLOW_TTL_MS, isSignInClient, redirectFor, type SignInFlow } from "./sign-ins.ts";
 
 /**
- * Worker 上登录的四个接口，都不要设备凭据：
+ * Worker 上登录的几个接口，都不要设备凭据：
  * - GET  /api/auth/google：开没开 Google 登录，登录页看它决定显不显示按钮；
  * - GET  /api/auth/google/start?client=…：记下这次登录，跳到 Google；
  * - GET  /api/auth/google/callback：Google 跳回来，换 token、验身份，浏览器种 cookie，App 拿一次性的码；
+ * - GET、POST /api/auth/invite：还没有 Pupu 的账号填邀请码，填对了接着走回调后半段；
  * - POST /api/auth/redeem：手机和电脑 App 拿码和自己的 verifier 换凭据。
  *
  * 状态都在 Pupu 这个 Durable Object 里（`AuthBackend`），这里只管 HTTP 和跟 Google 说话。
@@ -26,15 +27,28 @@ import { FLOW_TTL_MS, isSignInClient, redirectFor, type SignInFlow } from "./sig
 export const AUTH_PREFIX = "/api/auth/";
 const START_PATH = "/api/auth/google/start";
 const CALLBACK_PATH = "/api/auth/google/callback";
+const INVITE_PATH = "/api/auth/invite";
 
 /** 这次登录是哪个浏览器开始的。回调时对不上就不认，别人发来的登录链接点了也没用。 */
 const FLOW_COOKIE = "pupu_sign_in";
+/** 停在邀请码这一步的登录。只放 cookie，别的网站发来的表单带不上。 */
+const INVITE_COOKIE = "pupu_invite";
+const JOIN_URL = "https://getpupu.com/#join";
 
 export type SignInGrant =
   | { readonly kind: "cookie"; readonly token: string }
   | { readonly kind: "code"; readonly code: string }
   /** 不在成员名单上。`error` 给人看，不说名单里有谁。 */
-  | { readonly kind: "refused"; readonly error: string };
+  | { readonly kind: "refused"; readonly error: string }
+  /** 还没有 Pupu，要先填邀请码。`token` 换得回这次登录。 */
+  | { readonly kind: "invite"; readonly token: string };
+
+export type InviteResult =
+  | { readonly status: "ok"; readonly flow: SignInFlow; readonly grant: SignInGrant }
+  /** 还能再填一次。 */
+  | { readonly status: "retry"; readonly error: string }
+  /** 过期了，或者填错太多次。 */
+  | { readonly status: "gone" };
 
 export type SignInCredential = { readonly id: string; readonly name: string; readonly token: string };
 
@@ -59,6 +73,7 @@ export type AuthBackend = {
     name: string;
     displayName: string | null;
   }): Promise<SignInGrant>;
+  activate(token: string, code: string): Promise<InviteResult>;
   /** `code` 的前缀说明这次登录在哪个 Pupu，`codeHash` 才是它要比的。 */
   redeemSignIn(input: {
     code: string;
@@ -105,6 +120,7 @@ export async function handleAuth(request: Request, url: URL, context: AuthContex
     return Response.json({ enabled: context.google !== null });
   }
   if (pathname === "/api/auth/redeem" && request.method === "POST") return redeem(request, context);
+  if (pathname === INVITE_PATH) return invite(request, url, context);
   const step = pathname === START_PATH ? "start" : pathname === CALLBACK_PATH ? "callback" : null;
   if (!step || request.method !== "GET") return null;
   const client = context.google;
@@ -116,10 +132,14 @@ function callbackUrl(url: URL): string {
   return new URL(CALLBACK_PATH, url).toString();
 }
 
-function flowCookie(url: URL, state: string | null): string {
+function authCookie(url: URL, name: string, content: string | null): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
-  const value = state ? `${state}; Max-Age=${FLOW_TTL_MS / 1000}` : "; Max-Age=0";
-  return `${FLOW_COOKIE}=${value}; Path=/api/auth; HttpOnly${secure}; SameSite=Lax`;
+  const value = content ? `${content}; Max-Age=${FLOW_TTL_MS / 1000}` : "; Max-Age=0";
+  return `${name}=${value}; Path=/api/auth; HttpOnly${secure}; SameSite=Lax`;
+}
+
+function flowCookie(url: URL, state: string | null): string {
+  return authCookie(url, FLOW_COOKIE, state);
 }
 
 function cookieValue(request: Request, name: string): string | null {
@@ -140,17 +160,34 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
-/** 浏览器里看到的错误页。登录在 App 里开始时，回不到 App 就停在这一页。 */
-export function page(status: number, message: string, cookies: readonly string[] = []): Response {
+function document(status: number, main: string, cookies: readonly string[]): Response {
   const body = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pupu</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#6f8fb3;color:#14202e}
-main{background:rgba(255,255,255,.92);border-radius:24px;padding:24px;max-width:22rem;margin:16px}h1{font-size:20px;margin:0 0 8px}p{margin:0;color:#4a5868}</style>
-</head><body><main><h1>没连上 Pupu</h1><p>${escapeHtml(message)}</p></main></body></html>`;
+main{background:rgba(255,255,255,.92);border-radius:24px;padding:24px;max-width:22rem;margin:16px}h1{font-size:20px;margin:0 0 8px}p{margin:0;color:#4a5868}
+form{display:flex;flex-direction:column;gap:12px;margin:16px 0 0}input,button{box-sizing:border-box;width:100%;height:48px;border-radius:24px;border:0;font:inherit}
+input{background:rgba(20,32,46,.08);color:inherit;text-align:center;letter-spacing:.08em;text-transform:uppercase}button{background:#14202e;color:#fff;font-weight:600;cursor:pointer}
+.error{margin-top:12px;color:#b3261e}.more{margin-top:16px;text-align:center;font-size:14px}a{color:inherit}</style>
+</head><body><main>${main}</main></body></html>`;
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   for (const cookie of cookies) headers.append("Set-Cookie", cookie);
   return new Response(body, { status, headers });
+}
+
+/** 浏览器里看到的错误页。登录在 App 里开始时，回不到 App 就停在这一页。 */
+export function page(status: number, message: string, cookies: readonly string[] = []): Response {
+  return document(status, `<h1>没连上 Pupu</h1><p>${escapeHtml(message)}</p>`, cookies);
+}
+
+function invitePage(status: number, error: string | null): Response {
+  const main = `<h1>输入邀请码</h1>
+<form method="post" action="${INVITE_PATH}">
+<input name="code" aria-label="邀请码" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" required autofocus>
+<button>激活</button>
+</form>${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+<p class="more"><a href="${JOIN_URL}">申请内测</a></p>`;
+  return document(status, main, []);
 }
 
 async function start(request: Request, url: URL, client: OidcClient, context: AuthContext): Promise<Response> {
@@ -235,11 +272,31 @@ async function callback(request: Request, url: URL, client: OidcClient, context:
     displayName,
     name: context.browserName(request.headers.get("User-Agent"))
   });
+  return granted(flow, grant, url, cleared, context);
+}
+
+/** 回调和填完邀请码都走到这里：把登录结果交给发起的地方。 */
+function granted(flow: SignInFlow, grant: SignInGrant, url: URL, cleared: string, context: AuthContext): Response {
   if (grant.kind === "refused") return fail(flow, grant.error, cleared);
+  if (grant.kind === "invite") return redirect(INVITE_PATH, [cleared, authCookie(url, INVITE_COOKIE, grant.token)]);
   if (grant.kind === "cookie") return redirect("/", [cleared, context.deviceCookie(url, grant.token)]);
   const target = new URL(flow.redirect ?? "/", url);
   target.searchParams.set("code", grant.code);
   return redirect(target.toString(), [cleared]);
+}
+
+async function invite(request: Request, url: URL, context: AuthContext): Promise<Response | null> {
+  const expired = "这次登录过期了。回到 Pupu 重新点「用 Google 登录」。";
+  const token = cookieValue(request, INVITE_COOKIE);
+  if (!token) return page(410, expired);
+  if (request.method === "GET") return invitePage(200, null);
+  if (request.method !== "POST") return null;
+  const code = (await request.formData()).get("code");
+  const result = await context.backend.activate(token, typeof code === "string" ? code : "");
+  const cleared = authCookie(url, INVITE_COOKIE, null);
+  if (result.status === "gone") return page(410, expired, [cleared]);
+  if (result.status === "retry") return invitePage(400, result.error);
+  return granted(result.flow, result.grant, url, cleared, context);
 }
 
 /** 设置里显示的「从哪儿登录」，比如「Shanghai, CN · 203.0.113.5」。 */

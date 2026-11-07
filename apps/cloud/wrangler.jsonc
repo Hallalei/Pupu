@@ -18,7 +18,10 @@
     { "tag": "v1", "new_sqlite_classes": ["Pupu"] },
     { "tag": "v2", "new_sqlite_classes": ["Directory"] }
   ],
-  // 新账号自己开 Pupu 的名额，0 是不开放。每个 Pupu 每天的模型费用上限，美元。
-  "vars": { "PUPU_SEATS": "0", "PUPU_DAILY_USD": "0.5" },
+  // 手机和电脑 App 的默认地址还是 workers.dev，加了 routes 也要留着。
+  "workers_dev": true,
+  "routes": [{ "pattern": "app.getpupu.com", "custom_domain": true }],
+  // 开 Pupu 的总名额，还要有邀请码；0 是不开放。每个 Pupu 每天的模型费用上限，美元。
+  "vars": { "PUPU_SEATS": "20", "PUPU_DAILY_USD": "0.5" },
   "observability": { "enabled": true }
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
+import type { InviteList } from "../directory";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
@@ -87,7 +88,11 @@ export const api = {
   inviteMember: (email: string) =>
     request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email }) }),
   removeMember: (id: string) =>
-    request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" })
+    request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" }),
+  invites: () => request<InviteList>("/api/invites"),
+  createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
+  revokeInvite: (code: string) =>
+    request<{ ok: true }>(`/api/invites/${encodeURIComponent(code)}/revoke`, { method: "POST" })
 };
 
 const NO_CHATS: ChatsView = { main: { session: MAIN_SESSION, lastAt: null }, private: null };

@@ -87,6 +87,11 @@ export function mayInvite(actor: Actor | null | undefined): boolean {
   return actor?.kind === "phone" && actor.role === "creator" && actor.memberId !== null;
 }
 
+/** 邀请码开的是别人自己的 Pupu，看不到这边的数据，所以不用像邀请成员那样限手机。 */
+export function mayManageInvites(actor: Actor | null | undefined): boolean {
+  return actor === null || actor?.role === "creator";
+}
+
 /** 移除成员只有创建者能做，哪个设备上都行（是收紧）。创建者自己移除不了。 */
 export function mayRemoveMember(actor: Actor | null | undefined, target: { readonly role: MemberRole }): boolean {
   if (target.role === "creator") return false;

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { DirectoryStore, pupuOfCredential, ROOT_PUPU, scopedCredential, seatsFrom } from "../src/directory.ts";
+import {
+  DirectoryStore,
+  INVITE_ATTEMPTS,
+  pupuOfCredential,
+  ROOT_PUPU,
+  scopedCredential,
+  seatsFrom,
+  type HeldSignIn
+} from "../src/directory.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
 const NOW = 1_800_000_000_000;
@@ -95,5 +103,107 @@ describe("目录认识的 Pupu 和配对码", () => {
     store.rememberCode("hash", "a1b2", NOW + 1000, NOW);
     assert.equal(store.pupuOfCode("hash", NOW), "a1b2");
     assert.equal(store.pupuOfCode("hash", NOW + 1000), null);
+  });
+});
+
+describe("邀请码", () => {
+  const LATER = NOW + 60_000;
+
+  function signIn(email: string): HeldSignIn {
+    return {
+      email,
+      name: "Safari · Mac",
+      displayName: null,
+      flow: {
+        state: "s",
+        verifier: "v",
+        nonce: "n",
+        client: "browser",
+        challenge: null,
+        redirect: null,
+        createdAt: NOW,
+        expiresAt: LATER
+      }
+    };
+  }
+
+  function held(store: DirectoryStore, email: string): string {
+    store.holdSignIn(email, signIn(email), LATER, NOW);
+    return email;
+  }
+
+  test("一个码只开一个 Pupu，第二个人用就不认", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(5, NOW) ?? "";
+
+    const first = store.activate(held(store, "a@example.com"), code, 5, NOW);
+    assert.equal(first.status, "ok");
+    assert.equal(store.home("a@example.com")?.founder, true);
+    assert.equal(store.activate(held(store, "b@example.com"), code, 5, NOW).status, "wrong");
+    assert.equal(store.home("b@example.com"), null);
+    assert.equal(store.invites(5).invites[0]?.usedBy, "a@example.com");
+  });
+
+  test("填码不分大小写，也不管横线和空格", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(5, NOW) ?? "";
+    const typed = ` ${code.toLowerCase().replace("-", " ")} `;
+    assert.equal(store.activate(held(store, "a@example.com"), typed, 5, NOW).status, "ok");
+  });
+
+  test("没用掉的码也占名额，作废了还回来", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(2, NOW) ?? "";
+    store.createInvite(2, NOW);
+    assert.equal(store.invites(2).left, 0);
+    assert.equal(store.createInvite(2, NOW), null);
+    assert.equal(store.revokeInvite(code), true);
+    assert.equal(store.invites(2).left, 1);
+    assert.equal(store.activate(held(store, "a@example.com"), code, 2, NOW).status, "wrong");
+  });
+
+  test("用过的码作废不了", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(5, NOW) ?? "";
+    store.activate(held(store, "a@example.com"), code, 5, NOW);
+    assert.equal(store.revokeInvite(code), false);
+    assert.equal(store.invites(5).invites.length, 1);
+  });
+
+  test("填错太多次这次登录就作废，对的码也不行了", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(5, NOW) ?? "";
+    const token = held(store, "a@example.com");
+    for (let attempt = 1; attempt < INVITE_ATTEMPTS; attempt++) {
+      assert.equal(store.activate(token, "AAAA-AAAA", 5, NOW).status, "wrong");
+    }
+    assert.equal(store.activate(token, "AAAA-AAAA", 5, NOW).status, "gone");
+    assert.equal(store.activate(token, code, 5, NOW).status, "gone");
+    assert.equal(store.invites(5).invites[0]?.usedBy, null);
+  });
+
+  test("过期的登录不认", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(5, NOW) ?? "";
+    assert.equal(store.activate(held(store, "a@example.com"), code, 5, LATER).status, "gone");
+  });
+
+  test("已经有 Pupu 的账号不花码", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const home = store.claim("a@example.com", 5, NOW);
+    const code = store.createInvite(5, NOW) ?? "";
+    const result = store.activate(held(store, "a@example.com"), code, 5, NOW);
+    assert.deepEqual(result.status === "ok" ? result.home : null, home);
+    assert.equal(store.invites(5).invites[0]?.usedBy, null);
+  });
+
+  test("码发出去后名额被成员占满，码留着，这次登录还能再填", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(1, NOW) ?? "";
+    store.assign("member@example.com", "other", 1, NOW);
+    const token = held(store, "a@example.com");
+    assert.equal(store.activate(token, code, 1, NOW).status, "full");
+    assert.equal(store.invites(1).invites[0]?.usedBy, null);
+    assert.equal(store.activate(token, code, 2, NOW).status, "ok");
   });
 });

@@ -1,11 +1,13 @@
 import { Button, Drawer, Modal } from "@heroui/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
 import { mayChangePolicy, type DeviceView } from "../devices";
-import { mayInvite, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
+import type { InviteList } from "../directory";
+import { mayInvite, mayManageInvites, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
 import { ago } from "./ago";
+import { api } from "./api";
 import { CheckIcon } from "./icons";
 import { useDesktopComputer } from "./desktop";
 import { ThisComputer } from "./ThisComputer";
@@ -209,6 +211,8 @@ export function Settings({
         onRemove={(id) => void revoke(id, "member")}
         onInvite={onInviteMember}
       />
+
+      {mayManageInvites(actor) && <Invites isOpen={isOpen} />}
 
       <section className="flex flex-col gap-2">
         <h3 className="m-0 px-1 text-footnote text-muted">手机、浏览器和电脑 App</h3>
@@ -434,6 +438,79 @@ function Members({
           <p className="m-0 text-subheadline text-muted">邀请成员要在手机 App 的设置里做。</p>
         )
       )}
+      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
+    </section>
+  );
+}
+
+/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，这里什么都不显示。 */
+function Invites({ isOpen }: { isOpen: boolean }) {
+  const [list, setList] = useState<InviteList | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => api.invites().then(setList), []);
+
+  useEffect(() => {
+    if (isOpen) load().catch(() => setList(null));
+  }, [isOpen, load]);
+
+  if (!list) return null;
+
+  async function change(action: () => Promise<unknown>) {
+    setError(null);
+    try {
+      await action();
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function create() {
+    setCreating(true);
+    await change(api.createInvite);
+    setCreating(false);
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="m-0 flex justify-between px-1 text-footnote text-muted">
+        <span>邀请码</span>
+        <span>还能生成 {list.left} 个</span>
+      </h3>
+      {list.invites.map((invite) => (
+        <div key={invite.code} className="flex items-center gap-3 rounded-row bg-default px-3 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-body font-medium">{invite.code}</div>
+            {invite.usedBy && <div className="truncate text-subheadline text-muted">{invite.usedBy}</div>}
+          </div>
+          {!invite.usedBy && (
+            <>
+              <button
+                type="button"
+                className="shrink-0 text-subheadline hover:opacity-75"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(invite.code);
+                  setCopied(invite.code);
+                }}
+              >
+                {copied === invite.code ? "已复制" : "复制"}
+              </button>
+              <button
+                type="button"
+                className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+                onClick={() => void change(() => api.revokeInvite(invite.code))}
+              >
+                作废
+              </button>
+            </>
+          )}
+        </div>
+      ))}
+      <Button size="sm" isPending={creating} isDisabled={list.left === 0} onPress={() => void create()}>
+        生成邀请码
+      </Button>
       {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
     </section>
   );

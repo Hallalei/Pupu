@@ -12,6 +12,7 @@ import { WebSockets } from "agents/websockets";
 import { googleClientFrom, randomToken } from "./auth/oidc";
 import { AUTH_PREFIX, handleAuth, type AuthBackend, type RedeemResult, type SignInCredential, type SignInGrant } from "./auth/routes";
 import {
+  FLOW_TTL_MS,
   redeemStep,
   signInApprovalRow,
   signInApprovalView,
@@ -26,8 +27,11 @@ import {
   ROOT_PUPU,
   scopedCredential,
   seatsFrom,
+  type Activation,
   type Assignment,
-  type Home
+  type HeldSignIn,
+  type Home,
+  type InviteList
 } from "./directory";
 import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop } from "./bridge/desktop";
 import { ComputerGate } from "./bridge/gate";
@@ -85,6 +89,7 @@ import {
   emailKey,
   isEmail,
   mayInvite,
+  mayManageInvites,
   mayRemoveMember,
   mayRevoke,
   memberName,
@@ -118,6 +123,7 @@ const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
 const MAX_RETRIES = 5;
 
 const SEATS_FULL = "内测名额已经满了。可以到 getpupu.com 申请，有名额了我们告诉你。";
+const INVITE_WRONG = "邀请码不对，或者已经用过了。";
 /** 记在 meta 里，用来判断已有会话要不要切模型。 */
 const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 /** 灵动岛到点重新看一眼：命令跑满 30 秒、屏幕授权到期。 */
@@ -1074,6 +1080,10 @@ export class Pupu extends DurableObject<Env> {
 
   // ---- 成员（需求说明 4.7）----
 
+  async managesInvites(device: string | null = null): Promise<boolean> {
+    return mayManageInvites(this.#actor(device));
+  }
+
   /** 创建者在手机 App 上邀请一个人，见 `mayInvite`。之后那个人用这个 Google 账号登录就放行。 */
   async inviteMember(
     email: string,
@@ -1295,8 +1305,25 @@ export class Directory extends DurableObject<Env> {
     return this.store.home(email);
   }
 
-  async claim(email: string): Promise<Home | null> {
-    return this.store.claim(email, seatsFrom(this.env), Date.now());
+  async holdSignIn(tokenHash: string, signIn: HeldSignIn): Promise<void> {
+    const now = Date.now();
+    this.store.holdSignIn(tokenHash, signIn, now + FLOW_TTL_MS, now);
+  }
+
+  async activate(tokenHash: string, code: string): Promise<Activation> {
+    return this.store.activate(tokenHash, code, seatsFrom(this.env), Date.now());
+  }
+
+  async invites(): Promise<InviteList> {
+    return this.store.invites(seatsFrom(this.env));
+  }
+
+  async createInvite(): Promise<string | null> {
+    return this.store.createInvite(seatsFrom(this.env), Date.now());
+  }
+
+  async revokeInvite(code: string): Promise<boolean> {
+    return this.store.revokeInvite(code);
   }
 
   async assign(email: string, pupu: string): Promise<Assignment> {
@@ -1420,12 +1447,11 @@ async function knownPupu(env: Env, name: string): Promise<PupuStub | null> {
   return pupuNamed(env, name);
 }
 
-/** 这个账号住哪：目录里有就是那里，第一个 Pupu 的老成员留在那里，其余的开一个新的。 */
+/** 这个账号住哪：目录里有就是那里，第一个 Pupu 的老成员留在那里。其余的还没有家，要邀请码。 */
 async function homeOf(env: Env, email: string): Promise<Home | null> {
   const known = await directory(env).home(email);
   if (known) return known;
-  if (await root(env).admits(email)) return { pupu: ROOT_PUPU, founder: false };
-  return directory(env).claim(email);
+  return (await root(env).admits(email)) ? { pupu: ROOT_PUPU, founder: false } : null;
 }
 
 /** 登录流程还没认出是谁，放在第一个 Pupu；认出来之后才分流。 */
@@ -1436,8 +1462,19 @@ function authBackend(env: Env): AuthBackend {
     finishSignIn: async (input) => {
       const home = await homeOf(env, input.email);
       if (home) return pupuNamed(env, home.pupu).finishSignIn({ ...input, home });
-      if (seatsFrom(env) > 0) return { kind: "refused", error: SEATS_FULL };
-      return root(env).finishSignIn({ ...input, home: { pupu: ROOT_PUPU, founder: false } });
+      if (seatsFrom(env) === 0) return root(env).finishSignIn({ ...input, home: { pupu: ROOT_PUPU, founder: false } });
+      const token = randomToken();
+      await directory(env).holdSignIn(await tokenHash(token), input);
+      return { kind: "invite", token };
+    },
+    activate: async (token, code) => {
+      const result = await directory(env).activate(await tokenHash(token), code);
+      if (result.status !== "ok") {
+        if (result.status === "gone") return { status: "gone" };
+        return { status: "retry", error: result.status === "full" ? SEATS_FULL : INVITE_WRONG };
+      }
+      const { home, signIn } = result;
+      return { status: "ok", flow: signIn.flow, grant: await pupuNamed(env, home.pupu).finishSignIn({ ...signIn, home }) };
     },
     redeemSignIn: async (input) => {
       const home = await knownPupu(env, pupuOfCredential(input.code));
@@ -1584,6 +1621,21 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
       return Response.json({ error: "邀请成员要创建者在手机 App 上做" }, { status: 403 });
     }
     return Response.json({ ok: true });
+  }
+  const inviteRevoke = pathname.match(/^\/api\/invites\/([^/]+)\/revoke$/);
+  if (pathname === "/api/invites" || inviteRevoke) {
+    if (caller.name !== ROOT_PUPU || !(await caller.pupu.managesInvites(caller.device))) {
+      return Response.json({ error: "只有创建者能管邀请码" }, { status: 403 });
+    }
+    if (method === "GET" && !inviteRevoke) return Response.json(await directory(env).invites());
+    if (method === "POST" && inviteRevoke) {
+      const ok = await directory(env).revokeInvite(decodeURIComponent(inviteRevoke[1] ?? ""));
+      return ok ? Response.json({ ok }) : Response.json({ error: "这个邀请码用过了，或者不存在" }, { status: 404 });
+    }
+    if (method === "POST") {
+      const code = await directory(env).createInvite();
+      return code ? Response.json({ code }) : Response.json({ error: SEATS_FULL }, { status: 409 });
+    }
   }
   const member = pathname.match(/^\/api\/members\/([^/]+)\/remove$/);
   if (member && method === "POST") {
