@@ -126,6 +126,32 @@ function setupScene(scene: HTMLElement): void {
   );
 }
 
+/** 短片滚到眼前才播，滚走就停。浏览器只许静音自动播放，声音由人打开。播不了或减弱动效时留着系统控件。 */
+function setupFilm(root: HTMLElement): void {
+  const video = root.querySelector("video");
+  const sound = root.querySelector("button");
+  if (!video || !sound || calm) return;
+
+  video.controls = false;
+  sound.hidden = false;
+  sound.addEventListener("click", () => {
+    video.muted = !video.muted;
+    sound.setAttribute("aria-pressed", String(!video.muted));
+    if (!video.muted) video.currentTime = 0;
+  });
+
+  const play = async () => {
+    try {
+      await video.play();
+    } catch (error) {
+      if ((error as Error).name !== "NotAllowedError") return;
+      video.controls = true;
+      sound.hidden = true;
+    }
+  };
+  watch(root, () => void play(), () => video.pause(), 0.5);
+}
+
 function setupApprove(root: HTMLElement): void {
   const island = root.querySelector<HTMLElement>("[data-island]");
   const badge = root.querySelector<HTMLElement>("[data-badge]");
@@ -196,5 +222,6 @@ function setupWaitlist(root: HTMLElement): void {
 setupReveal();
 setupHeaderTone();
 document.querySelectorAll<HTMLElement>("[data-scene]").forEach(setupScene);
+document.querySelectorAll<HTMLElement>("[data-film]").forEach(setupFilm);
 document.querySelectorAll<HTMLElement>("[data-approve]").forEach(setupApprove);
 document.querySelectorAll<HTMLElement>("[data-waitlist]").forEach(setupWaitlist);

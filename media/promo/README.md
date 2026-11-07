@@ -38,3 +38,7 @@ node media/promo/render.mjs stills --at 1.4,19,34.4 --size 960x540 --samples 12 
 ## 分镜
 
 见 `分镜.md`。
+
+## 官网上的片子
+
+官网首页放的是接力这一段（21 到 35 秒），压成 1080p 和 720p 两份放在 R2 的 `film/`。换片子时传新文件名，再改 `apps/site/src/pages/index.astro` 和封面 `apps/site/public/film/relay.jpg`。

@@ -85,6 +85,28 @@ import Waitlist from "../components/Waitlist.astro";
       </div>
     </section>
 
+    <!-- 短片：片子是 media/promo 渲染的，文件放在 R2，换片子要换文件名 -->
+    <section class="film">
+      <div class="film__frame reveal" data-film>
+        <video
+          controls
+          muted
+          loop
+          playsinline
+          preload="none"
+          poster="/film/relay.jpg"
+          aria-label="短片：林夏上午定的折扣，下午周屿问起时，Pupu 接上了"
+        >
+          <source src="https://dl.getpupu.com/film/relay-20261107-720.mp4" type="video/mp4" media="(max-width: 899px)" />
+          <source src="https://dl.getpupu.com/film/relay-20261107-1080.mp4" type="video/mp4" />
+        </video>
+        <button type="button" class="film__sound" aria-label="声音" aria-pressed="false" hidden>
+          <Icon name="muted" />
+          <Icon name="sound" />
+        </button>
+      </div>
+    </section>
+
     <!-- 一个大脑 -->
     <section class="brain" id="tone-switch" aria-labelledby="brain-title">
       <div class="panel brain__panel reveal">
