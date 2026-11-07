@@ -205,6 +205,12 @@ body {
 .scroll-body {
   padding-top: var(--chat-top);
 }
+/* 窄窗口顶上浮着项目名小胶囊，第一条消息要从它下面开始。 */
+@media (max-width: 1023.98px) {
+  .scroll-body[data-capped] {
+    padding-top: calc(var(--spacing) * 10);
+  }
+}
 .scroll-fade {
   position: absolute;
   inset: 0 0 auto;
