@@ -194,6 +194,8 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 }
 .hero .lede { max-width: 34em; margin-top: 16px; }
 .hero .waitlist { margin-top: 32px; max-width: 440px; }
+.waitlist__have { margin: 12px 0 0; font-size: 14px; line-height: 20px; }
+.waitlist__have a { color: inherit; font-weight: 600; }
 .hero__demo { position: relative; z-index: 1; }
 
 /* 申请内测：长得就是输入栏 */
