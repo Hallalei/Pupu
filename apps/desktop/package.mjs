@@ -1,6 +1,6 @@
 // 出电脑 App 的正式包（技术方案 5.5），产物在 release/：
 // 1. build.mjs 打出 dist/；
-// 2. 屏幕助手 computer.swift、输入助手 input.swift 编到 out/，用同一个身份签名、开 hardened runtime；
+// 2. 输入助手 input.swift 编到 out/，用同一个身份签名、开 hardened runtime；Cua 驱动摆到 out/cua-driver；
 // 3. electron-builder 按 electron-builder.yml 打 Pupu.app（Fuses、签名、公证并 staple）、DMG 和自动更新用的 zip；
 // 4. DMG 签名、公证、staple；
 // 5. 验签名、Gatekeeper、公证票据、Fuses 和 entitlements，zip 解开来也验一遍。
@@ -11,7 +11,7 @@
 //
 // 签名顺序和 DMG 单独公证参考 cindy 的 scripts/ci/lib.mjs、deepchat 的 scripts/notarize-dmg.js。
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,10 +22,9 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const local = process.argv.includes("--local");
 const profile = process.env.PUPU_NOTARY_PROFILE || "pupu-notary";
 const { version } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-const helpers = [
-  { source: "computer.swift", name: "pupu-computer-use", identifier: "com.leizi.pupu.desktop.computer-use" },
-  { source: "input.swift", name: "pupu-input", identifier: "com.leizi.pupu.desktop.input" }
-];
+const helpers = [{ source: "input.swift", name: "pupu-input", identifier: "com.leizi.pupu.desktop.input" }];
+const staged = path.join(root, "out", "cua-driver");
+const driverPackages = ["@trycua/cua-driver", "@trycua/cua-driver-darwin-arm64", "@ubjs/core", "@ubjs/node", "@ubjs/node-darwin-arm64"];
 const app = path.join(root, "release", "mac-arm64", "Pupu.app");
 const dmg = path.join(root, "release", `Pupu-${version}-arm64.dmg`);
 const zip = path.join(root, "release", `Pupu-${version}-arm64.zip`);
@@ -75,6 +74,18 @@ async function buildHelpers(identity) {
   }
 }
 
+/** 桥运行时才加载 Cua 驱动，所以带上它的 npm 包。上游发的是通用二进制，Mac 版只出 arm64。 */
+async function stageDriver() {
+  await rm(staged, { recursive: true, force: true });
+  for (const name of driverPackages) {
+    await cp(path.join(root, "..", "cloud", "node_modules", name), path.join(staged, "node_modules", name), { recursive: true });
+  }
+  const native = path.join(staged, "node_modules", "@trycua", "cua-driver-darwin-arm64");
+  for (const file of ["libcua_driver_sdk.dylib", "cua_driver_node_runtime.node"]) {
+    await run("lipo", [path.join(native, file), "-thin", "arm64", "-output", path.join(native, file)]);
+  }
+}
+
 /** 公证一个文件，等苹果给结果；没过就把苹果的说明打出来。 */
 async function notarize(file) {
   const out = await run(
@@ -92,7 +103,8 @@ async function notarize(file) {
 
 async function verify() {
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
-  for (const { name } of helpers) {
+  const driverNative = path.join("cua-driver", "node_modules", "@trycua", "cua-driver-darwin-arm64");
+  for (const name of [...helpers.map((helper) => helper.name), path.join(driverNative, "libcua_driver_sdk.dylib"), path.join(driverNative, "cua_driver_node_runtime.node")]) {
     await run("codesign", ["--verify", "--strict", "--verbose=2", path.join(app, "Contents", "Resources", "helpers", name)]);
   }
   const wire = await getCurrentFuseWire(app);
@@ -116,14 +128,18 @@ const identity = local ? null : await signingIdentity();
 if (!local) await checkNotaryProfile();
 await run("node", ["build.mjs"]);
 await buildHelpers(identity);
+await stageDriver();
 if (!local) process.env.APPLE_KEYCHAIN_PROFILE = profile;
 await build({
   targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64),
   publish: "never",
   // 临时签名开 hardened runtime 要关库校验，本机试打包就不开了。
-  config: local
-    ? { mac: { identity: "-", hardenedRuntime: false } }
-    : { mac: { identity, notarize: true } }
+  config: {
+    ...(local ? { mac: { identity: "-", hardenedRuntime: false } } : { mac: { identity, notarize: true } }),
+    // extraResources 会跳过 node_modules。放在签名之前，原生库才会用同一个身份重签，
+    // 开了 hardened runtime 的 App 只认同一个团队签的库。
+    afterPack: ({ appOutDir }) => cp(staged, path.join(appOutDir, "Pupu.app", "Contents", "Resources", "helpers", "cua-driver"), { recursive: true })
+  }
 });
 if (!local) {
   await run("codesign", ["--force", "--timestamp", "--sign", identity, dmg]);

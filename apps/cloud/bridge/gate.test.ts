@@ -99,7 +99,7 @@ function setup(policy: ComputerPolicy = "ask_risky") {
 }
 
 const run = (id: string, command: string) => ({ id, name: "run_command", arguments: { command } });
-const shot = (id: string) => ({ id, name: "computer_screenshot", arguments: {} });
+const shot = (id: string) => ({ id, name: "computer_look", arguments: {} });
 
 /** 让 beforeTool 跑到开始等的那一步。 */
 async function settle() {
@@ -177,7 +177,7 @@ describe("审批", () => {
     assert.equal(await first, undefined);
     assert.equal(gate.screenActive("c1"), true);
     assert.equal(await gate.beforeTool(shot("s2")), undefined);
-    assert.equal(gate.approved({ requestId: "s2", computerId: "c1", action: { kind: "computer", op: "screenshot" } }), true);
+    assert.equal(gate.approved({ requestId: "s2", computerId: "c1", action: { kind: "computer", op: "look" } }), true);
 
     gate.takeback("c1");
     assert.equal(gate.screenActive("c1"), false);

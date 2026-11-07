@@ -137,7 +137,7 @@ test("在做什么说成一行：长命令截断，屏幕操作不报坐标", ()
   assert.equal(long.length, "跑命令：".length + 60 + 1);
   assert.ok(long.endsWith("…"));
   assert.equal(describeDoing({ kind: "run", command: "git status\n  && ls", background: false }), "跑命令：git status && ls");
-  assert.equal(describeDoing({ kind: "computer", op: "screenshot" }), "看屏幕");
+  assert.equal(describeDoing({ kind: "computer", op: "look" }), "看屏幕");
   assert.equal(describeDoing({ kind: "computer", op: "click", x: 10, y: 20 }), "点击屏幕");
   assert.equal(describeDoing({ kind: "read", path: "/Users/me/a.txt", maxBytes: 10 }), "读文件：/Users/me/a.txt");
 });

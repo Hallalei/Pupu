@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { open, mkdir, readdir, readFile, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { usesScreen } from "../src/bridge/policy.ts";
+import { isScreenInput, usesScreen } from "../src/bridge/policy.ts";
 import { performComputer } from "./computer.ts";
 import { containPath } from "./contain.ts";
 import { localRefusal, readLocal } from "./local.ts";
@@ -132,7 +132,7 @@ async function performAction(requestId: string, action: Action, host: ActionHost
     await list(requestId, action.path, host);
     return;
   }
-  if (action.kind === "computer" && (action.op === "screenshot" || action.op === "permissions")) {
+  if (action.kind === "computer" && !isScreenInput(action)) {
     try {
       await performComputer(requestId, action, host);
     } catch (error) {

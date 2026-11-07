@@ -133,7 +133,7 @@ describe("文件的风险", () => {
 describe("分级", () => {
   const run = (command: string): Action => ({ kind: "run", command, background: false });
   const click: Action = { kind: "computer", op: "click", x: 1, y: 2 };
-  const shot: Action = { kind: "computer", op: "screenshot" };
+  const shot: Action = { kind: "computer", op: "look" };
 
   test("默认分级：低风险直接做，高风险单独问", () => {
     assert.equal(needFor("ask_risky", run("ls"), { home: HOME, screenGranted: false }).need, "none");

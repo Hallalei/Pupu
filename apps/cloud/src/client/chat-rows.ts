@@ -378,6 +378,7 @@ function describe(
 ): { icon: StepIcon; verb: string; object: string } | null {
   const text = (key: string) => (typeof args[key] === "string" ? (args[key] as string) : "");
   const point = (x: string, y: string) => ` (${number(args[x])}, ${number(args[y])})`;
+  const named = () => (text("label") ? ` ${text("label")}` : null);
   switch (name) {
     case "run_command":
       return { icon: "terminal", verb: "跑", object: ` ${clip(text("command"))}` };
@@ -392,23 +393,32 @@ function describe(
       return { icon: "folder", verb: "看", object: path ? ` ${path}` : "主目录" };
     }
     case "computer_screenshot":
-      return { icon: "screenshot", verb: "截", object: "屏" };
+    case "computer_look":
+      return { icon: "screenshot", verb: "看", object: "窗口" };
+    case "computer_windows":
+      return { icon: "screenshot", verb: "看", object: "开着的窗口" };
+    case "computer_open":
+      return { icon: "cursor", verb: "打开", object: ` ${text("app")}` };
     case "computer_click":
       return {
         icon: "cursor",
         verb: Number(args.count ?? 1) >= 2 ? "双击" : "点",
-        object: point("x", "y")
+        object: named() ?? point("x", "y")
       };
     case "computer_move":
       return { icon: "cursor", verb: "把鼠标移到", object: point("x", "y") };
     case "computer_drag":
       return { icon: "cursor", verb: "拖", object: `${point("x", "y")} →${point("x2", "y2")}` };
     case "computer_scroll":
-      return { icon: "cursor", verb: "滚动", object: "屏幕" };
+      return { icon: "cursor", verb: "滚动", object: "窗口" };
     case "computer_type":
       return { icon: "keyboard", verb: "输入", object: `「${clip(text("text"))}」` };
+    case "computer_set":
+      return { icon: "keyboard", verb: "改成", object: `「${clip(text("value"))}」` };
     case "computer_key":
       return { icon: "keyboard", verb: "按", object: ` ${text("key")}` };
+    case "computer_menu":
+      return { icon: "cursor", verb: "点菜单", object: ` ${Array.isArray(args.menu) ? args.menu.join(" → ") : ""}` };
     default:
       return null;
   }

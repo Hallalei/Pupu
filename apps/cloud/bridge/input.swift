@@ -2,7 +2,7 @@
 // {"t":"key","k":"Enter"}。stdout 一行一个 JSON：{"type":"permissions",...}、{"type":"error","message":"..."}。
 // 只注入鼠标键盘，把事件送进来的是桥，桥只在云端开了控制时才转（技术方案 6.4）。
 //
-// 由电脑 App 的桥拉起，辅助功能权限记在 App 名下，和 computer.swift 同一份。
+// 由电脑 App 的桥拉起，辅助功能权限记在 App 名下，和 Cua 驱动同一份。
 
 import ApplicationServices
 import CoreGraphics

@@ -478,8 +478,8 @@ export class ComputerBridge {
       computerId: computer.id,
       computerName: computer.name,
       image: { data: frame.data, mimeType: frame.mime },
-      text: `在「${computer.name}」上截了一张图，${frame.width}×${frame.height} 像素。坐标原点在左上角，点、拖、滚动都用这张图上的像素。${
-        frame.summary ? `\n当前窗口里能点的：\n${frame.summary}` : ""
+      text: `在「${computer.name}」上看了窗口，截图 ${frame.width}×${frame.height} 像素，原点在窗口左上角。${
+        frame.summary ? `\n${frame.summary}` : ""
       }`
     };
   }

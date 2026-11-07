@@ -735,12 +735,12 @@ export function classifyAction(action: Action, home?: string): Risk {
   }
 }
 
-/** 点、拖、滚动、打字、按键。截图和查权限不算。 */
+/** 打开应用、点、拖、滚动、打字、按键。看窗口和查权限不算。 */
 export function isScreenInput(action: Action): boolean {
-  return action.kind === "computer" && action.op !== "screenshot" && action.op !== "permissions";
+  return action.kind === "computer" && action.op !== "look" && action.op !== "windows" && action.op !== "permissions";
 }
 
-/** 截图或者屏幕输入，都要有屏幕授权。 */
+/** 看窗口或者屏幕输入，都要有屏幕授权。 */
 export function usesScreen(action: Action): boolean {
   return action.kind === "computer" && action.op !== "permissions";
 }
@@ -760,7 +760,7 @@ export function needFor(
   if (policy === "trust") return { need: "none", risk };
   if (action.kind === "computer") {
     if (action.op === "permissions") return { need: "none", risk };
-    if (action.op !== "screenshot" && (policy === "ask_all" || risk.level === "high")) return { need: "step", risk };
+    if (isScreenInput(action) && (policy === "ask_all" || risk.level === "high")) return { need: "step", risk };
     return { need: options.screenGranted ? "none" : "screen", risk };
   }
   if (risk.level === "high") return { need: "step", risk };
@@ -785,22 +785,34 @@ export function describeAction(action: Action): { readonly title: string; readon
       return { title: "列目录", detail: action.path || "主目录" };
     case "computer":
       switch (action.op) {
+        case "open":
+          return { title: "打开应用", detail: action.path ? `${action.app}：${action.path}` : (action.app ?? "") };
         case "click":
-          return { title: action.count === 2 ? "双击屏幕" : "点击屏幕", detail: `截图上的 (${action.x}, ${action.y})` };
-        case "move":
-          return { title: "移动鼠标", detail: `截图上的 (${action.x}, ${action.y})` };
+          return { title: action.count === 2 ? "双击屏幕" : "点击屏幕", detail: spot(action) };
         case "drag":
           return { title: "拖动", detail: `从 (${action.x}, ${action.y}) 到 (${action.x2}, ${action.y2})` };
         case "scroll":
-          return { title: "滚动", detail: `在 (${action.x}, ${action.y}) 滚动 ${action.delta}` };
+          return { title: "滚动", detail: `${spot(action)} 往${DIRECTIONS[action.direction ?? "down"]}` };
         case "type":
           return { title: "输入文字", detail: clip(action.text ?? "", 1000) };
+        case "set":
+          return { title: "改控件的值", detail: `${spot(action)} 改成 ${clip(action.text ?? "", 1000)}` };
         case "key":
           return { title: "按键", detail: action.key ?? "" };
+        case "menu":
+          return { title: "点菜单", detail: (action.menu ?? []).join(" → ") };
         default:
-          return { title: "操作屏幕", detail: "看这台电脑的屏幕，用鼠标和键盘操作它。" };
+          return { title: "操作屏幕", detail: "看这台电脑上的窗口，在后台操作它们。" };
       }
   }
+}
+
+const DIRECTIONS = { up: "上", down: "下", left: "左", right: "右" } as const;
+
+/** 控件编号和坐标对人都没用，有名字先说名字。 */
+function spot(action: Extract<Action, { kind: "computer" }>): string {
+  if (action.label) return action.label;
+  return action.element ? `控件 ${action.element}` : `窗口里的 (${action.x}, ${action.y})`;
 }
 
 function clip(text: string, max: number): string {

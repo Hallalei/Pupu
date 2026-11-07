@@ -374,15 +374,22 @@ nonisolated struct ToolAction {
         case "list_directory":
             let path = text("path")
             (icon, verb, object) = ("folder", "看", path.isBlank ? "主目录" : " " + path)
-        case "computer_screenshot": (icon, verb, object) = ("camera.viewfinder", "截", "屏")
+        case "computer_screenshot", "computer_look": (icon, verb, object) = ("camera.viewfinder", "看", "窗口")
+        case "computer_windows": (icon, verb, object) = ("macwindow.on.rectangle", "看", "开着的窗口")
+        case "computer_open": (icon, verb, object) = ("macwindow", "打开", " " + text("app"))
         case "computer_click":
             let double = (arguments["count"]?.number ?? 1) >= 2
-            (icon, verb, object) = ("cursorarrow.click", double ? "双击" : "点", point("x", "y"))
+            let label = text("label")
+            (icon, verb, object) = ("cursorarrow.click", double ? "双击" : "点", label.isBlank ? point("x", "y") : " " + label)
         case "computer_move": (icon, verb, object) = ("cursorarrow.motionlines", "把鼠标移到", point("x", "y"))
         case "computer_drag": (icon, verb, object) = ("hand.draw", "拖", point("x", "y") + " →" + point("x2", "y2"))
-        case "computer_scroll": (icon, verb, object) = ("arrow.up.and.down", "滚动", "屏幕")
+        case "computer_scroll": (icon, verb, object) = ("arrow.up.and.down", "滚动", "窗口")
         case "computer_type": (icon, verb, object) = ("character.cursor.ibeam", "输入", "「\(Self.clip(text("text")))」")
+        case "computer_set": (icon, verb, object) = ("slider.horizontal.3", "改成", "「\(Self.clip(text("value")))」")
         case "computer_key": (icon, verb, object) = ("command", "按", " " + text("key"))
+        case "computer_menu":
+            let path = arguments["menu"]?.array?.compactMap(\.string).joined(separator: " → ") ?? ""
+            (icon, verb, object) = ("filemenu.and.selection", "点菜单", " " + path)
         default: return nil
         }
     }

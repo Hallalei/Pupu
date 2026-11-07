@@ -24,19 +24,18 @@ await Promise.all([
   build({ ...common, platform: "browser", target: "chrome140", entryPoints: [path.join(root, "src/capture-page.ts")], outfile: path.join(dist, "capture.js"), format: "iife" }),
   // 配对窗口的动画也是网页，源码和云端的登录页共用。
   build({ ...common, platform: "browser", target: "chrome140", entryPoints: [path.join(root, "src/pair-art.ts")], outfile: path.join(dist, "pair-art.js"), format: "iife" }),
-  // 桥用 ESM：computer.ts 靠 import.meta.url 找旁边的 computer.swift。ws 是 CommonJS，
-  // 里面 require 内置模块，ESM 里要先补一个 require。
+  // 桥用 ESM：input.ts 靠 import.meta.url 找旁边的 input.swift。ws 是 CommonJS，
+  // 里面 require 内置模块，ESM 里要先补一个 require。Cua 驱动是原生库，运行时才加载。
   build({
     ...common,
     entryPoints: [path.join(root, "src/bridge-host.ts")],
     outfile: path.join(dist, "bridge.mjs"),
     format: "esm",
-    external: ["electron", "bufferutil", "utf-8-validate"],
+    external: ["electron", "bufferutil", "utf-8-validate", "@trycua/cua-driver"],
     banner: { js: 'import { createRequire as __pupuRequire } from "node:module"; const require = __pupuRequire(import.meta.url);' }
   })
 ]);
 
-await cp(path.join(bridgeDir, "computer.swift"), path.join(dist, "computer.swift"));
 await cp(path.join(bridgeDir, "input.swift"), path.join(dist, "input.swift"));
 await cp(path.join(root, "static"), dist, { recursive: true });
 console.log("已打到 dist/");

@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import { actionOf } from "./calls.ts";
 import type { ComputerBridge } from "./hub.ts";
 import {
@@ -14,8 +14,17 @@ function text(value: string) {
   return [{ type: "text" as const, text: value }];
 }
 
-const screenX = Type.Number({ description: "截图像素的横坐标，左上角是 0" });
-const screenY = Type.Number({ description: "截图像素的纵坐标，左上角是 0" });
+const pid = Type.Number({ description: "窗口所属进程的 pid，来自 computer_windows 或 computer_look" });
+const windowId = Type.Number({ description: "窗口的 window_id，来自 computer_windows 或 computer_look" });
+const element = Type.Optional(
+  Type.String({ description: "computer_look 给的控件编号，写法是 <snapshot_id>:<行号>。优先用它，它比坐标准" })
+);
+const windowX = Type.Optional(Type.Number({ description: "窗口截图上的横坐标，窗口左上角是 0。没有控件编号时才用" }));
+const windowY = Type.Optional(Type.Number({ description: "窗口截图上的纵坐标，窗口左上角是 0。没有控件编号时才用" }));
+const label = Type.Optional(Type.String({ description: "这一步操作的东西叫什么，比如「发送」按钮。显示给用户看" }));
+const foreground = Type.Optional(
+  Type.Boolean({ description: "后台做不到时才设为 true：短暂切到前面，做完切回去。用户正在用电脑时会被拒绝" })
+);
 
 const computerId = Type.Optional(
   Type.String({
@@ -188,146 +197,128 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     }
   });
 
-  const screenshot = defineTool({
-    name: "computer_screenshot",
-    description:
-      "截这台电脑的主屏幕。先看这张图，再用图上的像素坐标去点、拖、滚动。原点在左上角。屏幕变了就重新截。",
-    parameters: Type.Object({ computer_id: computerId }),
-    replay: "safe",
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_screenshot", args)
-        })
-      );
-    }
-  });
+  /** 电脑上的窗口操作都一个样：参数换成动作，交给桥。 */
+  const computerTool = (
+    name: string,
+    description: string,
+    parameters: Record<string, TSchema>,
+    replay?: "safe"
+  ) =>
+    defineTool({
+      name,
+      description,
+      parameters: Type.Object({ ...parameters, computer_id: computerId }),
+      ...(replay ? { replay } : {}),
+      async execute(args, api, context) {
+        const { computer_id: chosen } = args as { computer_id?: string };
+        return finish(
+          await bridge.exec({
+            requestId: api.callId,
+            computerId: chosen,
+            signal: abortSignal(context),
+            action: actionOf(name, args as Record<string, unknown>)
+          })
+        );
+      }
+    });
 
-  const click = defineTool({
-    name: "computer_click",
-    description: "在最近一张截图的像素坐标上点一下。点完会再截一张图。button 可以是 left、right、middle。count 为 2 就是双击。",
-    parameters: Type.Object({
-      x: screenX,
-      y: screenY,
-      button: Type.Optional(Type.String({ description: "left、right 或 middle，默认 left" })),
-      count: Type.Optional(Type.Number({ description: "点击次数，默认 1" })),
-      sensitive,
-      computer_id: computerId
+  const screenTools = [
+    computerTool(
+      "computer_windows",
+      "列出这台电脑上开着的窗口，拿到 pid 和 window_id。标着 off-screen 的在别的桌面空间或者最小化了。",
+      { app: Type.Optional(Type.String({ description: "只看名字里带这段文字的应用" })) },
+      "safe"
+    ),
+    computerTool(
+      "computer_look",
+      "看一个窗口：控件列表和截图。不填 pid 就看最前面的窗口。窗口被挡住也能看。控件编号看一次换一批。",
+      {
+        pid: Type.Optional(pid),
+        window_id: Type.Optional(windowId),
+        query: Type.Optional(Type.String({ description: "只看名字里带这段文字的控件。窗口很大时先用它缩小范围" }))
+      },
+      "safe"
+    ),
+    computerTool("computer_open", "在后台打开一个应用，不抢用户的前台。打开后会看一眼它的窗口。", {
+      app: Type.String({ description: "应用名、bundle id 或者 .app 的路径" }),
+      path: Type.Optional(Type.String({ description: "用这个应用打开的文件或网址" })),
+      sensitive
     }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_click", args)
-        })
-      );
-    }
-  });
-
-  const move = defineTool({
-    name: "computer_move",
-    description: "把鼠标移到截图上的一个点，不点击。用来露出悬停才会出现的东西。移完会再截一张图。",
-    parameters: Type.Object({ x: screenX, y: screenY, computer_id: computerId }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_move", args)
-        })
-      );
-    }
-  });
-
-  const drag = defineTool({
-    name: "computer_drag",
-    description: "从截图上的一个点按住拖到另一个点再松开。拖完会再截一张图。",
-    parameters: Type.Object({
-      x: screenX,
-      y: screenY,
+    computerTool(
+      "computer_click",
+      "点窗口里的一处。不动用户的鼠标。button 可以是 left、right、middle。count 为 2 就是双击。点完会再看一眼窗口。",
+      {
+        pid,
+        window_id: windowId,
+        element,
+        x: windowX,
+        y: windowY,
+        button: Type.Optional(Type.String({ description: "left、right 或 middle，默认 left" })),
+        count: Type.Optional(Type.Number({ description: "点击次数，默认 1" })),
+        label,
+        foreground,
+        sensitive
+      }
+    ),
+    computerTool("computer_drag", "在窗口里从一个点按住拖到另一个点再松开。拖完会再看一眼窗口。", {
+      pid,
+      window_id: windowId,
+      x: Type.Number({ description: "起点横坐标，窗口截图上的像素" }),
+      y: Type.Number({ description: "起点纵坐标，窗口截图上的像素" }),
       x2: Type.Number({ description: "终点横坐标" }),
       y2: Type.Number({ description: "终点纵坐标" }),
-      sensitive,
-      computer_id: computerId
+      label,
+      foreground,
+      sensitive
     }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_drag", args)
-        })
-      );
-    }
-  });
-
-  const scroll = defineTool({
-    name: "computer_scroll",
-    description: "在截图上的一个点滚动。delta 为正往上，为负往下。滚完会再截一张图。",
-    parameters: Type.Object({
-      x: screenX,
-      y: screenY,
-      delta: Type.Number({ description: "滚动量，正数往上，负数往下" }),
-      computer_id: computerId
+    computerTool("computer_scroll", "滚动窗口里的一处。滚完会再看一眼窗口。", {
+      pid,
+      window_id: windowId,
+      direction: Type.String({ description: "up、down、left 或 right" }),
+      amount: Type.Optional(Type.Number({ description: "滚几格，默认 3" })),
+      element,
+      x: windowX,
+      y: windowY,
+      foreground
     }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_scroll", args)
-        })
-      );
-    }
-  });
-
-  const typeText = defineTool({
-    name: "computer_type",
-    description: "往当前焦点输入文字。先点中输入框。打完会再截一张图。",
-    parameters: Type.Object({
-      text: Type.String({ description: "要输入的文字" }),
-      sensitive,
-      computer_id: computerId
+    computerTool(
+      "computer_type",
+      "往窗口里输入文字。给 element 就输到那个控件，不给就输到这个窗口的焦点。不按回车，回车用 computer_key。后台打字被拒时，原生输入框改用 computer_set。打完会再看一眼窗口。",
+      {
+        pid,
+        window_id: windowId,
+        text: Type.String({ description: "要输入的文字" }),
+        element,
+        x: windowX,
+        y: windowY,
+        label,
+        foreground,
+        sensitive
+      }
+    ),
+    computerTool("computer_set", "直接设控件的值：填原生输入框、选下拉框的一项、拖滑块、填日期。网页里的输入框不要用它。设完会再看一眼窗口。", {
+      pid,
+      window_id: windowId,
+      element: Type.String({ description: "computer_look 给的控件编号" }),
+      value: Type.String({ description: "要设的值。下拉框写选项的名字" }),
+      label,
+      sensitive
     }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_type", args)
-        })
-      );
-    }
-  });
-
-  const pressKey = defineTool({
-    name: "computer_key",
-    description: "按一个键或组合键，比如 enter、escape、cmd+c、cmd+shift+space。按完会再截一张图。",
-    parameters: Type.Object({
+    computerTool("computer_key", "在窗口里按一个键或组合键，比如 return、escape、cmd+c、cmd+shift+s。按完会再看一眼窗口。", {
+      pid,
+      window_id: windowId,
       key: Type.String({ description: "键名，组合用加号连接" }),
-      sensitive,
-      computer_id: computerId
+      element,
+      foreground,
+      sensitive
     }),
-    async execute(args, api, context) {
-      return finish(
-        await bridge.exec({
-          requestId: api.callId,
-          computerId: args.computer_id,
-          signal: abortSignal(context),
-          action: actionOf("computer_key", args)
-        })
-      );
-    }
-  });
+    computerTool("computer_menu", "点应用菜单栏里的一项。不用把应用切到前面。点完会再看一眼窗口。", {
+      pid,
+      window_id: windowId,
+      menu: Type.Array(Type.String(), { description: "菜单路径，比如 [\"文件\", \"存储…\"]，用应用里显示的文字" }),
+      sensitive
+    })
+  ];
 
   return [
     listComputers,
@@ -336,13 +327,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     readFile,
     writeFile,
     listDirectory,
-    screenshot,
-    click,
-    move,
-    drag,
-    scroll,
-    typeText,
-    pressKey
+    ...screenTools
   ];
 }
 

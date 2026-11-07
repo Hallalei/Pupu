@@ -18,7 +18,7 @@ describe("桥上的二次判断", () => {
   });
 
   test("屏幕操作没带批准就拒", () => {
-    assert.match(localRefusal({ kind: "computer", op: "screenshot" }, false, ON, HOME) ?? "", /先在手机或网页上批准/);
+    assert.match(localRefusal({ kind: "computer", op: "look" }, false, ON, HOME) ?? "", /先在手机或网页上批准/);
     assert.equal(localRefusal({ kind: "computer", op: "permissions" }, false, ON, HOME), null);
   });
 

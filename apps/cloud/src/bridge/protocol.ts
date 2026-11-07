@@ -45,29 +45,42 @@ export type RunAction = {
   readonly background: boolean;
 };
 
-/** 截图像素。原点在左上角，和发给模型的那张图同一套坐标。 */
-export type ComputerOp =
-  | "screenshot"
-  | "permissions"
-  | "click"
-  | "move"
-  | "drag"
-  | "scroll"
-  | "type"
-  | "key";
+const COMPUTER_OPS = ["permissions", "windows", "look", "open", "click", "drag", "scroll", "type", "set", "key", "menu"] as const;
 
+export type ComputerOp = (typeof COMPUTER_OPS)[number];
+
+/** 按窗口操作，不碰用户的鼠标和前台。 */
 export type ComputerAction = {
   readonly kind: "computer";
   readonly op: ComputerOp;
+  /** `windows` 的筛选，`open` 要开的应用。 */
+  readonly app?: string;
+  /** `open` 用这个应用打开的文件或网址。 */
+  readonly path?: string;
+  /** `look` 只看名字里带这段文字的控件。 */
+  readonly query?: string;
+  readonly pid?: number;
+  readonly windowId?: number;
+  /** `look` 给的控件编号，比如 s0000002a:11。 */
+  readonly element?: string;
+  /** 这个窗口截图上的像素，原点在窗口左上角。 */
   readonly x?: number;
   readonly y?: number;
   readonly x2?: number;
   readonly y2?: number;
   readonly button?: "left" | "right" | "middle";
   readonly count?: number;
-  readonly delta?: number;
+  readonly direction?: "up" | "down" | "left" | "right";
+  readonly amount?: number;
+  /** `type` 要输入的文字，`set` 要设的值。 */
   readonly text?: string;
   readonly key?: string;
+  /** 菜单路径，从顶层到要点的那一项。 */
+  readonly menu?: readonly string[];
+  /** 点的是什么，审批和聊天记录里给人看。 */
+  readonly label?: string;
+  /** 后台做不到时才用：短暂切到前面，做完切回去。 */
+  readonly foreground?: boolean;
   /** 这一步会发消息、付款、提交或删除。分级里算高风险，单独审批。 */
   readonly sensitive?: boolean;
 };
@@ -141,11 +154,9 @@ export type UpFrame =
       readonly mime: "image/jpeg";
       readonly width: number;
       readonly height: number;
-      readonly screenWidth: number;
-      readonly screenHeight: number;
       /** base64，不含 data: 前缀。 */
       readonly data: string;
-      /** 当前窗口里能点的控件和坐标，给看不见图的模型用。 */
+      /** 这个窗口的控件和编号。 */
       readonly summary?: string;
     };
 
@@ -298,8 +309,6 @@ export function parseUpFrame(raw: string): UpFrame | null {
         value.mime === "image/jpeg" &&
         typeof value.width === "number" &&
         typeof value.height === "number" &&
-        typeof value.screenWidth === "number" &&
-        typeof value.screenHeight === "number" &&
         typeof value.data === "string" &&
         value.data.length > 0 &&
         value.data.length <= 4_000_000
@@ -309,11 +318,9 @@ export function parseUpFrame(raw: string): UpFrame | null {
             mime: "image/jpeg",
             width: value.width,
             height: value.height,
-            screenWidth: value.screenWidth,
-            screenHeight: value.screenHeight,
             data: value.data,
             ...(typeof value.summary === "string" && value.summary.length > 0
-              ? { summary: value.summary.slice(0, 8_000) }
+              ? { summary: value.summary.slice(0, 16_000) }
               : {})
           }
         : null;
@@ -374,16 +381,7 @@ function isAction(value: unknown): value is Action {
     case "list":
       return typeof value.path === "string";
     case "computer":
-      return (
-        value.op === "screenshot" ||
-        value.op === "permissions" ||
-        value.op === "click" ||
-        value.op === "move" ||
-        value.op === "drag" ||
-        value.op === "scroll" ||
-        value.op === "type" ||
-        value.op === "key"
-      );
+      return (COMPUTER_OPS as readonly unknown[]).includes(value.op);
     default:
       return false;
   }

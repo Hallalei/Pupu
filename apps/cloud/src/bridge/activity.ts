@@ -54,7 +54,7 @@ function oneLine(text: string): string {
 /** 正在跑的动作说成一句话。屏幕操作的坐标对人没有用，只说动作。 */
 export function describeDoing(action: Action): string {
   if (action.kind === "computer") {
-    return action.op === "screenshot" ? "看屏幕" : describeAction(action).title;
+    return action.op === "look" || action.op === "windows" ? "看屏幕" : describeAction(action).title;
   }
   const { title, detail } = describeAction(action);
   return detail ? `${title}：${oneLine(detail)}` : title;

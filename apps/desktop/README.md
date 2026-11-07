@@ -40,7 +40,7 @@ npm test
 npm run typecheck
 ```
 
-`npm run dev` 先用 esbuild 把主进程、两个 preload 和桥打进 `dist/`，再起 Electron。桥打成 ESM（`dist/bridge.mjs`），旁边放一份 `computer.swift`，屏幕助手照旧编到 `~/.pupu/bin/`。
+`npm run dev` 先用 esbuild 把主进程、两个 preload 和桥打进 `dist/`，再起 Electron。桥打成 ESM（`dist/bridge.mjs`），旁边放一份 `input.swift`，输入助手照旧编到 `~/.pupu/bin/`。操作窗口用 Cua 驱动，开发版从 `apps/cloud/node_modules` 加载。
 
 日志在 `~/Library/Logs/Pupu Dev/`：`main.log` 是主进程，`bridge.log` 是桥。
 
@@ -105,7 +105,7 @@ npm run dist
 
 1. 找钥匙串里的 Developer ID Application 证书，确认 notarytool 的凭据在；
 2. `build.mjs` 打出 `dist/`；
-3. 把桥的 `computer.swift` 编成屏幕助手 `out/pupu-computer-use`（`-target arm64-apple-macos14.0`），用同一个证书签名，开 hardened runtime，不带 entitlements；
+3. 把桥的 `input.swift` 编成输入助手 `out/pupu-input`（`-target arm64-apple-macos14.0`），用同一个证书签名，开 hardened runtime，不带 entitlements；把 Cua 驱动的 npm 包摆到 `out/cua-driver`，原生库裁成 arm64，由 electron-builder 用同一个证书重签；
 4. electron-builder 按 `electron-builder.yml` 打 Pupu.app：写 Fuses、签名（hardened runtime，entitlements 在 `build/`）、提交公证、staple，再打 DMG；
 5. DMG 签名、公证、staple；
 6. 验收：`codesign --verify --deep --strict`、`spctl --assess`（App 和 DMG 都要显示 `source=Notarized Developer ID`）、`xcrun stapler validate`，再打出 Fuses 的状态。
@@ -120,12 +120,13 @@ npm run dist
 | 签名 | Electron 自带的临时签名 | Developer ID，hardened runtime，公证过 |
 | 连哪个 Pupu | 线上，或者 `PUPU_URL` | 只连线上 |
 | 数据 | `~/Library/Application Support/Pupu Dev`，日志在 `~/Library/Logs/Pupu Dev/` | `~/Library/Application Support/Pupu`，日志在 `~/Library/Logs/Pupu/` |
-| 屏幕助手、输入助手 | 桥在本机编到 `~/.pupu/bin/` 下的 `pupu-computer-use`、`pupu-input` | 包里编好、签好的 `Contents/Resources/helpers/` 下同名程序，主进程经 MessagePort 把目录告诉桥 |
+| 输入助手 | 桥在本机编到 `~/.pupu/bin/pupu-input` | 包里编好、签好的 `Contents/Resources/helpers/pupu-input`，主进程经 MessagePort 把目录告诉桥 |
+| Cua 驱动 | `apps/cloud/node_modules/@trycua/cua-driver` | `Contents/Resources/helpers/cua-driver`，跑在桥的进程里，权限记在 Pupu 名下。驱动是 MIT，运行时 `@ubjs/*` 是 MPL-2.0，两者都没改过；可选的 `cua-perception` 是 AGPL，不要带上 |
 | 调试 | 认 `PUPU_*` 环境变量，能开 DevTools、`--remote-debugging-port` | 删掉 `PUPU_*`，关 DevTools；带 `--remote-debugging-port`、`--inspect`、`--js-flags` 这类参数启动就直接退出 |
 
 收紧入口照 Cindy 正式包的 Fuses：关 RunAsNode、`NODE_OPTIONS`、`--inspect`，开 asar 完整性校验、只从 asar 加载、cookie 加密，关 file:// 的额外权限。桥走 `utilityProcess`，不受 RunAsNode 影响。
 
-entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，屏幕助手和输入助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
+entitlements 只给要用的：主程序 `allow-jit` 和 `automation.apple-events`（桥跑的 osascript 之类控制别的 App 时算在 Pupu 头上），几个 Pupu Helper 只有 `allow-jit`，输入助手什么也不带。没开 `disable-library-validation`，别的库进不了 Pupu 的进程。
 
 ### 发新版
 

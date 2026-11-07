@@ -4,8 +4,9 @@
  * 状态发回主进程给托盘和窗口，托盘上点的收回、停命令、本机开关发过来。
  */
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
-import { usePrebuiltHelper } from "../../cloud/bridge/computer.ts";
+import { useDriverFrom } from "../../cloud/bridge/computer.ts";
 import { usePrebuiltInput } from "../../cloud/bridge/input.ts";
 import type { MenubarAction } from "../../cloud/bridge/menubar.ts";
 import { runBridge, type RunningBridge } from "../../cloud/bridge/run.ts";
@@ -69,10 +70,9 @@ port.on("message", (event) => {
   const message = event.data as ToBridge;
   if (message.type === "config") {
     config = message.config;
-    if (message.helpers) {
-      usePrebuiltHelper(path.join(message.helpers, "pupu-computer-use"));
-      usePrebuiltInput(path.join(message.helpers, "pupu-input"));
-    }
+    // 开发版没有打包，驱动还在 apps/cloud 的依赖里。
+    useDriverFrom(message.helpers ? path.join(message.helpers, "cua-driver") : fileURLToPath(new URL("../../cloud", import.meta.url)));
+    if (message.helpers) usePrebuiltInput(path.join(message.helpers, "pupu-input"));
     for (const resolve of waiting.splice(0)) resolve(message.config);
     if (!bridge) start(message.blocked);
   } else if (message.type === "action") {
