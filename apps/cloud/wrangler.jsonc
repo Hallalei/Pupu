@@ -9,8 +9,16 @@
     "run_worker_first": ["/api/*", "/agents/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "Pupu", "class_name": "Pupu" }]
+    "bindings": [
+      { "name": "Pupu", "class_name": "Pupu" },
+      { "name": "Directory", "class_name": "Directory" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pupu"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Pupu"] },
+    { "tag": "v2", "new_sqlite_classes": ["Directory"] }
+  ],
+  // 新账号自己开 Pupu 的名额，0 是不开放。每个 Pupu 每天的模型费用上限，美元。
+  "vars": { "PUPU_SEATS": "0", "PUPU_DAILY_USD": "0.5" },
   "observability": { "enabled": true }
 }

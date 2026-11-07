@@ -59,7 +59,9 @@ export type AuthBackend = {
     name: string;
     displayName: string | null;
   }): Promise<SignInGrant>;
+  /** `code` 的前缀说明这次登录在哪个 Pupu，`codeHash` 才是它要比的。 */
   redeemSignIn(input: {
+    code: string;
     codeHash: string;
     challenge: string;
     name: string;
@@ -263,6 +265,7 @@ async function redeem(request: Request, context: AuthContext): Promise<Response>
     return Response.json({ error: "verifier 不对" }, { status: 400 });
   }
   const result = await context.backend.redeemSignIn({
+    code: body.code,
     codeHash: await tokenHash(body.code),
     challenge: await pkceChallenge(body.verifier),
     name: typeof body.name === "string" ? body.name : "",

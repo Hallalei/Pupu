@@ -127,6 +127,12 @@ Google Cloud 那边：建一个「Web 应用」类型的 OAuth 客户端，「�
 
 ID token 的校验步骤对照了 [panva/oauth4webapi](https://github.com/panva/oauth4webapi)，state 放 cookie 和 Google 的参数对照了 [pilcrowonpaper/arctic](https://github.com/pilcrowonpaper/arctic)，都是看思路自己写的。
 
+### 让新账号自己开 Pupu
+
+`wrangler.jsonc` 的 `PUPU_SEATS` 是名额，`0` 是不开放，这时和只有一个 Pupu 时一样。改成 `20` 再部署，不在成员名单上的 Google 账号第一次登录时就开一个自己的 Pupu，满了就被拒。`PUPU_DAILY_USD` 是每个 Pupu 每天的模型费用上限，美元，到了当天不再接新消息。
+
+每个 Pupu 是一个 Durable Object。设备凭据和登录码带着 Pupu 的 id 当前缀，Worker 看前缀分流；客户端一直连 `/agents/pupu/me`，Worker 换成它自己的那个，所以 App 不用改。第一个 Pupu 还叫 `me`，老凭据没有前缀，成员不占名额，也不限额。哪个账号住哪由 `Directory` 这个 Durable Object 记，规则在 `src/directory.ts`。
+
 访问口令只在配对时认，是手边没有连上的设备时的救急钥匙。配对失败按来源（IPv4 一个地址，IPv6 一个 /56）计数，10 分钟内错 10 次，这个来源先停 10 分钟；访问口令另记一桶，不管从哪儿来，10 分钟内一共错 20 次就先停。换口令用 `wrangler secret put ACCESS_TOKEN`，已经配对的设备不受影响。
 
 ## 许可证

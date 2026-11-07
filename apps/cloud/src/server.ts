@@ -10,7 +10,7 @@ import { PiHarness } from "agents/harness/pi";
 import { Lifecycle, type LifecycleJobContext } from "agents/lifecycle";
 import { WebSockets } from "agents/websockets";
 import { googleClientFrom, randomToken } from "./auth/oidc";
-import { AUTH_PREFIX, handleAuth, type RedeemResult, type SignInCredential, type SignInGrant } from "./auth/routes";
+import { AUTH_PREFIX, handleAuth, type AuthBackend, type RedeemResult, type SignInCredential, type SignInGrant } from "./auth/routes";
 import {
   redeemStep,
   signInApprovalRow,
@@ -20,6 +20,15 @@ import {
 } from "./auth/sign-ins";
 import { CallSessions, computerActivity, describeWaiting, type ComputerActivity } from "./bridge/activity";
 import { ApprovalStore, type ApprovalRow, type ApprovalView } from "./bridge/approvals";
+import {
+  DirectoryStore,
+  pupuOfCredential,
+  ROOT_PUPU,
+  scopedCredential,
+  seatsFrom,
+  type Assignment,
+  type Home
+} from "./directory";
 import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop } from "./bridge/desktop";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
@@ -31,6 +40,7 @@ import {
   BRIDGE_TAG,
   isBridgeRequest,
   newDeviceToken,
+  tokenFromRequest,
   tokenHash
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
@@ -95,6 +105,7 @@ import { ApprovalPusher } from "./push/approvals";
 import { LivePusher, liveDue, type LiveInput } from "./push/live";
 import { PushStore, type PushTokenType } from "./push/store";
 import { PiSessionSockets } from "./sockets";
+import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore } from "./usage";
 import { MAIN_SESSION, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
 import { createPupuTools } from "./tools";
 
@@ -106,13 +117,13 @@ const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
 /** 模型出错时自动重试几次。报告要知道重试完了还没回上，才算出错。 */
 const MAX_RETRIES = 5;
 
+const SEATS_FULL = "内测名额已经满了。可以到 getpupu.com 申请，有名额了我们告诉你。";
 /** 记在 meta 里，用来判断已有会话要不要切模型。 */
 const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 /** 灵动岛到点重新看一眼：命令跑满 30 秒、屏幕授权到期。 */
 const LIVE_JOB = "live-activity";
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
-export const PUPU_INSTANCE = "me";
 
 export type PupuState = {
   readonly projects: readonly Project[];
@@ -154,6 +165,7 @@ export class Pupu extends DurableObject<Env> {
   readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly members = new MemberStore(this.ctx.storage.sql);
   readonly connectors = new ConnectorStore(this.ctx.storage.sql);
+  readonly usage = new UsageStore(this.ctx.storage.sql);
   /** 连接器工具和审批要用的状态。 */
   readonly #connectorDeps: ConnectorDeps = {
     client: () => this.#connectorClient(),
@@ -273,7 +285,10 @@ export class Pupu extends DurableObject<Env> {
               this.#rememberAsk(String(api.conversationId), request.messages);
               return undefined;
             },
-            afterResponse: (message, api) => this.#reportError(String(api.conversationId), message),
+            afterResponse: (message, api) => {
+              this.usage.add(dayOf(Date.now()), message.usage.cost.total);
+              this.#reportError(String(api.conversationId), message);
+            },
             // 项目里回完一轮，记下最新进展，项目列表上显示；从聊天转来的事报回聊天。
             // 聊天里回完一轮，记下时间，客户端用它亮新消息的圆点。
             onYield: (answer, api) => {
@@ -338,6 +353,7 @@ export class Pupu extends DurableObject<Env> {
     (session) => this.store.touchSession(session),
     (device) => this.#senderOf(device),
     (session, device) => mayOpen(this.threads.of(session), this.#viewer(device)),
+    () => this.#refusal(),
     [
       {
         tag: BRIDGE_TAG,
@@ -576,9 +592,24 @@ export class Pupu extends DurableObject<Env> {
     return (deviceId) => phones.has(deviceId);
   }
 
-  /** 没配 CONNECTOR_URL 和 CONNECTOR_TOKEN 是 null。 */
+  /** 这个 Pupu 的 id，第一次有人登录时记下。Durable Object 自己不知道名字。 */
+  #pupu(): string {
+    return this.store.meta("pupu") ?? ROOT_PUPU;
+  }
+
+  /** 第一个 Pupu 不限额。 */
+  #refusal(): string | null {
+    const limit = dailyLimitFrom(this.env);
+    if (limit === null || this.#pupu() === ROOT_PUPU) return null;
+    return this.usage.spent(dayOf(Date.now())) >= limit ? USAGE_LIMIT_MESSAGE : null;
+  }
+
+  /**
+   * 没配 CONNECTOR_URL 和 CONNECTOR_TOKEN 是 null。别的 Pupu 先不开连接器：
+   * 大家共用一把管理员 token，隔离还没验过。
+   */
   #connectorClient(): ConnectorClient | null {
-    const config = connectorConfigFrom(this.env);
+    const config = this.#pupu() === ROOT_PUPU ? connectorConfigFrom(this.env) : null;
     return config ? new ConnectorClient(config) : null;
   }
 
@@ -605,14 +636,14 @@ export class Pupu extends DurableObject<Env> {
    * Google 认过的邮箱能不能进：在名单上就记下第一次登录；还没有创建者、邮箱又是 `CREATOR_EMAIL`，
    * 他就是创建者，之前连上的设备和电脑都归他。都不是返回 undefined。
    */
-  #admit(email: string, displayName: string | null, now: number): MemberRow | undefined {
+  #admit(email: string, displayName: string | null, now: number, founder: boolean): MemberRow | undefined {
     const member = this.members.byEmail(email);
     if (member) {
       this.members.markJoined(member.id, now);
       this.members.setName(member.id, displayName);
       return member;
     }
-    const creatorEmail = this.env.CREATOR_EMAIL?.trim();
+    const creatorEmail = founder ? email : this.env.CREATOR_EMAIL?.trim();
     if (this.members.creator() || !creatorEmail || emailKey(creatorEmail) !== emailKey(email)) return undefined;
     const creator = this.members.addCreator(email, now);
     if (!creator) return undefined;
@@ -694,10 +725,17 @@ export class Pupu extends DurableObject<Env> {
     const expiresAt = now + PAIRING_TTL_MS;
     for (;;) {
       const code = newPairingCode();
-      if (this.devices.addCode(await tokenHash(code.replace("-", "")), expiresAt, now, from)) {
+      const hash = await tokenHash(code.replace("-", ""));
+      if (this.devices.addCode(hash, expiresAt, now, from)) {
+        if (this.#pupu() !== ROOT_PUPU) await directory(this.env).rememberCode(hash, this.#pupu(), expiresAt);
         return { code, expiresAt };
       }
     }
+  }
+
+  /** 配对码试错到顶了：Worker 就不去查别的 Pupu 的码，由这里回 429。 */
+  async pairLimited(source: string): Promise<boolean> {
+    return this.devices.failures(`source:${source}`, Date.now()) >= SOURCE_LIMIT;
   }
 
   /**
@@ -757,6 +795,13 @@ export class Pupu extends DurableObject<Env> {
 
   // ---- 用 Google 登录（Worker 那一半在 src/auth/routes.ts）----
 
+  /** 目录里还没记、但已经是这里的成员，或者是部署时填的创建者。 */
+  async admits(email: string): Promise<boolean> {
+    if (this.members.byEmail(email)) return true;
+    const creator = this.env.CREATOR_EMAIL?.trim();
+    return !this.members.creator() && Boolean(creator) && emailKey(creator ?? "") === emailKey(email);
+  }
+
   async addSignInFlow(flow: SignInFlow): Promise<void> {
     this.signIns.addFlow(flow);
   }
@@ -774,9 +819,11 @@ export class Pupu extends DurableObject<Env> {
     email: string;
     name: string;
     displayName: string | null;
+    home: Home;
   }): Promise<SignInGrant> {
-    const { flow } = input;
-    const member = this.#admit(input.email, input.displayName, Date.now());
+    const { flow, home } = input;
+    if (home.pupu !== ROOT_PUPU) this.store.setMeta("pupu", home.pupu);
+    const member = this.#admit(input.email, input.displayName, Date.now(), home.founder);
     if (!member) {
       return {
         kind: "refused",
@@ -789,7 +836,7 @@ export class Pupu extends DurableObject<Env> {
       return { kind: "cookie", token: (await this.#credential("browser", input.name, member.id)).token };
     }
     if (!flow.challenge) throw new Error("App 的登录缺少 challenge");
-    const code = randomToken();
+    const code = scopedCredential(this.#pupu(), randomToken());
     this.signIns.add({
       codeHash: await tokenHash(code),
       client: flow.client,
@@ -864,7 +911,7 @@ export class Pupu extends DurableObject<Env> {
     if (input.kind === "computer") {
       return { ok: true, ...(await this.createComputer(input.name, input.memberId)) };
     }
-    const token = newDeviceToken();
+    const token = scopedCredential(this.#pupu(), newDeviceToken());
     const row = this.devices.insert({
       name: input.name.trim().slice(0, 80) || DEFAULT_DEVICE_NAMES[input.kind],
       kind: input.kind,
@@ -1002,7 +1049,7 @@ export class Pupu extends DurableObject<Env> {
   async createComputer(name: string, ownerId: string | null): Promise<{ id: string; name: string; token: string }> {
     await this.lifecycle.start();
     const trimmed = name.trim().slice(0, 80) || "电脑";
-    const token = newDeviceToken();
+    const token = scopedCredential(this.#pupu(), newDeviceToken());
     const row = this.computers.insert({ name: trimmed, ownerId, tokenHash: await tokenHash(token) });
     this.bridge.onChange();
     return { id: row.id, name: row.name, token };
@@ -1031,10 +1078,13 @@ export class Pupu extends DurableObject<Env> {
   async inviteMember(
     email: string,
     device: string | null = null
-  ): Promise<"ok" | "invalid" | "exists" | "creator_phone_only"> {
+  ): Promise<Assignment | "invalid" | "exists" | "creator_phone_only"> {
     const actor = this.#actor(device);
     if (!mayInvite(actor)) return "creator_phone_only";
     if (!isEmail(email)) return "invalid";
+    if (this.members.byEmail(email)) return "exists";
+    const assignment = await directory(this.env).assign(email, this.#pupu());
+    if (assignment !== "ok") return assignment;
     if (!this.members.invite(email, actor?.memberId ?? null, Date.now())) return "exists";
     this.#devicesChanged();
     return "ok";
@@ -1053,6 +1103,7 @@ export class Pupu extends DurableObject<Env> {
     for (const row of this.computers.list()) if (row.ownerId === id) this.#revokeComputer(row.id);
     for (const row of this.connectors.list()) if (row.memberId === id) await this.#disconnect(row.id);
     this.members.remove(id);
+    await directory(this.env).release(target.email, this.#pupu());
     this.#devicesChanged();
     return "ok";
   }
@@ -1236,6 +1287,39 @@ function isLocal(request: Request): boolean {
 }
 
 /** 手机和桥把凭据放在 Authorization 头里，浏览器放在 cookie 里。电脑 App 的窗口也用 cookie，由 App 自己种。 */
+/** 账号和 Pupu 的对应表，只有一个实例。规则见 directory.ts。 */
+export class Directory extends DurableObject<Env> {
+  readonly store = new DirectoryStore(this.ctx.storage.sql);
+
+  async home(email: string): Promise<Home | null> {
+    return this.store.home(email);
+  }
+
+  async claim(email: string): Promise<Home | null> {
+    return this.store.claim(email, seatsFrom(this.env), Date.now());
+  }
+
+  async assign(email: string, pupu: string): Promise<Assignment> {
+    return this.store.assign(email, pupu, seatsFrom(this.env), Date.now());
+  }
+
+  async release(email: string, pupu: string): Promise<void> {
+    this.store.release(email, pupu);
+  }
+
+  async knows(pupu: string): Promise<boolean> {
+    return this.store.knows(pupu);
+  }
+
+  async rememberCode(codeHash: string, pupu: string, expiresAt: number): Promise<void> {
+    this.store.rememberCode(codeHash, pupu, expiresAt, Date.now());
+  }
+
+  async pupuOfCode(codeHash: string): Promise<string | null> {
+    return this.store.pupuOfCode(codeHash, Date.now());
+  }
+}
+
 function credentialOf(request: Request): { token: string; cookie: boolean } | null {
   const header = request.headers.get("Authorization");
   if (header?.startsWith("Bearer ")) {
@@ -1249,8 +1333,12 @@ function credentialOf(request: Request): { token: string; cookie: boolean } | nu
   return null;
 }
 
-/** 发请求的设备。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。 */
-type Caller = { readonly device: string | null };
+type PupuStub = DurableObjectStub<Pupu>;
+
+/**
+ * 发请求的设备和它所在的 Pupu。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。
+ */
+type Caller = { readonly device: string | null; readonly pupu: PupuStub; readonly name: string };
 
 function connectorMessage(error: unknown): string {
   return error instanceof Error ? `连接器出错了：${error.message}` : "连接器出错了";
@@ -1266,7 +1354,7 @@ function escapeHtml(value: string): string {
  */
 async function handleConnectorDone(env: Env, url: URL): Promise<Response> {
   const attempt = url.searchParams.get("attempt") ?? "";
-  const result = /^[0-9a-f-]{36}$/.test(attempt) ? await pupu(env).finishConnector(attempt) : undefined;
+  const result = /^[0-9a-f-]{36}$/.test(attempt) ? await root(env).finishConnector(attempt) : undefined;
   if (result?.client === "phone") {
     const back = new URL("pupu://connector");
     back.searchParams.set("status", result.ok ? "connected" : "failed");
@@ -1292,10 +1380,12 @@ async function authenticate(request: Request, env: Env): Promise<Caller | null> 
     // cookie 是浏览器自己带上的：别的网站发起的请求和 WebSocket（Origin 对不上）不认。
     const origin = request.headers.get("Origin");
     if (credential.cookie && origin !== null && origin !== new URL(request.url).origin) return null;
-    const device = await pupu(env).authenticateDevice(credential.token);
-    return device ? { device } : null;
+    const name = pupuOfCredential(credential.token);
+    const home = await knownPupu(env, name);
+    const device = await home?.authenticateDevice(credential.token);
+    return home && device ? { device, pupu: home, name } : null;
   }
-  return isLocal(request) && !env.ACCESS_TOKEN ? { device: null } : null;
+  return isLocal(request) && !env.ACCESS_TOKEN ? { device: null, pupu: root(env), name: ROOT_PUPU } : null;
 }
 
 /** 浏览器的凭据只放进 HttpOnly cookie，页面上的脚本拿不到。`token` 是 null 时清掉。 */
@@ -1306,8 +1396,55 @@ function deviceCookie(url: URL, token: string | null): string {
   return `${TOKEN_COOKIE}=${value}; Path=/; HttpOnly${secure}; SameSite=Lax`;
 }
 
-function pupu(env: Env) {
-  return env.Pupu.get(env.Pupu.idFromName(PUPU_INSTANCE));
+function pupuNamed(env: Env, name: string): PupuStub {
+  return env.Pupu.get(env.Pupu.idFromName(name));
+}
+
+function root(env: Env): PupuStub {
+  return pupuNamed(env, ROOT_PUPU);
+}
+
+function directory(env: Env) {
+  return env.Directory.get(env.Directory.idFromName("directory"));
+}
+
+/** 目录里认识的 id。Pupu 只增不减，记下来平时就不用问目录。 */
+const knownPupus = new Set<string>([ROOT_PUPU]);
+
+/** 凭据前缀是客户端发来的：先问目录，乱填的前缀不会凭空造出一个 Durable Object。 */
+async function knownPupu(env: Env, name: string): Promise<PupuStub | null> {
+  if (!knownPupus.has(name)) {
+    if (!(await directory(env).knows(name))) return null;
+    knownPupus.add(name);
+  }
+  return pupuNamed(env, name);
+}
+
+/** 这个账号住哪：目录里有就是那里，第一个 Pupu 的老成员留在那里，其余的开一个新的。 */
+async function homeOf(env: Env, email: string): Promise<Home | null> {
+  const known = await directory(env).home(email);
+  if (known) return known;
+  if (await root(env).admits(email)) return { pupu: ROOT_PUPU, founder: false };
+  return directory(env).claim(email);
+}
+
+/** 登录流程还没认出是谁，放在第一个 Pupu；认出来之后才分流。 */
+function authBackend(env: Env): AuthBackend {
+  return {
+    addSignInFlow: (flow) => root(env).addSignInFlow(flow),
+    takeSignInFlow: (state) => root(env).takeSignInFlow(state),
+    finishSignIn: async (input) => {
+      const home = await homeOf(env, input.email);
+      if (home) return pupuNamed(env, home.pupu).finishSignIn({ ...input, home });
+      if (seatsFrom(env) > 0) return { kind: "refused", error: SEATS_FULL };
+      return root(env).finishSignIn({ ...input, home: { pupu: ROOT_PUPU, founder: false } });
+    },
+    redeemSignIn: async (input) => {
+      const home = await knownPupu(env, pupuOfCredential(input.code));
+      if (!home) return { status: "refused", code: 400, error: "这次登录已经失效了。重新登录一次。" };
+      return home.redeemSignIn(input);
+    }
+  };
 }
 
 async function readJson<T>(request: Request): Promise<T> {
@@ -1328,13 +1465,17 @@ async function handlePair(request: Request, env: Env, url: URL): Promise<Respons
   if (kind !== "phone" && kind !== "browser" && kind !== "desktop" && kind !== "computer") {
     return Response.json({ error: "kind 只能是 phone、browser、desktop 或 computer" }, { status: 400 });
   }
-  const result = await pupu(env).pair({
+  const code = typeof body.code === "string" ? normalizePairingCode(body.code) : null;
+  const source = sourceOf(request.headers.get("CF-Connecting-IP"));
+  const owner =
+    code && !(await root(env).pairLimited(source)) ? await directory(env).pupuOfCode(await tokenHash(code)) : null;
+  const result = await (owner ? pupuNamed(env, owner) : root(env)).pair({
     kind,
     name: kind === "browser" ? browserName(request.headers.get("User-Agent")) : String(body.name ?? ""),
     code: typeof body.code === "string" ? body.code : undefined,
     accessToken: typeof body.accessToken === "string" ? body.accessToken : undefined,
     // 来源只认 Cloudflare 填的这个头，客户端自己写的 X-Forwarded-For 不算。
-    source: sourceOf(request.headers.get("CF-Connecting-IP")),
+    source,
     trusted: isLocal(request) && !env.ACCESS_TOKEN
   });
   if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
@@ -1350,15 +1491,15 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   const method = request.method;
 
   if (pathname === "/api/state" && method === "GET") {
-    return Response.json(await pupu(env).state(caller.device));
+    return Response.json(await caller.pupu.state(caller.device));
   }
   if (pathname === "/api/pairing-codes" && method === "POST") {
-    return Response.json(await pupu(env).createPairingCode(caller.device));
+    return Response.json(await caller.pupu.createPairingCode(caller.device));
   }
   const device = pathname.match(/^\/api\/devices\/([^/]+)\/revoke$/);
   if (device && method === "POST") {
     const id = decodeURIComponent(device[1] ?? "");
-    const result = await pupu(env).revokeDevice(id, caller.device);
+    const result = await caller.pupu.revokeDevice(id, caller.device);
     if (result === "missing") return Response.json({ error: "没有这台设备" }, { status: 404 });
     if (result === "forbidden") return Response.json({ error: "别人的设备只有创建者能吊销" }, { status: 403 });
     // 吊销的是自己：浏览器顺手清掉 cookie。
@@ -1368,7 +1509,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
   if (policy && method === "POST") {
     const body = await readJson<{ policy?: string }>(request);
-    const result = await pupu(env).setComputerPolicy(
+    const result = await caller.pupu.setComputerPolicy(
       decodeURIComponent(policy[1] ?? ""),
       String(body.policy ?? ""),
       caller.device
@@ -1385,7 +1526,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (body.decision !== "allow" && body.decision !== "deny") {
       return Response.json({ error: "decision 只能是 allow 或 deny" }, { status: 400 });
     }
-    const result = await pupu(env).decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision, caller.device);
+    const result = await caller.pupu.decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision, caller.device);
     if (result === "missing") return Response.json({ error: "没有这条请示" }, { status: 404 });
     if (result === "settled") return Response.json({ error: "这条请示已经处理过或过期了" }, { status: 409 });
     if (result === "phone_only") return Response.json({ error: "要在这台电脑主人的手机 App 上批准" }, { status: 403 });
@@ -1404,39 +1545,41 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (body.env !== "sandbox" && body.env !== "production") {
       return Response.json({ error: "env 只能是 sandbox 或 production" }, { status: 400 });
     }
-    const result = await pupu(env).savePushToken({ device: caller.device, token, type: body.type, env: body.env });
+    const result = await caller.pupu.savePushToken({ device: caller.device, token, type: body.type, env: body.env });
     if (result === "not_phone") return Response.json({ error: "只有手机 App 能登记推送" }, { status: 403 });
     return Response.json({ ok: true });
   }
   const pushToken = pathname.match(/^\/api\/push-tokens\/([0-9a-f]{64,400})$/);
   if (pushToken && method === "DELETE") {
     if (!caller.device) return Response.json({ error: "要先配对" }, { status: 400 });
-    await pupu(env).removePushToken(caller.device, pushToken[1] ?? "");
+    await caller.pupu.removePushToken(caller.device, pushToken[1] ?? "");
     return Response.json({ ok: true });
   }
   if (pathname === "/api/push-tokens/test" && method === "POST") {
     if (!caller.device) return Response.json({ error: "要先配对" }, { status: 400 });
-    const result = await pupu(env).testPush(caller.device);
+    const result = await caller.pupu.testPush(caller.device);
     return Response.json(result, { status: result.ok ? 200 : 409 });
   }
   const takeback = pathname.match(/^\/api\/computers\/([^/]+)\/takeback$/);
   if (takeback && method === "POST") {
-    const ok = await pupu(env).takeback(decodeURIComponent(takeback[1] ?? ""));
+    const ok = await caller.pupu.takeback(decodeURIComponent(takeback[1] ?? ""));
     if (!ok) return Response.json({ error: "没有这台电脑" }, { status: 404 });
     return Response.json({ ok: true });
   }
   const revoke = pathname.match(/^\/api\/computers\/([^/]+)\/revoke$/);
   if (revoke && method === "POST") {
-    const result = await pupu(env).revokeComputer(decodeURIComponent(revoke[1] ?? ""), caller.device);
+    const result = await caller.pupu.revokeComputer(decodeURIComponent(revoke[1] ?? ""), caller.device);
     if (result === "missing") return Response.json({ error: "没有这台电脑" }, { status: 404 });
     if (result === "forbidden") return Response.json({ error: "别人的电脑只有创建者能吊销" }, { status: 403 });
     return Response.json({ ok: true });
   }
   if (pathname === "/api/members" && method === "POST") {
     const body = await readJson<{ email?: unknown }>(request);
-    const result = await pupu(env).inviteMember(typeof body.email === "string" ? body.email : "", caller.device);
+    const result = await caller.pupu.inviteMember(typeof body.email === "string" ? body.email : "", caller.device);
     if (result === "invalid") return Response.json({ error: "填一个 Google 账号的邮箱" }, { status: 400 });
     if (result === "exists") return Response.json({ error: "这个人已经在成员名单上了" }, { status: 409 });
+    if (result === "taken") return Response.json({ error: "这个账号已经有自己的 Pupu 了" }, { status: 409 });
+    if (result === "full") return Response.json({ error: SEATS_FULL }, { status: 409 });
     if (result === "creator_phone_only") {
       return Response.json({ error: "邀请成员要创建者在手机 App 上做" }, { status: 403 });
     }
@@ -1444,20 +1587,20 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   }
   const member = pathname.match(/^\/api\/members\/([^/]+)\/remove$/);
   if (member && method === "POST") {
-    const result = await pupu(env).removeMember(decodeURIComponent(member[1] ?? ""), caller.device);
+    const result = await caller.pupu.removeMember(decodeURIComponent(member[1] ?? ""), caller.device);
     if (result === "missing") return Response.json({ error: "没有这个成员" }, { status: 404 });
     if (result === "creator_only") return Response.json({ error: "只有创建者能移除成员，创建者自己移除不了" }, { status: 403 });
     return Response.json({ ok: true });
   }
   const connect = pathname.match(/^\/api\/connectors\/([a-z0-9_]+)\/connect$/);
   if (connect && method === "POST") {
-    const result = await pupu(env).startConnector(connect[1] ?? "", url.origin, caller.device);
+    const result = await caller.pupu.startConnector(connect[1] ?? "", url.origin, caller.device);
     if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
     return Response.json({ url: result.url });
   }
   const disconnect = pathname.match(/^\/api\/connectors\/([^/]+)\/remove$/);
   if (disconnect && method === "POST") {
-    const result = await pupu(env).removeConnector(decodeURIComponent(disconnect[1] ?? ""), caller.device);
+    const result = await caller.pupu.removeConnector(decodeURIComponent(disconnect[1] ?? ""), caller.device);
     if (result === "missing") return Response.json({ error: "没有这个账号" }, { status: 404 });
     if (result === "forbidden") return Response.json({ error: "别人连的账号只有创建者能断开" }, { status: 403 });
     if (result === "failed") return Response.json({ error: "连接器那边没断开，等一下再试" }, { status: 502 });
@@ -1466,7 +1609,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   if (pathname === "/api/computers/run" && method === "POST") {
     if (!isLocal(request)) return new Response("Not found", { status: 404 });
     const body = await readJson<{ command?: string; computerId?: string; background?: boolean }>(request);
-    const result = await pupu(env).runCommand({
+    const result = await caller.pupu.runCommand({
       command: String(body.command ?? ""),
       computerId: body.computerId,
       background: body.background === true,
@@ -1476,13 +1619,13 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   }
   const seen = pathname.match(/^\/api\/projects\/([^/]+)\/seen$/);
   if (seen && method === "POST") {
-    const ok = await pupu(env).markProjectSeen(decodeURIComponent(seen[1] ?? ""));
+    const ok = await caller.pupu.markProjectSeen(decodeURIComponent(seen[1] ?? ""));
     if (!ok) return Response.json({ error: "没有这个项目" }, { status: 404 });
     return Response.json({ ok: true });
   }
   if (pathname === "/api/projects" && method === "POST") {
     const body = await readJson<{ name?: string; goal?: string }>(request);
-    const project = await pupu(env).createProject({
+    const project = await caller.pupu.createProject({
       name: String(body.name ?? ""),
       goal: String(body.goal ?? "")
     });
@@ -1500,7 +1643,8 @@ export default {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return new Response("桥要用 WebSocket 连接。", { status: 426 });
       }
-      return pupu(env).fetch(request);
+      const token = tokenFromRequest(request);
+      return ((token && (await knownPupu(env, pupuOfCredential(token)))) || root(env)).fetch(request);
     }
 
     try {
@@ -1510,7 +1654,7 @@ export default {
       }
       if (url.pathname.startsWith(AUTH_PREFIX)) {
         const response = await handleAuth(request, url, {
-          backend: pupu(env),
+          backend: authBackend(env),
           google: googleClientFrom(env, isLocal(request)),
           browserName,
           deviceCookie: (target, token) => deviceCookie(target, token),
@@ -1528,7 +1672,8 @@ export default {
       }
       if (url.pathname === "/api/bridge/revoke" && request.method === "POST") {
         const token = credentialOf(request)?.token;
-        if (!token || !(await pupu(env).revokeComputerByToken(token))) {
+        const home = token ? await knownPupu(env, pupuOfCredential(token)) : null;
+        if (!token || !home || !(await home.revokeComputerByToken(token))) {
           return Response.json({ error: "凭据无效，或者已经吊销了" }, { status: 401 });
         }
         return Response.json({ ok: true });
@@ -1545,21 +1690,22 @@ export default {
         const forwarded = new Request(request);
         forwarded.headers.delete(DEVICE_HEADER);
         if (caller.device) forwarded.headers.set(DEVICE_HEADER, caller.device);
-        return pupu(env).fetch(forwarded);
+        return caller.pupu.fetch(forwarded);
       }
 
       if (url.pathname.startsWith("/api/")) {
         return await handleApi(request, env, url, caller);
       }
-      // 只开放这一个 Pupu 实例。
-      if (
-        url.pathname.startsWith("/agents/") &&
-        !url.pathname.startsWith(`/agents/pupu/${PUPU_INSTANCE}`)
-      ) {
+      // 客户端永远连 `/agents/pupu/me`，这里换成它自己的 Pupu，路径上选不了别人的。
+      // 服务端选实例的做法见 agents 文档 docs/agents/routing.md。
+      const agentPath = `/agents/pupu/${ROOT_PUPU}`;
+      if (url.pathname.startsWith("/agents/") && !url.pathname.startsWith(agentPath)) {
         return new Response("Not found", { status: 404 });
       }
+      const target = new URL(url);
+      target.pathname = url.pathname.replace(agentPath, `/agents/pupu/${caller.name}`);
       // 告诉 Pupu 这条连接是哪台设备的，吊销时按设备断开。客户端自己带的这个头不算数。
-      const forwarded = new Request(request);
+      const forwarded = new Request(target, request);
       forwarded.headers.delete(DEVICE_HEADER);
       if (caller.device) forwarded.headers.set(DEVICE_HEADER, caller.device);
       return (

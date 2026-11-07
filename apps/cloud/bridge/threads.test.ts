@@ -152,7 +152,8 @@ function sockets(owner: Record<string, string>) {
     () => [],
     () => {},
     () => null,
-    (session, device) => mayOpen(threads.of(session), device === null ? null : (owner[device] ?? null))
+    (session, device) => mayOpen(threads.of(session), device === null ? null : (owner[device] ?? null)),
+    () => null
   ).options();
   const handlers = options.handlers;
   /** 和运行时的顺序一样：先要标签，抛错就不接受这条连接；接受了才 onConnect。 */
@@ -192,6 +193,7 @@ describe("按设备发的帧", () => {
       () => {},
       () => null,
       () => true,
+      () => null,
       [route]
     );
 
