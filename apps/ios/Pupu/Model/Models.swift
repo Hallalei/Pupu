@@ -64,6 +64,8 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
 
 nonisolated struct Approval: Decodable, Sendable, Hashable {
     let id: String
+    /// 等批的那次工具调用，对话里那一步靠它显示「等你批准」。新手机登录和老云端没有。
+    let callId: String?
     let computerId: String
     let computerName: String
     /// step：这一步单独批；screen：这台电脑的屏幕授权。

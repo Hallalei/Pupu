@@ -30,6 +30,7 @@ import { credentialsPath, readPairing, writePairing, type Credential, type Pairi
 import { debugSwitches, devVariables } from "./env.ts";
 import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
 import { desktopStatus, googleEnabled, pairComputer, pairDesktop, redeemSignIn } from "./pairing.ts";
+import { PairingRun, reasonOf, type PairingStatus } from "./pairing-state.ts";
 import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
@@ -75,8 +76,6 @@ let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
 let capture: CaptureHost | null = null;
-/** 正在等浏览器里的 Google 登录。 */
-let signIn: AbortController | null = null;
 let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
@@ -177,6 +176,7 @@ async function computerRejected(): Promise<void> {
   bridgeState = null;
   await savePairing().catch((error: unknown) => log(`凭据没存上：${message(error)}`));
   render();
+  sendPairingStatus();
 }
 
 // ── 凭据和配对 ────────────────────────────────────────────────────────
@@ -205,16 +205,33 @@ async function cliComputer(): Promise<Credential | null> {
   }
 }
 
+/** 配对一次只做一件，配对窗口跟着它变。 */
+const pairingRun = new PairingRun(sendPairingStatus);
+
+function pairingStatus(): PairingStatus {
+  return { reason: reasonOf(pairing), busy: pairingRun.busy };
+}
+
+/** 配对开始、做完，或者凭据变了：窗口上的标题、按钮和要不要填码都跟着换。 */
+function sendPairingStatus(): void {
+  if (pairWindow && !pairWindow.isDestroyed()) pairWindow.webContents.send("pairing:status", pairingStatus());
+}
+
 async function pairingInfo(): Promise<PairingInfo> {
-  const reason = !pairing.desktop ? (pairing.computer ? "desktop" : "first") : "computer";
+  const reason = reasonOf(pairing);
   // 只在第一次配对时给：被吊销过的那份可能就是它，再沿用还是会被拒。
   const adoptable = reason === "first" ? ((await cliComputer())?.name ?? null) : null;
   const google = reason !== "computer" && (await googleEnabled(origin));
-  return { host: new URL(origin).host, codeOptional: isLocalOrigin(origin), reason, adoptable, google };
+  // 上面在等网络，状态放在最后取。
+  return { host: new URL(origin).host, codeOptional: isLocalOrigin(origin), adoptable, google, status: pairingStatus() };
 }
 
 /** 成功返回 null，失败返回给人看的原因。 */
-async function pair(request: PairingRequest): Promise<string | null> {
+function pair(request: PairingRequest): Promise<string | null> {
+  return pairingRun.run("code", () => pairWithCode(request));
+}
+
+async function pairWithCode(request: PairingRequest): Promise<string | null> {
   let desktop = pairing.desktop;
   let computer = pairing.computer;
   const renewed = !desktop;
@@ -245,11 +262,12 @@ async function pair(request: PairingRequest): Promise<string | null> {
  * 再拿码和这里留着的 verifier 换凭据。Google 不让在 App 的网页里登录，所以不在配对窗口里登。
  * 窗口和桥的凭据一次就拿齐；选了沿用命令行桥的授权，就只要窗口的。
  */
-async function pairWithGoogle(request: GoogleRequest): Promise<string | null> {
+function pairWithGoogle(request: GoogleRequest): Promise<string | null> {
   if (pairing.desktop) return pair({ code: "", adopt: request.adopt });
-  signIn?.abort();
-  const controller = new AbortController();
-  signIn = controller;
+  return pairingRun.run("google", (signal) => signInWithGoogle(request, signal));
+}
+
+async function signInWithGoogle(request: GoogleRequest, signal: AbortSignal): Promise<string | null> {
   const verifier = newVerifier();
   let desktop: Credential;
   let computer = pairing.computer;
@@ -270,7 +288,7 @@ async function pairWithGoogle(request: GoogleRequest): Promise<string | null> {
         }
         return shell.openExternal(start.toString());
       },
-      { signal: controller.signal }
+      { signal }
     );
     const adopted = !computer && request.adopt ? await cliComputer() : null;
     const result = await redeemSignIn(origin, { code, verifier, name: computerName(), computer: !computer && !adopted });
@@ -285,8 +303,6 @@ async function pairWithGoogle(request: GoogleRequest): Promise<string | null> {
   } catch (error) {
     log(`Google 登录没成：${message(error)}`);
     return message(error);
-  } finally {
-    if (signIn === controller) signIn = null;
   }
   // 人还在浏览器里，把 Pupu 叫回前台。后台测试时不抢。
   if (!background) app.focus({ steal: true });
@@ -324,6 +340,7 @@ async function checkDesktop(): Promise<void> {
     mainWindow?.close();
     openPairWindow();
     render();
+    sendPairingStatus();
   } catch (error) {
     log(`检查窗口凭据时出错：${message(error)}`);
   } finally {
@@ -497,7 +514,7 @@ function openPairWindow(): void {
   window.on("closed", () => {
     if (pairWindow === window) pairWindow = null;
     // 关了配对窗口就不等浏览器了。
-    signIn?.abort();
+    pairingRun.cancel();
     updateDock();
   });
 }
@@ -557,7 +574,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("pairing:cancel", (event) => {
     fromPairing(event);
-    signIn?.abort();
+    pairingRun.cancel();
   });
   ipcMain.handle("pupu:computer", (event) => {
     fromMain(event);

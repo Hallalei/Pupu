@@ -4,12 +4,14 @@
  *
  * - 创建者：secret `CREATOR_EMAIL` 里的那个人，第一次登录时建行。还没有创建者时连上的设备和电脑都算他的。
  *   之后这个 secret 不再起作用，改了也不会换创建者。
- * - 成员：创建者在手机 App 里邀请的人，用那个邮箱登录才放行。被移除时他的设备和电脑一起吊销。
+ * - 成员：创建者在手机 App 里邀请的人，用那个邮箱登录才放行。移除见 `removeMember`。
  *
  * 以后每人各自的聊天、个人记忆、「替谁做」都挂在成员 id 上，这里先只有名单。
  */
 
-import type { DeviceKind } from "./devices.ts";
+import type { ComputerStore } from "./bridge/store.ts";
+import type { ConnectorStore } from "./connectors/store.ts";
+import type { DeviceKind, DeviceStore } from "./devices.ts";
 
 export type MemberRole = "creator" | "member";
 
@@ -165,6 +167,9 @@ export class MemberStore {
       if (!columns.some((row) => row.name === "name")) {
         this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN name TEXT");
       }
+      if (!columns.some((row) => row.name === "leaving_at")) {
+        this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN leaving_at INTEGER");
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -175,19 +180,21 @@ export class MemberStore {
     return row ? toRow(row) : undefined;
   }
 
+  /** 还在的成员。正在移除的不算：他登录不了，凭据和账号也不再发给他。 */
   byId(id: string): MemberRow | undefined {
-    return this.#one("SELECT * FROM pupu_members WHERE id = ?", id);
+    return this.#one("SELECT * FROM pupu_members WHERE id = ? AND leaving_at IS NULL", id);
   }
 
+  /** 还在的成员，同 `byId`。 */
   byEmail(email: string): MemberRow | undefined {
-    return this.#one("SELECT * FROM pupu_members WHERE email = ?", emailKey(email));
+    return this.#one("SELECT * FROM pupu_members WHERE email = ? AND leaving_at IS NULL", emailKey(email));
   }
 
   creator(): MemberRow | undefined {
     return this.#one("SELECT * FROM pupu_members WHERE role = 'creator' LIMIT 1");
   }
 
-  /** 创建者在前，其余按邀请的先后。 */
+  /** 名单，创建者在前，其余按邀请的先后。上次没移除完的也在，创建者再点一次移除接着做完。 */
   list(): MemberRow[] {
     return this.#db()
       .exec("SELECT * FROM pupu_members ORDER BY role = 'creator' DESC, created_at")
@@ -236,11 +243,57 @@ export class MemberStore {
     if (name !== null) this.#db().exec("UPDATE pupu_members SET name = ? WHERE id = ?", name, id);
   }
 
-  /** 移除一个成员。创建者删不掉。 */
+  /** 开始移除一个成员，见 `removeMember`。创建者移除不了。 */
+  markLeaving(id: string, now: number): void {
+    this.#db().exec(
+      "UPDATE pupu_members SET leaving_at = ? WHERE id = ? AND role <> 'creator' AND leaving_at IS NULL",
+      now,
+      id
+    );
+  }
+
+  /** 删掉一个成员。创建者删不掉。 */
   remove(id: string): boolean {
     const removed = this.#db()
       .exec("DELETE FROM pupu_members WHERE id = ? AND role <> 'creator' RETURNING id", id)
       .toArray();
     return removed.length > 0;
   }
+}
+
+/** 移除成员要动的东西。本地的表直接给；吊销、断开、释放名额还连着别的事，给函数。 */
+export type MemberRemoval = {
+  readonly members: MemberStore;
+  readonly devices: Pick<DeviceStore, "ofMember" | "cancelCodes">;
+  readonly computers: Pick<ComputerStore, "list">;
+  readonly connectors: Pick<ConnectorStore, "list">;
+  /** 吊销一台设备：断开它的连接，结束它的灵动岛，删掉推送 token，作废它生成的配对码。 */
+  revokeDevice(id: string): void;
+  /** 吊销一台电脑，断开它的桥。 */
+  revokeComputer(id: string): void;
+  /** 在 open-connector 撤销授权，成功了再删这边的记录。 */
+  disconnect(connectorId: string): Promise<boolean>;
+  /** 目录里空出他占的名额。 */
+  release(email: string): Promise<void>;
+};
+
+/**
+ * 移除一个成员。按这个顺序做，停在哪一步都说得通，再移除一次会接着做完：
+ * 1. 标成正在移除：从这一刻起他登录不了，配对码、登录、连账号都不再给他发东西。
+ * 2. 吊销他的设备和电脑，作废他生成的配对码。都在本地，中间没有 await，马上生效。
+ * 3. 断开他连的账号。有一个断不开就停下，返回 failed：他还在名单上，账号还挂在他名下。
+ * 4. 目录里释放名额。出错就抛出去，他还在名单上。
+ * 5. 删掉他。
+ */
+export async function removeMember(target: MemberRow, removal: MemberRemoval, now: number): Promise<"ok" | "failed"> {
+  removal.members.markLeaving(target.id, now);
+  for (const row of removal.devices.ofMember(target.id)) removal.revokeDevice(row.id);
+  for (const row of removal.computers.list()) if (row.ownerId === target.id) removal.revokeComputer(row.id);
+  removal.devices.cancelCodes(target.id);
+  for (const row of removal.connectors.list()) {
+    if (row.memberId === target.id && !(await removal.disconnect(row.id))) return "failed";
+  }
+  await removal.release(target.email);
+  removal.members.remove(target.id);
+  return "ok";
 }

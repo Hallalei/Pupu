@@ -11,6 +11,13 @@ final class DoingView: SurfaceView {
         let takingBack: Bool
     }
 
+    /// 收回一台电脑的屏幕控制：请求在路上，或者没收回（带原因）。
+    /// 都只算这一次授权的：授权没了（收回了、过期了），失败的原因跟着丢掉，下次授权不再冒出来。
+    private enum Takeback: Equatable {
+        case sending
+        case failed(String)
+    }
+
     private let stack = UIStackView()
     private let more = UIButton(configuration: .plain())
     private let openProject: (Project) -> Void
@@ -18,10 +25,8 @@ final class DoingView: SurfaceView {
     private var activity: [ComputerActivity] = []
     private var lines: [Line] = []
     private var expanded = false
-    /// 正在收回屏幕控制的电脑。收回的请求在路上时按钮转圈，重建也不丢。
-    private var takingBack: Set<String> = []
-    /// 上次收回失败的电脑和原因，显示在那一行的第二行。
-    private var takebackErrors: [String: String] = [:]
+    /// 按电脑记。在路上时按钮转圈，重建也不丢；失败的原因显示在那一行的第二行。
+    private var takebacks: [String: Takeback] = [:]
 
     /// relayout 在 Shell 里排版：新高度要加给页面的安全区，内容才跟着动画挤开。
     init(openProject: @escaping (Project) -> Void, relayout: @escaping () -> Void) {
@@ -52,8 +57,13 @@ final class DoingView: SurfaceView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func update(_ next: [ComputerActivity]) {
-        activity = next
+    /// `all` 是所有电脑的；`shown` 为 false 时整块收起（不在聊天页），但授权的变化照样跟。
+    func update(_ all: [ComputerActivity], shown: Bool) {
+        activity = shown ? ComputerActivity.busy(all) : []
+        let granted = Set(all.filter(\.screen).map(\.computerId))
+        takebacks = takebacks.filter { computerId, takeback in
+            takeback == .sending || granted.contains(computerId)
+        }
         render()
     }
 
@@ -72,7 +82,8 @@ final class DoingView: SurfaceView {
     }
 
     private func line(_ activity: ComputerActivity) -> Line {
-        let error = activity.screen ? takebackErrors[activity.computerId] : nil
+        let takeback = takebacks[activity.computerId]
+        let error: String? = if case .failed(let reason) = takeback { reason } else { nil }
         let detail = error ?? [activity.computerName, activity.project?.name, activity.since.map { Ago.text($0) }]
             .compactMap { $0 }
             .joined(separator: " · ")
@@ -80,7 +91,7 @@ final class DoingView: SurfaceView {
             activity: activity,
             detail: detail,
             failed: error != nil,
-            takingBack: takingBack.contains(activity.computerId)
+            takingBack: takeback == .sending
         )
     }
 
@@ -212,17 +223,16 @@ final class DoingView: SurfaceView {
     }
 
     private func takeback(_ computerId: String) {
-        guard let api = Store.shared.api, !takingBack.contains(computerId) else { return }
-        takingBack.insert(computerId)
-        takebackErrors[computerId] = nil
+        guard let api = Store.shared.api, takebacks[computerId] != .sending else { return }
+        takebacks[computerId] = .sending
         render()
         Task {
             do {
                 try await api.takeback(computer: computerId)
+                takebacks[computerId] = nil
             } catch {
-                takebackErrors[computerId] = "没收回：\(error.localizedDescription)"
+                takebacks[computerId] = .failed("没收回：\(error.localizedDescription)")
             }
-            takingBack.remove(computerId)
             render()
             Store.shared.refresh()
         }

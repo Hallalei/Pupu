@@ -57,22 +57,39 @@ function Shell({ lead, children }: { lead: string; children: ReactNode }) {
 const PILL = "tap h-12 w-full rounded-full text-body font-semibold";
 
 /**
+ * Google 登录按钮：asking 是还没问到开没开，按钮先占着位置转圈，下面的输入框不跳；off 是云端说了没开。
+ * 问不到时照样显示：线上一直开着，真没开的话，点了云端会说明。leaving 是已经跳去 Google，
+ * 从 Google 按返回回来时页面是从缓存里恢复的，要变回 ready。
+ */
+type GoogleButton = "asking" | "ready" | "leaving" | "off";
+
+/**
  * 这个浏览器还没有凭据，或者被吊销了。开了 Google 登录时用自己的 Google 账号登录（要在成员名单上）；
  * 也能填配对码（在已经连上的手机或浏览器的设置里生成），手边一台连上的都没有时用访问口令。
  */
 export function Login() {
   const app = desktop();
-  const [google, setGoogle] = useState(false);
+  const [google, setGoogle] = useState<GoogleButton>("asking");
   const [useToken, setUseToken] = useState(false);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(takeSignInError);
 
   useEffect(() => {
     if (app) return;
-    api.googleEnabled().then(setGoogle, () => setGoogle(false));
+    api.googleEnabled().then(
+      (enabled) => setGoogle(enabled ? "ready" : "off"),
+      () => setGoogle("ready")
+    );
   }, [app]);
+
+  useEffect(() => {
+    const back = (event: PageTransitionEvent) => {
+      if (event.persisted) setGoogle((current) => (current === "leaving" ? "ready" : current));
+    };
+    window.addEventListener("pageshow", back);
+    return () => window.removeEventListener("pageshow", back);
+  }, []);
 
   async function submit() {
     const text = value.trim();
@@ -108,12 +125,12 @@ export function Login() {
 
   return (
     <Shell lead="组织大脑，让智能在组织间流动。">
-      {google && (
+      {google !== "off" && (
         <>
           <Button
-            isPending={leaving}
+            isPending={google === "asking" || google === "leaving"}
             onPress={() => {
-              setLeaving(true);
+              setGoogle("leaving");
               window.location.assign("/api/auth/google/start?client=browser");
             }}
             className={`${PILL} lift bg-white text-[#1d1d1f]`}

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import type { ApprovalDirectory, ApprovalRow, ApprovalStatus } from "../src/bridge/approvals.ts";
-import { APPROVAL_TTL_MS, ComputerGate } from "../src/bridge/gate.ts";
-import type { ComputerPolicy } from "../src/bridge/policy.ts";
+import { APPROVAL_TTL_MS, ComputerGate, screenOn } from "../src/bridge/gate.ts";
+import { SCREEN_GRANT_IDLE_MS, type ComputerPolicy } from "../src/bridge/policy.ts";
 import type { ComputerView } from "../src/bridge/protocol.ts";
 import type { ComputerRow } from "../src/bridge/store.ts";
 
@@ -55,7 +55,7 @@ function setup(policy: ComputerPolicy = "ask_risky") {
     revokedAt: null,
     lastSeenAt: now,
     policy,
-    screenUntil: null
+    screen: { kind: "none" }
   };
   const approvals = new MemoryApprovals();
   const changes: string[][] = [];
@@ -66,7 +66,7 @@ function setup(policy: ComputerPolicy = "ask_risky") {
     stale: false,
     lastSeenAt: now,
     policy: computer.policy,
-    screen: computer.screenUntil !== null && computer.screenUntil > now
+    screen: screenOn(computer.screen, now)
   });
   const options = {
     computers: () => [view()],
@@ -76,8 +76,8 @@ function setup(policy: ComputerPolicy = "ask_risky") {
         computer = { ...computer, policy: next };
         return true;
       },
-      setScreenUntil: (_id: string, until: number | null) => {
-        computer = { ...computer, screenUntil: until };
+      setScreen: (_id: string, grant: ComputerRow["screen"]) => {
+        computer = { ...computer, screen: grant };
       }
     },
     approvals,
@@ -94,12 +94,14 @@ function setup(policy: ComputerPolicy = "ask_risky") {
     changes,
     tick: (ms: number) => {
       now += ms;
-    }
+    },
+    now: () => now
   };
 }
 
 const run = (id: string, command: string) => ({ id, name: "run_command", arguments: { command } });
 const shot = (id: string) => ({ id, name: "computer_look", arguments: {} });
+const look = { kind: "computer", op: "look" } as const;
 
 /** 让 beforeTool 跑到开始等的那一步。 */
 async function settle() {
@@ -209,6 +211,89 @@ describe("审批", () => {
       gate.approved({ requestId: "t1", computerId: "c1", action: { kind: "run", command: "rm -rf build", background: false } }),
       true
     );
+  });
+
+  test("收回之前批的那一步，收回之后不做，也不把授权续回来", async () => {
+    const { gate, restart, tick } = setup();
+    const click = { id: "k1", name: "computer_click", arguments: { x: 1, y: 2, sensitive: true } };
+    const waiting = gate.beforeTool(click);
+    await settle();
+    gate.decide(gate.pending()[0]!.id, "allow");
+    assert.equal(await waiting, undefined);
+    tick(1_000);
+    gate.takeback("c1");
+    const action = { kind: "computer", op: "click", x: 1, y: 2, sensitive: true } as const;
+    assert.equal(gate.approved({ requestId: "k1", computerId: "c1", action }), false);
+    assert.equal(gate.screenActive("c1"), false);
+    const resumed = await restart().beforeTool(click);
+    assert.match(resumed?.block ?? "", /收回了屏幕控制，没有执行/);
+    assert.equal(gate.screenActive("c1"), false);
+    assert.equal(gate.statusFor("c1").screen, false);
+
+    tick(1_000);
+    const again = gate.beforeTool(shot("s1"));
+    await settle();
+    gate.decide(gate.pending()[0]!.id, "allow");
+    assert.equal(await again, undefined);
+    assert.equal(gate.screenActive("c1"), true, "收回之后再批的照常开");
+  });
+
+  test("屏幕授权闲置到期时发一次变化，屏幕操作会往后顺延", async () => {
+    const { gate, changes, tick, now } = setup();
+    const grant = gate.beforeTool(shot("s1"));
+    await settle();
+    gate.decide(gate.pending()[0]!.id, "allow");
+    await grant;
+    assert.equal(gate.screenDue(), now() + SCREEN_GRANT_IDLE_MS);
+    changes.length = 0;
+
+    tick(SCREEN_GRANT_IDLE_MS - 1);
+    assert.equal(gate.approved({ requestId: "s2", computerId: "c1", action: look }), true);
+    tick(2);
+    gate.expireScreens();
+    assert.deepEqual(changes, [], "用过一次，还没到期");
+    assert.equal(gate.statusFor("c1").screen, true);
+
+    tick(SCREEN_GRANT_IDLE_MS);
+    gate.expireScreens();
+    assert.deepEqual(changes, [["c1"]]);
+    assert.equal(gate.statusFor("c1").screen, false);
+    assert.equal(gate.screenDue(), null);
+    gate.expireScreens();
+    assert.deepEqual(changes, [["c1"]], "过期只报一次");
+  });
+
+  test("批了一条屏幕请示，这台电脑别的屏幕请示一起放行", async () => {
+    const { gate } = setup();
+    const first = gate.beforeTool(shot("s1"));
+    const second = gate.beforeTool(shot("s2"));
+    await settle();
+    assert.equal(gate.pending().length, 2);
+    gate.decide(gate.pending()[0]!.id, "allow");
+    assert.equal(await first, undefined);
+    assert.equal(await second, undefined);
+    assert.equal(gate.pending().length, 0);
+  });
+
+  test("吊销电脑时，它还在等的请示都拒掉", async () => {
+    const { gate } = setup();
+    const waiting = gate.beforeTool(run("t1", "git push"));
+    await settle();
+    gate.forgetComputer("c1");
+    assert.equal(gate.pending().length, 0);
+    assert.match((await waiting)?.block ?? "", /授权已经吊销，没有执行/);
+  });
+
+  test("这一轮停下时的请示，重跑时不说成没人处理", async () => {
+    const { gate, restart } = setup();
+    const controller = new AbortController();
+    const waiting = gate.beforeTool(run("t1", "git push"), controller.signal);
+    await settle();
+    controller.abort(new Error("stopped"));
+    await assert.rejects(waiting, /stopped/);
+    const resumed = await restart().beforeTool(run("t1", "git push"));
+    assert.match(resumed?.block ?? "", /这一轮停下了/);
+    assert.doesNotMatch(resumed?.block ?? "", /没人处理/);
   });
 
   test("中止的调用把请示收掉", async () => {

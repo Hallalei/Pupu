@@ -353,6 +353,27 @@ describe("LivePusher", () => {
     assert.equal(aps(2).event, "start");
   });
 
+  test("手机吊销：先推 end 马上拿掉，上面的「允许」跟着没了；之后不再给它推", async () => {
+    const { store, sent, pusher, aps } = setup();
+    store.add("phone", "start", "s".repeat(64));
+    store.add("phone", "activity", "a".repeat(64));
+    await pusher.sync(waiting);
+    const pushed = sent.length;
+    // 服务端的顺序：先 end，再删 token。
+    const ending = pusher.end("phone");
+    store.rows = store.rows.filter((row) => row.deviceId !== "phone");
+    await ending;
+    assert.equal(sent.length, pushed + 1);
+    const end = aps(pushed);
+    assert.equal(sent[pushed]!.token, "a".repeat(64));
+    assert.equal(end.event, "end");
+    assert.equal(end["dismissal-date"], end.timestamp);
+    assert.equal((end["content-state"] as { approvalId: string | null }).approvalId, null);
+
+    await pusher.sync(waiting);
+    assert.equal(sent.length, pushed + 1);
+  });
+
   test("在锁屏上划掉了：同一件事不再开，换了件事才开", async () => {
     const { store, sent, pusher, aps, advance } = setup();
     store.add("phone", "start", "s".repeat(64));

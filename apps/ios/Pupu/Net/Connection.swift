@@ -37,7 +37,19 @@ nonisolated struct Endpoint: Equatable, Sendable {
     }
 }
 
-/// 这台手机连的是哪个 Pupu。凭据是配对时换来的，这台手机独一份，可以单独吊销。
+/// 这台手机在哪个 Pupu 上、是哪台设备。重新配对就是新的身份，哪怕地址没变：
+/// 一个地址上可以有好几个 Pupu（每人一个），凭据决定连的是哪一个。
+nonisolated struct Identity: Equatable, Sendable {
+    let endpoint: Endpoint
+    /// 这台手机在 Pupu 上的设备 id，注销时用。
+    let device: String?
+
+    /// 本机按身份记的东西（看过的聊天、上次的项目）用它做键。凭据是机密，不放进键里。
+    var key: String { "\(endpoint.base.absoluteString)#\(device ?? "")" }
+}
+
+/// 这台手机现在的身份。凭据放钥匙串，地址和设备 id 放 UserDefaults。
+/// 身份一变（连上、换了一个、凭据没了）就发 `changed`，主界面整个重建。
 final class Connection {
     static let shared = Connection()
     static let changed = Notification.Name("PupuConnectionChanged")
@@ -46,11 +58,11 @@ final class Connection {
     private static let deviceKey = "pupu.device"
     private static let tokenAccount = "device-token"
 
-    private(set) var endpoint: Endpoint?
-    /// 这台手机在 Pupu 上的设备 id。注销时用。
-    private(set) var deviceId: String?
+    private(set) var identity: Identity?
     /// 为什么回到了连接页，比如凭据被吊销了。连接页显示一次就清掉。
     var notice: String?
+
+    var endpoint: Endpoint? { identity?.endpoint }
 
     /// 上次连的地址。凭据没了回到连接页时，地址已经填好。
     var lastServer: URL? {
@@ -68,50 +80,60 @@ final class Connection {
 
     private init() {
         if let server = lastServer, let token = Keychain.read(Self.tokenAccount) {
-            endpoint = Endpoint(base: server, token: token)
-            deviceId = UserDefaults.standard.string(forKey: Self.deviceKey)
+            identity = Identity(
+                endpoint: Endpoint(base: server, token: token),
+                device: UserDefaults.standard.string(forKey: Self.deviceKey)
+            )
         }
     }
 
     /// 拿配对码（或者访问口令）换这台手机的凭据。
     /// 两样都不带，只有连本机的开发服务器、又没设访问口令时能过。
-    /// 原来连着别的 Pupu，换过去之前先在那边注销。
     func pair(base: URL, code: String?, accessToken: String?) async throws {
-        let paired = try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name)
-        await adopt(base: base, paired: paired)
+        adopt(base: base, paired: try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name))
     }
 
     /// 存好换来的凭据，就算连上了。配对码和 Google 登录都走这里。
-    func adopt(base: URL, paired: Paired) async {
-        await revokeSelf()
+    /// 原来连着别的，先换成新的再去那边注销：那边回的 401 对不上现在的身份，不会被当成「被吊销了」。
+    func adopt(base: URL, paired: Paired) {
+        let previous = identity
         UserDefaults.standard.set(base.absoluteString, forKey: Self.serverKey)
         UserDefaults.standard.set(paired.id, forKey: Self.deviceKey)
         Keychain.write(paired.token, account: Self.tokenAccount)
-        endpoint = Endpoint(base: base, token: paired.token)
-        deviceId = paired.id
-        notice = nil
-        NotificationCenter.default.post(name: Self.changed, object: nil)
+        settle(Identity(endpoint: Endpoint(base: base, token: paired.token), device: paired.id), notice: nil)
+        revoke(previous)
     }
 
-    /// 在 Pupu 上注销这台手机，再忘掉凭据。连不上就只忘掉，凭据留在设备列表里，可以从别处吊销。
-    func signOut() async {
-        await revokeSelf()
-        forget()
+    /// 从这个 Pupu 注销这台手机，回到连接页。先在本机忘掉，再去 Pupu 上吊销；
+    /// 连不上就只忘掉，凭据留在设备列表里，可以从别处吊销。
+    func signOut() {
+        let previous = identity
+        forget(notice: nil)
+        revoke(previous)
+    }
+
+    /// Pupu 不认这份凭据了（401）。只算现在这个身份的：换走之前那份的回应晚到了，不当回事。
+    func rejected(_ rejected: Identity) {
+        guard rejected == identity else { return }
+        forget(notice: "这台手机的凭据失效了，可能是在别的设备上被吊销了。重新配对一次。")
     }
 
     /// 忘掉凭据，回到连接页。地址留着，重新配对时不用再填。
-    func forget(notice: String? = nil) {
+    private func forget(notice: String?) {
         UserDefaults.standard.removeObject(forKey: Self.deviceKey)
         Keychain.write(nil, account: Self.tokenAccount)
-        endpoint = nil
-        deviceId = nil
+        settle(nil, notice: notice)
+    }
+
+    private func settle(_ next: Identity?, notice: String?) {
+        identity = next
         self.notice = notice
         NotificationCenter.default.post(name: Self.changed, object: nil)
     }
 
-    private func revokeSelf() async {
-        guard let endpoint, let deviceId else { return }
-        try? await API(endpoint: endpoint).revoke(device: deviceId)
+    private func revoke(_ identity: Identity?) {
+        guard let identity, let device = identity.device else { return }
+        Task { try? await API(endpoint: identity.endpoint).revoke(device: device) }
     }
 
     /// 网页设置里二维码的内容：`pupu://pair?server=https://…&code=XXXX-XXXX`。

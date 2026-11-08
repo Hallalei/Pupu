@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { asksUser, failureSummary, reportCards, reportQuote, type ReportRow } from "../src/reports.ts";
+import { USAGE_LIMIT_MESSAGE } from "../src/usage.ts";
 
 function row(input: Partial<ReportRow> & Pick<ReportRow, "id" | "projectId">): ReportRow {
   return {
@@ -8,7 +9,6 @@ function row(input: Partial<ReportRow> & Pick<ReportRow, "id" | "projectId">): R
     task: "整理桌面",
     state: "done",
     summary: `结果 ${input.id}`,
-    owner: null,
     origin: "1",
     createdAt: 0,
     reportedAt: 100,
@@ -89,6 +89,7 @@ test("出错的报告说人话", () => {
     "模型出错，这件事没做完：假模型：这次故意出错"
   );
   assert.equal(failureSummary("429 Too Many Requests"), "模型那边限流了，这件事没做完。");
+  assert.equal(failureSummary(USAGE_LIMIT_MESSAGE), "今天的额度用完了，这件事没做完。");
   assert.equal(failureSummary("503: busy"), "模型那边太忙，这件事没做完。");
   assert.equal(failureSummary(""), "模型出错，这件事没做完。");
 });

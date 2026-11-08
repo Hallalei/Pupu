@@ -18,6 +18,7 @@ import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { buildRows, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
 import { Composer } from "./Composer";
+import { begin, IDLE, restoreDraft, settle, type Outbox } from "./outbox";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -68,6 +69,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   const pi = usePiSession(session, context.onProjectsChanged, context.onActivity);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
+  const [outbox, setOutbox] = useState<Outbox>(IDLE);
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   /** 用户往上翻了：右下角出现「回到底部」。 */
   const [away, setAway] = useState(false);
@@ -88,15 +90,25 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
     if (node && stick.current) node.scrollTop = node.scrollHeight;
   }, [rows.length, pi.live, pi.running]);
 
-  function send(text = draft) {
+  async function send(text = draft) {
     const value = text.trim();
     if (!value) return;
-    const message = quote ? quotedMessage(quote, value) : value;
-    if (pi.submit(message)) {
-      setDraft("");
-      setQuote(null);
-      stick.current = true;
+    const next = begin(outbox, text, quote, () => crypto.randomUUID());
+    if (!next) return;
+    const { sent } = next;
+    setOutbox(next);
+    setDraft("");
+    setQuote(null);
+    stick.current = true;
+    let error: string | null = null;
+    try {
+      await pi.submit(sent.quote ? quotedMessage(sent.quote, value) : value, sent.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      setDraft((current) => restoreDraft(current, sent));
+      setQuote((current) => current ?? sent.quote);
     }
+    setOutbox((current) => settle(current, sent.id, error));
   }
 
   function toggle(id: string) {
@@ -132,7 +144,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
 
   const isEmpty = rows.length === 0 && !pi.running;
   const loading = isEmpty && !pi.synced;
-  const canSend = Boolean(draft.trim()) && pi.status === "open";
+  const canSend = Boolean(draft.trim()) && pi.status === "open" && outbox.status !== "sending";
 
   return (
     <div className="fade-in relative flex h-full flex-col">
@@ -175,7 +187,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
                       <button
                         key={starter}
                         type="button"
-                        onClick={() => send(starter)}
+                        onClick={() => void send(starter)}
                         className="soft lift tap rounded-full px-3.5 py-2 text-subheadline"
                       >
                         {starter}
@@ -239,6 +251,9 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
               {pi.status === "connecting" ? "正在连接 Pupu…" : "连接断开，正在重连…"}
             </div>
           )}
+          {outbox.status === "failed" && (
+            <div className="text-center text-footnote text-danger-ink">{outbox.error}</div>
+          )}
           {pi.queued > 0 && (
             <div className="text-center text-footnote text-ink-sky-muted">
               还有 {pi.queued} 条消息排着队，Pupu 说完这轮就处理
@@ -247,7 +262,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
           <Composer
             value={draft}
             onChange={setDraft}
-            onSend={() => send()}
+            onSend={() => void send()}
             placeholder={quote !== null ? "回复消息" : placeholder}
             canSend={canSend}
             sendLabel={pi.running ? "排队发送" : "发送"}

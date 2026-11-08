@@ -4,8 +4,8 @@ import { ApprovalStore } from "../src/bridge/approvals.ts";
 import { ComputerGate } from "../src/bridge/gate.ts";
 import { renderPrompt } from "../src/prompt.ts";
 import { ProjectStore, type Project } from "../src/projects.ts";
-import { reportCards, ReportStore } from "../src/reports.ts";
-import { MAIN_SESSION, ThreadStore, workFilter } from "../src/threads.ts";
+import { reportCards, ReportStore, STOPPED_SUMMARY } from "../src/reports.ts";
+import { chatSessions, MAIN_SESSION, ThreadStore, workFilter } from "../src/threads.ts";
 import { createPupuTools } from "../src/tools.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
@@ -76,6 +76,69 @@ describe("报告卡回到转交它的那条聊天", () => {
   });
 });
 
+describe("报告卡看过没有", () => {
+  /** 主会话和林夏的私聊各转来一件事，都做完了。 */
+  async function settled() {
+    const pupu = await group();
+    report(pupu.reports, pupu.project, "main", MAIN_SESSION);
+    report(pupu.reports, pupu.project, "lin", "7");
+    pupu.reports.settle(pupu.project.session, NOW, "done", "写好了", NOW + 10);
+    return pupu;
+  }
+
+  function seen(reports: ReportStore, id: string): boolean {
+    return reports.visible([MAIN_SESSION, "7"]).find((row) => row.id === id)?.seenAt !== null;
+  }
+
+  test("主会话的卡谁打开项目都算看过；私聊转来的只有本人打开才算", async () => {
+    const { reports, threads, project } = await settled();
+    reports.markSeen(project.id, chatSessions(threads.byMember("m2")), NOW + 20);
+    assert.equal(seen(reports, "main"), true);
+    assert.equal(seen(reports, "lin"), false, "阿周打开不算林夏看过");
+    reports.markSeen(project.id, chatSessions(threads.byMember("m1")), NOW + 30);
+    assert.equal(seen(reports, "lin"), true);
+  });
+
+  test("等批时看过，批完做完报了新结果：算没看过", async () => {
+    const { reports, project } = await group();
+    report(reports, project, "main", MAIN_SESSION);
+    reports.syncWaiting(new Map([[project.session, { summary: "等你批准：跑命令", upTo: NOW }]]), NOW + 10);
+    reports.markSeen(project.id, [MAIN_SESSION], NOW + 20);
+    assert.equal(seen(reports, "main"), true);
+    reports.syncWaiting(new Map(), NOW + 30);
+    reports.settle(project.session, NOW, "done", "写好了", NOW + 40);
+    assert.equal(seen(reports, "main"), false);
+  });
+
+  test("一直在等批、只是换了等的那一步：还算看过；批完接着做又卡住：算没看过", async () => {
+    const { reports, project } = await group();
+    report(reports, project, "main", MAIN_SESSION);
+    const waiting = (summary: string) => new Map([[project.session, { summary, upTo: NOW }]]);
+    reports.syncWaiting(waiting("等你批准：第一步"), NOW + 10);
+    reports.markSeen(project.id, [MAIN_SESSION], NOW + 20);
+    reports.syncWaiting(waiting("等你批准：第二步"), NOW + 30);
+    assert.equal(seen(reports, "main"), true);
+
+    reports.syncWaiting(new Map(), NOW + 40);
+    reports.syncWaiting(waiting("等你批准：第三步"), NOW + 50);
+    assert.equal(seen(reports, "main"), false);
+  });
+
+  test("停下：这一轮的和排着队的都报没做完，停下之后转来的照常做", async () => {
+    const { reports, project } = await group();
+    reports.open({ id: "now", projectId: project.id, session: project.session, task: "这一轮", origin: MAIN_SESSION }, NOW);
+    reports.open({ id: "queued", projectId: project.id, session: project.session, task: "排着", origin: MAIN_SESSION }, NOW + 5);
+    assert.equal(reports.stop(project.session, NOW + 10, NOW + 10), true);
+    reports.open({ id: "later", projectId: project.id, session: project.session, task: "之后", origin: MAIN_SESSION }, NOW + 20);
+    const rows = new Map(reports.visible([MAIN_SESSION]).map((row) => [row.id, row]));
+    assert.equal(rows.get("now")?.state, "failed");
+    assert.equal(rows.get("now")?.summary, STOPPED_SUMMARY);
+    assert.equal(rows.get("queued")?.state, "failed");
+    assert.equal(rows.has("later"), false, "还在做，不显示");
+    assert.equal(reports.stop(project.session, NOW + 10, NOW + 30), false, "停两次不再报");
+  });
+});
+
 describe("私聊发起的审批只给相关的人", () => {
   async function pending(session: string) {
     const pupu = await group();
@@ -84,9 +147,9 @@ describe("私聊发起的审批只给相关的人", () => {
         { id: "c1", name: "mbpro", online: true, stale: false, lastSeenAt: NOW, policy: "ask_all", screen: false }
       ],
       directory: {
-        list: () => [{ id: "c1", name: "mbpro", policy: "ask_all", ownerId: "m2", screenUntil: null } as never],
+        list: () => [{ id: "c1", name: "mbpro", policy: "ask_all", ownerId: "m2", screen: { kind: "none" } } as never],
         setPolicy: () => false,
-        setScreenUntil: () => {}
+        setScreen: () => {}
       },
       approvals: new ApprovalStore(pupu.sql),
       now: () => NOW,

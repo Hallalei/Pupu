@@ -4,7 +4,7 @@ import type { ApprovalRow } from "../src/bridge/approvals.ts";
 import { ApprovalStore } from "../src/bridge/approvals.ts";
 import { ComputerGate } from "../src/bridge/gate.ts";
 import { ConnectorClient, ConnectorError, connectorConfigFrom } from "../src/connectors/client.ts";
-import { ATTEMPT_TTL_MS, ConnectorStore, type ConnectorRow } from "../src/connectors/store.ts";
+import { ATTEMPT_TTL_MS, ConnectorStore, finishAttempt, type ConnectorRow } from "../src/connectors/store.ts";
 import {
   connectorIdOf,
   connectorSubject,
@@ -16,6 +16,7 @@ import {
 import { sqlStorage } from "./sql-memory.ts";
 
 const NOW = 1_800_000_000_000;
+const ATTEMPT = { id: "t1", requestId: "r1", service: "gmail", memberId: "m1", client: "phone" as const, createdAt: NOW };
 
 function account(overrides: Partial<ConnectorRow> = {}): ConnectorRow {
   return {
@@ -59,21 +60,93 @@ describe("连接器的记录", () => {
     assert.equal(store.remove("app-1"), false);
   });
 
-  test("还没有创建者时连的账号，创建者第一次登录后归他", () => {
+  test("还没有创建者时连的账号和还在授权的，创建者第一次登录后归他", () => {
     const store = new ConnectorStore(sqlStorage());
     store.save(account({ memberId: null }));
+    store.addAttempt({ ...ATTEMPT, memberId: null });
     store.claimUnowned("creator");
     assert.equal(store.byId("app-1")?.memberId, "creator");
+    assert.equal(store.attempt("t1", NOW)?.memberId, "creator");
   });
 
-  test("一次授权只认一次，过期的不认", () => {
+  test("看一次授权不会用掉它，删了才没有；过期的不认", () => {
     const store = new ConnectorStore(sqlStorage());
-    const attempt = { id: "t1", requestId: "r1", service: "gmail", memberId: "m1", client: "phone" as const, createdAt: NOW };
-    store.addAttempt(attempt);
-    assert.deepEqual(store.takeAttempt("t1", NOW + 1000), attempt);
-    assert.equal(store.takeAttempt("t1", NOW + 1000), undefined);
-    store.addAttempt({ ...attempt, id: "t2" });
-    assert.equal(store.takeAttempt("t2", NOW + ATTEMPT_TTL_MS + 1), undefined);
+    store.addAttempt(ATTEMPT);
+    assert.deepEqual(store.attempt("t1", NOW + 1000), ATTEMPT);
+    assert.deepEqual(store.attempt("t1", NOW + 1000), ATTEMPT);
+    store.dropAttempt("t1");
+    assert.equal(store.attempt("t1", NOW + 1000), undefined);
+    store.addAttempt({ ...ATTEMPT, id: "t2" });
+    assert.equal(store.attempt("t2", NOW + ATTEMPT_TTL_MS + 1), undefined);
+  });
+});
+
+describe("授权页跳回来", () => {
+  /** open-connector 说这次授权是 `status`，连上的账号是 app-1。 */
+  function remote(status: string, extra: Record<string, unknown> = {}) {
+    return fakeConnector({
+      "GET /v1/connection-requests/r1": () => ({ body: { success: true, data: { status, ...extra } } }),
+      "GET /v1/connections/by-id/app-1": () => ({
+        body: { success: true, data: { id: "app-1", alias: "alias-1", accountLabel: "mom@example.com" } }
+      }),
+      "DELETE /api/connections/gmail": () => ({ body: { success: true, data: {} } })
+    });
+  }
+
+  function setup() {
+    const store = new ConnectorStore(sqlStorage());
+    store.addAttempt(ATTEMPT);
+    return store;
+  }
+
+  test("那边还在授权中：记录留着，刷新这一页再问一次", async () => {
+    const store = setup();
+    const { client } = remote("initiated");
+    const result = await finishAttempt("t1", { store, client, memberIn: () => true }, NOW);
+    assert.equal(result?.ok, false);
+    assert.match(result?.message ?? "", /还没授权完/);
+    assert.ok(store.attempt("t1", NOW));
+    assert.equal(store.list().length, 0);
+  });
+
+  test("没问到（open-connector 出错）：记录留着", async () => {
+    const store = setup();
+    const { client } = fakeConnector({
+      "GET /v1/connection-requests/r1": () => ({ status: 503, body: { success: false, errorCode: "busy", message: "busy" } })
+    });
+    const result = await finishAttempt("t1", { store, client, memberIn: () => true }, NOW);
+    assert.equal(result?.ok, false);
+    assert.ok(store.attempt("t1", NOW));
+  });
+
+  test("过期、失败了：记录删掉，再来就是用过的", async () => {
+    for (const status of ["expired", "failed"]) {
+      const store = setup();
+      const { client } = remote(status);
+      const result = await finishAttempt("t1", { store, client, memberIn: () => true }, NOW);
+      assert.equal(result?.ok, false);
+      assert.equal(store.attempt("t1", NOW), undefined);
+      assert.equal(await finishAttempt("t1", { store, client, memberIn: () => true }, NOW), undefined);
+    }
+  });
+
+  test("连上了：记下是谁的哪个账号，记录删掉", async () => {
+    const store = setup();
+    const { client } = remote("connected", { appId: "app-1" });
+    const result = await finishAttempt("t1", { store, client, memberIn: () => true }, NOW);
+    assert.deepEqual(result, { client: "phone", ok: true, service: "gmail", message: "Gmail（mom@example.com）连好了" });
+    assert.equal(store.byId("app-1")?.memberId, "m1");
+    assert.equal(store.attempt("t1", NOW), undefined);
+  });
+
+  test("连上了但发起的人已经被移除：在 open-connector 撤销，不记下", async () => {
+    const store = setup();
+    const { client, calls } = remote("connected", { appId: "app-1" });
+    const result = await finishAttempt("t1", { store, client, memberIn: () => false }, NOW);
+    assert.equal(result?.ok, false);
+    assert.equal(store.list().length, 0);
+    assert.equal(store.attempt("t1", NOW), undefined);
+    assert.ok(calls.some((call) => call.init.method === "DELETE"));
   });
 });
 
@@ -148,6 +221,15 @@ describe("open-connector 客户端", () => {
     });
   });
 
+  test("断开时那边已经没有这个连接也算断开了，别的错照样抛", async () => {
+    const gone = fakeConnector({});
+    await gone.client.disconnect("gmail", "alias-1");
+    const busy = fakeConnector({
+      "DELETE /api/connections/gmail": () => ({ status: 503, body: { success: false, errorCode: "busy", message: "busy" } })
+    });
+    await assert.rejects(busy.client.disconnect("gmail", "alias-1"), ConnectorError);
+  });
+
   test("没写清楚读写的动作按写算", async () => {
     const { client } = fakeConnector({
       "GET /v1/actions/x.y": () => ({ body: { success: true, data: { id: "x.y", service: "x" } } })
@@ -199,7 +281,7 @@ describe("写操作先问账号主人", () => {
   test("门上拦下读的动作：工具不跑，也不用人批", async () => {
     const gate = new ComputerGate({
       computers: () => [],
-      directory: { list: () => [], setPolicy: () => false, setScreenUntil: () => {} },
+      directory: { list: () => [], setPolicy: () => false, setScreen: () => {} },
       approvals: new ApprovalStore(sqlStorage()),
       now: () => NOW,
       onChange: () => {},
@@ -243,7 +325,7 @@ describe("写操作先问账号主人", () => {
     const changed: string[][] = [];
     const gate = new ComputerGate({
       computers: () => [],
-      directory: { list: () => [], setPolicy: () => false, setScreenUntil: () => {} },
+      directory: { list: () => [], setPolicy: () => false, setScreen: () => {} },
       approvals,
       now: () => now,
       onChange: (ids) => changed.push([...ids]),
@@ -269,7 +351,7 @@ describe("写操作先问账号主人", () => {
     const approvals = new ApprovalStore(sqlStorage());
     const gate = new ComputerGate({
       computers: () => [],
-      directory: { list: () => [], setPolicy: () => false, setScreenUntil: () => {} },
+      directory: { list: () => [], setPolicy: () => false, setScreen: () => {} },
       approvals,
       now: () => NOW,
       onChange: () => {},

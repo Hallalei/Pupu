@@ -242,23 +242,7 @@ nonisolated enum ChatRows {
             let computer = computerId.flatMap { id in context.computers.first { $0.id == id } }
                 ?? (context.computers.count == 1 ? context.computers.first : nil)
 
-            let status: ToolStep.Status
-            if let result {
-                // 没批准的一步，桥回给模型的话里写着「没有执行」。
-                if result.text.contains("没有执行：") {
-                    status = result.text.contains("作废") ? .expired : .denied
-                } else {
-                    status = result.error ? .failed : .done
-                }
-            } else if running {
-                let waiting = context.approvals.contains { approval in
-                    computer.map { approval.computerId == $0.id } ?? true
-                }
-                status = waiting ? .waiting : .running
-            } else {
-                status = .unfinished
-            }
-
+            let status = stepStatus(callId: callId, result: result, running: running, approvals: context.approvals)
             let place = computer.map { "在「\($0.name)」上" } ?? "在电脑上"
             let did = status == .done || status == .failed
             let id = "tool:\(callId)"
@@ -273,6 +257,23 @@ nonisolated enum ChatRows {
                 expanded: (status == .failed) != context.toggled.contains(id)
             )))
         }
+    }
+
+    /// 一步走到哪了。有结果看结果；还没有结果时，有审批对着这次调用就是在等批，这一轮还在跑就是在做。
+    /// 审批按调用 id 对，不按电脑：同一台电脑上别的会话在等批，不关这一步的事。
+    private static func stepStatus(callId: String, result: Result?, running: Bool, approvals: [Approval]) -> ToolStep.Status {
+        if let result {
+            switch blockedOutcome(result.text) {
+            case .denied: return .denied
+            case .expired: return .expired
+            // 等批准时这一轮停了，这一步算没做完。
+            case .aborted: return .unfinished
+            case nil: break
+            }
+            return result.error ? .failed : .done
+        }
+        if approvals.contains(where: { $0.callId == callId }) { return .waiting }
+        return running ? .running : .unfinished
     }
 
     /// pi-durable 把拦下的调用写成 `<harness>[error] Tool call blocked: …</harness>`，那是给模型看的。
@@ -298,10 +299,23 @@ nonisolated enum ChatRows {
             }
         }
         let result = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == .denied || status == .expired, let cut = result.range(of: "，没有执行：") {
+        if status != .done, status != .failed, let cut = result.range(of: notRun) {
             return String(result[..<cut.lowerBound]) + "，这一步没有做。"
         }
         return result
+    }
+
+    /// 没批准的调用只有一段文字：pi-durable 把 gate 给的原因原样记下，不带 details。
+    /// 照抄 apps/cloud/src/bridge/blocked.ts 的 `blockedOutcome`，改了要一起改。
+    private enum Blocked { case denied, expired, aborted }
+    private static let notRun = "，没有执行："
+
+    private static func blockedOutcome(_ text: String) -> Blocked? {
+        guard let cut = text.range(of: notRun) else { return nil }
+        let why = text[..<cut.lowerBound]
+        if why.hasSuffix("已经作废") { return .expired }
+        if why.hasSuffix("这一轮停下了") { return .aborted }
+        return .denied
     }
 
     /// 连着的几步合成一组，点开再看每一步。

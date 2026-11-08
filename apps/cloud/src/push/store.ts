@@ -1,6 +1,8 @@
 /**
- * 手机的推送 token，以及推过哪些审批。和设备表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
+ * 手机的推送 token，以及每条审批推到了哪台手机。和设备表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
  * `pupu_devices` 是设备凭据表，这里只按设备 id 挂上去，不混用。
+ * 推送记录按手机记：审批出现之后才登记推送的手机，下一轮对账也会收到。
+ * 早先按审批记的 `pupu_push_approvals` 不再读写，留在库里。
  */
 
 import type { ApnsEnv } from "./apns.ts";
@@ -20,7 +22,7 @@ export type PushTokenRow = {
   readonly lastSeen: number;
 };
 
-/** sent：推了带按钮的那条。cleared：已经换成了「已处理」。 */
+/** 一条审批在一台手机上：sent 推了带按钮的那条；cleared 已经换成「已处理」，或者就是在这台上批的。 */
 export type ApprovalPushState = "sent" | "cleared";
 
 export interface PushDirectory {
@@ -30,10 +32,12 @@ export interface PushDirectory {
   remove(token: string): void;
   /** 只删这台设备自己的。 */
   removeOwn(deviceId: string, token: string): void;
+  /** 吊销手机时：它的 token 和推送记录都删掉。 */
   removeDevice(deviceId: string): void;
-  approvalState(approvalId: string): ApprovalPushState | undefined;
-  markApproval(approvalId: string, state: ApprovalPushState, now: number): void;
-  /** 推了按钮、还没换成「已处理」的。 */
+  /** 这条审批推到过的手机，各到哪一步。 */
+  deliveries(approvalId: string): ReadonlyMap<string, ApprovalPushState>;
+  markDelivery(approvalId: string, deviceId: string, state: ApprovalPushState, now: number): void;
+  /** 有手机还留着带按钮那条的审批。 */
   sentApprovals(): string[];
   /** 删掉这个时间以前的记录。 */
   pruneApprovals(before: number): void;
@@ -71,10 +75,12 @@ export class PushStore implements PushDirectory {
         last_seen INTEGER NOT NULL,
         PRIMARY KEY (type, token)
       )`);
-      this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_push_approvals (
-        approval_id TEXT PRIMARY KEY,
+      this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_push_deliveries (
+        approval_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
         state TEXT NOT NULL,
-        at INTEGER NOT NULL
+        at INTEGER NOT NULL,
+        PRIMARY KEY (approval_id, device_id)
       )`);
       this.#ready = true;
     }
@@ -120,21 +126,22 @@ export class PushStore implements PushDirectory {
 
   removeDevice(deviceId: string): void {
     this.#db().exec("DELETE FROM pupu_push_tokens WHERE device_id = ?", deviceId);
+    this.#db().exec("DELETE FROM pupu_push_deliveries WHERE device_id = ?", deviceId);
   }
 
-  approvalState(approvalId: string): ApprovalPushState | undefined {
-    const [row] = this.#db()
-      .exec("SELECT state FROM pupu_push_approvals WHERE approval_id = ?", approvalId)
+  deliveries(approvalId: string): ReadonlyMap<string, ApprovalPushState> {
+    const rows = this.#db()
+      .exec("SELECT device_id, state FROM pupu_push_deliveries WHERE approval_id = ?", approvalId)
       .toArray();
-    if (!row) return undefined;
-    return row.state === "cleared" ? "cleared" : "sent";
+    return new Map(rows.map((row) => [String(row.device_id), row.state === "cleared" ? "cleared" : "sent"]));
   }
 
-  markApproval(approvalId: string, state: ApprovalPushState, now: number): void {
+  markDelivery(approvalId: string, deviceId: string, state: ApprovalPushState, now: number): void {
     this.#db().exec(
-      `INSERT INTO pupu_push_approvals (approval_id, state, at) VALUES (?, ?, ?)
-       ON CONFLICT(approval_id) DO UPDATE SET state = excluded.state, at = excluded.at`,
+      `INSERT INTO pupu_push_deliveries (approval_id, device_id, state, at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(approval_id, device_id) DO UPDATE SET state = excluded.state, at = excluded.at`,
       approvalId,
+      deviceId,
       state,
       now
     );
@@ -142,12 +149,12 @@ export class PushStore implements PushDirectory {
 
   sentApprovals(): string[] {
     return this.#db()
-      .exec("SELECT approval_id FROM pupu_push_approvals WHERE state = 'sent' ORDER BY at")
+      .exec("SELECT DISTINCT approval_id FROM pupu_push_deliveries WHERE state = 'sent'")
       .toArray()
       .map((row) => String(row.approval_id));
   }
 
   pruneApprovals(before: number): void {
-    this.#db().exec("DELETE FROM pupu_push_approvals WHERE at < ?", before);
+    this.#db().exec("DELETE FROM pupu_push_deliveries WHERE at < ?", before);
   }
 }

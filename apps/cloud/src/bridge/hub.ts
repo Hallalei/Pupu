@@ -3,8 +3,10 @@ import {
   ALREADY_CONNECTED_CODE,
   BRIDGE_PING,
   BRIDGE_PONG,
+  CANCEL_CONFIRM_MS,
   FIRST_BYTE_MS,
   FOREGROUND_DEFAULT_MS,
+  OUTDATED_CODE,
   REJECT_CODE,
   parseUpFrame,
   tokenFromRequest,
@@ -15,6 +17,7 @@ import {
   type UpFrame
 } from "./protocol.ts";
 import type { DesktopDown, DesktopUp } from "./desktop.ts";
+import { screenOn } from "./gate.ts";
 import {
   appendTail,
   disconnectedComputer,
@@ -22,7 +25,8 @@ import {
   fresh,
   selectComputer,
   unavailableComputer,
-  type ComputerCandidate
+  type ComputerCandidate,
+  type RunEnd
 } from "./status.ts";
 import type { ComputerDirectory, ComputerRow } from "./store.ts";
 
@@ -152,6 +156,10 @@ export class ComputerBridge {
     }
     const frame = parseUpFrame(raw);
     if (!frame) return;
+    if (frame.type === "outdated") {
+      this.#close(socket, OUTDATED_CODE, "outdated");
+      return;
+    }
     if (frame.type === "hello") {
       await this.#hello(socket, frame);
       return;
@@ -173,19 +181,26 @@ export class ComputerBridge {
   }
 
   onClose(socket: BridgeSocket): void {
-    let changed = false;
-    for (const waiter of this.#waiters.values()) {
-      if (waiter.socket !== socket || waiter.failed) continue;
-      waiter.failed = "disconnected";
-      waiter.notify?.();
-      changed = true;
-    }
+    let changed = this.#drop(socket);
     const link = readLink(socket);
-    if (link?.ready) {
+    // 被新连接替换掉的旧连接晚些才关：这台电脑还连着新的，不算断，新连接上的远程桌面也不能停。
+    if (link?.ready && !this.#socketFor(link.computerId, socket)) {
       changed = true;
       this.onGone(link.computerId);
     }
     if (changed) this.onChange();
+  }
+
+  /** 这条连接上还在等回话的调用，都当桥断了。 */
+  #drop(socket: BridgeSocket): boolean {
+    let dropped = false;
+    for (const waiter of this.#waiters.values()) {
+      if (waiter.socket !== socket || waiter.failed) continue;
+      waiter.failed = "disconnected";
+      waiter.notify?.();
+      dropped = true;
+    }
+    return dropped;
   }
 
   disconnect(computerId: string, code: number, reason: string): void {
@@ -247,8 +262,9 @@ export class ComputerBridge {
       startedAt: this.#now()
     });
     this.onActivity();
+    const log: RunLog = { started: null, output: "", truncated: false };
     try {
-      return await this.#collect(input, computer, waiter);
+      return outcomeOf(computer, await this.#collect(input, waiter, log), log);
     } finally {
       this.#waiters.delete(input.requestId);
       this.#running.delete(input.requestId);
@@ -281,7 +297,11 @@ export class ComputerBridge {
       this.#close(socket, ALREADY_CONNECTED_CODE, "这台电脑已经连着");
       return;
     }
-    for (const other of others) this.#close(other, 1000, "replaced");
+    const replaced = others.some((other) => readLink(other)?.ready === true);
+    for (const other of others) {
+      this.#close(other, 1000, "replaced");
+      this.#drop(other);
+    }
 
     const name = frame.name.trim().slice(0, 80) || link.name;
     const next: BridgeLink = {
@@ -298,6 +318,9 @@ export class ComputerBridge {
       terminalsFolder: frame.terminalsFolder,
       seenAt: this.#now()
     });
+    // 桥是旧连接断了才重连的，电脑那边的远程桌面已经跟着旧连接停了。手机上的租约现在就结束，
+    // 不等旧连接晚些关上：那时候新连接上可能已经开了新的。
+    if (replaced) this.onGone(link.computerId);
     this.onChange();
     this.onReady(link.computerId);
   }
@@ -315,6 +338,10 @@ export class ComputerBridge {
     return socket ? this.#send(socket, { type: "desktop", session, message } satisfies DownFrame) : false;
   }
 
+  /**
+   * 收桥的回话，直到这次调用结束。第一帧要在 FIRST_BYTE_MS 内到；前台命令开始以后，最多等到 timeoutMs，
+   * 到点转后台，不杀进程。
+   */
   async #collect(
     input: {
       requestId: string;
@@ -323,203 +350,51 @@ export class ComputerBridge {
       signal?: AbortSignal;
       onOutput?: (chunk: string) => void;
     },
-    computer: ComputerCandidate,
-    waiter: Waiter
-  ): Promise<ExecOutcome> {
-    const first = await this.#next(waiter, input.signal, FIRST_BYTE_MS);
-    if (first === "timeout") {
-      this.#send(waiter.socket, { type: "cancel", requestId: input.requestId });
-      return fail(computer, unavailableComputer(computer.name));
-    }
-    if (first === "abort") {
-      this.#send(waiter.socket, { type: "cancel", requestId: input.requestId });
-      return fail(computer, "这台电脑上的命令已经取消。");
-    }
-    if (first === "dead") return fail(computer, disconnectedComputer(computer.name));
-    if (first.type === "error") return fail(computer, `在「${computer.name}」上没做成：${first.message}`);
-
-    if (input.action.kind === "run") {
-      return this.#collectRun(
-        { ...input, action: input.action, timeoutMs: input.timeoutMs ?? FOREGROUND_DEFAULT_MS },
-        computer,
-        waiter,
-        first
-      );
-    }
-    return this.#collectSimple(input.requestId, computer, waiter, first, input.signal);
-  }
-
-  async #collectRun(
-    input: {
-      requestId: string;
-      action: Extract<Action, { kind: "run" }>;
-      timeoutMs: number;
-      signal?: AbortSignal;
-      onOutput?: (chunk: string) => void;
-    },
-    computer: ComputerCandidate,
     waiter: Waiter,
-    first: UpFrame
-  ): Promise<ExecOutcome> {
-    let started = first.type === "started" ? first : null;
-    let output = "";
-    let truncated = false;
-    const takeOutput = (text: string) => {
-      const next = appendTail(output, text);
-      output = next.text;
-      truncated = truncated || next.truncated;
-      input.onOutput?.(text);
+    log: RunLog
+  ): Promise<CallEnd> {
+    const take = (frame: UpFrame) => {
+      if (frame.type === "started") log.started ??= { commandId: frame.commandId, outputPath: frame.outputPath };
+      if (frame.type !== "output") return;
+      const next = appendTail(log.output, frame.text);
+      log.output = next.text;
+      log.truncated ||= next.truncated;
+      input.onOutput?.(frame.text);
     };
-    if (first.type === "output") takeOutput(first.text);
-    if (!started) {
-      const frame = await this.#until(
-        waiter,
-        input.signal,
-        FIRST_BYTE_MS,
-        (item) => item.type === "started" || item.type === "error" || item.type === "exit",
-        (item) => {
-          if (item.type === "output") takeOutput(item.text);
-        }
-      );
-      if (frame === "timeout") {
-        this.#send(waiter.socket, { type: "cancel", requestId: input.requestId });
-        return fail(computer, unavailableComputer(computer.name));
-      }
-      if (frame === "abort") {
-        this.#send(waiter.socket, { type: "cancel", requestId: input.requestId });
-        return fail(computer, "这台电脑上的命令已经取消。");
-      }
-      if (frame === "dead") return fail(computer, disconnectedComputer(computer.name));
-      if (frame.type === "error") return fail(computer, `在「${computer.name}」上没做成：${frame.message}`);
-      if (frame.type === "started") started = frame;
-      if (frame.type === "exit" && started) {
-        return doneRun(computer, started, output, truncated, frame.code, false);
-      }
-    }
-    if (!started) return fail(computer, unavailableComputer(computer.name));
-    if (input.action.background) {
-      return {
-        ok: true,
-        computerId: computer.id,
-        computerName: computer.name,
-        commandId: started.commandId,
-        outputPath: started.outputPath,
-        text: `已经在「${computer.name}」上开始跑，命令还在继续。用 read_file 看输出，用 write_stdin 往里写输入。\n命令 id：${started.commandId}\n输出文件：${started.outputPath}`
-      };
-    }
-
-    const deadline = this.#now() + input.timeoutMs;
+    let deadline = this.#now() + FIRST_BYTE_MS;
     while (true) {
-      const remaining = deadline - this.#now();
-      if (remaining <= 0) {
-        this.#send(waiter.socket, { type: "detach", requestId: input.requestId });
-        return doneRun(computer, started, output, truncated, undefined, true);
-      }
-      const frame = await this.#next(waiter, input.signal, remaining);
+      const frame = await this.#next(waiter, input.signal, deadline - this.#now());
+      if (frame === "abort") return this.#cancel(waiter, input.requestId, take);
+      if (frame === "dead") return { kind: "gone" };
       if (frame === "timeout") {
-        this.#send(waiter.socket, { type: "detach", requestId: input.requestId });
-        return doneRun(computer, started, output, truncated, undefined, true);
-      }
-      if (frame === "abort") {
+        if (log.started) {
+          this.#send(waiter.socket, { type: "detach", requestId: input.requestId });
+          return { kind: "detached" };
+        }
         this.#send(waiter.socket, { type: "cancel", requestId: input.requestId });
-        return fail(computer, "这台电脑上的命令已经取消。", started);
+        return { kind: "silent" };
       }
-      if (frame === "dead") return fail(computer, disconnectedComputer(computer.name, started.outputPath), started);
-      if (frame.type === "output") takeOutput(frame.text);
-      else if (frame.type === "error") return fail(computer, `在「${computer.name}」上没做成：${frame.message}`, started);
-      else if (frame.type === "exit") return doneRun(computer, started, output, truncated, frame.code, false);
+      const end = endOf(frame);
+      if (end) return end;
+      const starts = frame.type === "started" && !log.started && input.action.kind === "run";
+      take(frame);
+      if (!starts || input.action.kind !== "run") continue;
+      if (input.action.background) return { kind: "started" };
+      deadline = this.#now() + (input.timeoutMs ?? FOREGROUND_DEFAULT_MS);
     }
   }
 
-  async #collectSimple(
-    requestId: string,
-    computer: ComputerCandidate,
-    waiter: Waiter,
-    first: UpFrame,
-    signal: AbortSignal | undefined
-  ): Promise<ExecOutcome> {
-    let frame = first;
-    const pieces: string[] = [];
-    for (let hop = 0; hop < 8; hop += 1) {
-      if (frame.type === "error") return fail(computer, `在「${computer.name}」上没做成：${frame.message}`);
-      if (frame.type === "done") {
-        return {
-          ok: true,
-          computerId: computer.id,
-          computerName: computer.name,
-          text: frame.path
-            ? `在「${computer.name}」上写好了：${frame.path}`
-            : `在「${computer.name}」上做完了。`
-        };
-      }
-      if (frame.type === "data") return this.#fileText(computer, frame);
-      if (frame.type === "listed") return this.#listText(computer, frame);
-      if (frame.type === "picture") return this.#picture(computer, frame);
-      if (frame.type === "output") pieces.push(frame.text);
-      const next = await this.#next(waiter, signal, FIRST_BYTE_MS);
-      if (typeof next === "string") {
-        if (next === "abort") this.#send(waiter.socket, { type: "cancel", requestId });
-        return fail(
-          computer,
-          next === "dead" ? disconnectedComputer(computer.name) : unavailableComputer(computer.name)
-        );
-      }
-      frame = next;
+  /** 停下这次调用：发取消，等桥说一声做没做。等不到就照实说可能已经做了。 */
+  async #cancel(waiter: Waiter, requestId: string, take: (frame: UpFrame) => void): Promise<CallEnd> {
+    this.#send(waiter.socket, { type: "cancel", requestId });
+    const deadline = this.#now() + CANCEL_CONFIRM_MS;
+    while (true) {
+      const frame = await this.#next(waiter, undefined, deadline - this.#now());
+      if (typeof frame === "string") return { kind: "unconfirmed" };
+      const end = endOf(frame);
+      if (end) return end.kind === "result" ? { ...end, late: true } : end;
+      take(frame);
     }
-    return fail(computer, unavailableComputer(computer.name));
-  }
-
-  #picture(
-    computer: ComputerCandidate,
-    frame: Extract<UpFrame, { type: "picture" }>
-  ): ExecOutcome {
-    return {
-      ok: true,
-      computerId: computer.id,
-      computerName: computer.name,
-      image: { data: frame.data, mimeType: frame.mime },
-      text: `在「${computer.name}」上看了窗口，截图 ${frame.width}×${frame.height} 像素，原点在窗口左上角。${
-        frame.summary ? `\n${frame.summary}` : ""
-      }`
-    };
-  }
-
-  #fileText(
-    computer: ComputerCandidate,
-    frame: Extract<UpFrame, { type: "data" }>
-  ): ExecOutcome {
-    if (frame.binary) {
-      return {
-        ok: false,
-        computerId: computer.id,
-        computerName: computer.name,
-        text: `在「${computer.name}」上，这个文件看起来是二进制的（${frame.bytes} 字节），没有当作文本读。`
-      };
-    }
-    const note = frame.truncated ? `文件有 ${frame.bytes} 字节，这里是开头一部分。\n` : "";
-    return {
-      ok: true,
-      computerId: computer.id,
-      computerName: computer.name,
-      text: `${note}${frame.text ?? ""}`
-    };
-  }
-
-  #listText(
-    computer: ComputerCandidate,
-    frame: Extract<UpFrame, { type: "listed" }>
-  ): ExecOutcome {
-    const lines = frame.entries.map((entry) => {
-      const mark = entry.kind === "dir" ? "/" : "";
-      return `${entry.name}${mark}`;
-    });
-    const tail = frame.truncated ? "\n（还有更多，没有列完）" : "";
-    return {
-      ok: true,
-      computerId: computer.id,
-      computerName: computer.name,
-      text: lines.length ? `${lines.join("\n")}${tail}` : `（空目录）${tail}`
-    };
   }
 
   #view(row: ComputerRow, now: number): ComputerView {
@@ -539,14 +414,15 @@ export class ComputerBridge {
       stale,
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
-      screen: row.screenUntil !== null && row.screenUntil > now
+      screen: screenOn(row.screen, now)
     };
   }
 
-  #socketFor(computerId: string): BridgeSocket | null {
+  #socketFor(computerId: string, except?: BridgeSocket): BridgeSocket | null {
     let found: BridgeSocket | null = null;
     let best = -1;
     for (const socket of this.#open()) {
+      if (socket === except) continue;
       const link = readLink(socket);
       if (!link?.ready || link.computerId !== computerId) continue;
       const beat = this.#lastBeat(socket, link);
@@ -595,32 +471,14 @@ export class ComputerBridge {
     }
   }
 
-  async #until(
-    waiter: Waiter,
-    signal: AbortSignal | undefined,
-    ms: number,
-    done: (frame: UpFrame) => boolean,
-    ignore: (frame: UpFrame) => void
-  ): Promise<UpFrame | "timeout" | "abort" | "dead"> {
-    const deadline = this.#now() + ms;
-    while (true) {
-      const remaining = deadline - this.#now();
-      if (remaining <= 0) return "timeout";
-      const frame = await this.#next(waiter, signal, remaining);
-      if (typeof frame === "string") return frame;
-      if (done(frame)) return frame;
-      ignore(frame);
-    }
-  }
-
   #next(
     waiter: Waiter,
     signal: AbortSignal | undefined,
     ms: number
   ): Promise<UpFrame | "timeout" | "abort" | "dead"> {
-    if (waiter.failed) return Promise.resolve("dead");
     const buffered = waiter.frames.shift();
     if (buffered) return Promise.resolve(buffered);
+    if (waiter.failed) return Promise.resolve("dead");
     if (signal?.aborted) return Promise.resolve("abort");
     return new Promise((resolve) => {
       let settled = false;
@@ -643,45 +501,123 @@ export class ComputerBridge {
   }
 }
 
-function fail(
-  computer: ComputerCandidate,
-  text: string,
-  started?: { commandId: string; outputPath: string }
-): ExecOutcome {
-  return {
-    ok: false,
-    text,
-    computerId: computer.id,
-    computerName: computer.name,
-    ...(started ? { commandId: started.commandId, outputPath: started.outputPath } : {})
-  };
+/**
+ * 云端这边一次调用怎么结束的，每种对应给模型的一句实话（`outcomeOf`）。
+ * 桥那边同一次调用走到哪了，见 bridge/actions.ts 的 `Phase`。
+ */
+type CallEnd =
+  /** 桥回了结果。`late`：取消发出去的时候它已经做完了。 */
+  | { readonly kind: "result"; readonly frame: ResultFrame; readonly late: boolean }
+  /** 后台命令开始跑了，这次调用到这里为止。 */
+  | { readonly kind: "started" }
+  | RunEnd
+  | { readonly kind: "failed"; readonly message: string }
+  /** 取消了，桥确认这一步没动手。 */
+  | { readonly kind: "cancelled" }
+  /** 取消发出去了，桥没确认：可能已经做了。 */
+  | { readonly kind: "unconfirmed" }
+  /** 桥断了。 */
+  | { readonly kind: "gone" }
+  /** 桥一直没回话。 */
+  | { readonly kind: "silent" };
+
+type ResultFrame = Extract<UpFrame, { type: "done" | "data" | "listed" | "picture" }>;
+
+/** 命令开始以后攒下的：命令 id 和输出文件、输出的末尾。 */
+type RunLog = {
+  started: { readonly commandId: string; readonly outputPath: string } | null;
+  output: string;
+  truncated: boolean;
+};
+
+/** 桥回的这一帧是不是这次调用的最后一帧。 */
+function endOf(frame: UpFrame): CallEnd | null {
+  switch (frame.type) {
+    case "done":
+    case "data":
+    case "listed":
+    case "picture":
+      return { kind: "result", frame, late: false };
+    case "exit":
+      return frame.stopped ? { kind: "stopped", by: frame.stopped } : { kind: "exited", code: frame.code };
+    case "error":
+      return { kind: "failed", message: frame.message };
+    case "cancelled":
+      return { kind: "cancelled" };
+    default:
+      return null;
+  }
 }
 
-function doneRun(
-  computer: ComputerCandidate,
-  started: { commandId: string; outputPath: string },
-  output: string,
-  truncated: boolean,
-  exitCode: number | null | undefined,
-  timedOut: boolean
-): ExecOutcome {
-  const formatted = formatRun({
-    name: computer.name,
-    commandId: started.commandId,
-    outputPath: started.outputPath,
-    output,
-    truncated,
-    exitCode,
-    timedOut
-  });
-  return {
-    ok: formatted.ok,
-    text: formatted.text,
+function outcomeOf(computer: ComputerCandidate, end: CallEnd, log: RunLog): ExecOutcome {
+  const name = computer.name;
+  const started = log.started;
+  const base = {
     computerId: computer.id,
-    computerName: computer.name,
-    commandId: started.commandId,
-    outputPath: started.outputPath
+    computerName: name,
+    ...(started ? { commandId: started.commandId, outputPath: started.outputPath } : {})
   };
+  switch (end.kind) {
+    case "result": {
+      const result = resultOf(name, end.frame);
+      return { ...base, ...result, text: end.late ? `取消的时候这一步已经做完了。\n${result.text}` : result.text };
+    }
+    case "started":
+      return {
+        ...base,
+        ok: true,
+        text: `已经在「${name}」上开始跑，命令还在继续。用 read_file 看输出，用 write_stdin 往里写输入。\n命令 id：${started?.commandId}\n输出文件：${started?.outputPath}`
+      };
+    case "detached":
+    case "exited":
+    case "stopped":
+      if (!started) return { ...base, ok: false, text: unavailableComputer(name) };
+      return { ...base, ...formatRun({ name, ...started, output: log.output, truncated: log.truncated, end }) };
+    case "failed":
+      return { ...base, ok: false, text: `在「${name}」上没做成：${end.message}` };
+    case "cancelled":
+      return { ...base, ok: false, text: `在「${name}」上这一步取消了，没有做。` };
+    case "unconfirmed":
+      return {
+        ...base,
+        ok: false,
+        text: `已经让「${name}」取消这一步，但它没有确认，这一步可能已经做了。确认之前不要重做。${
+          started ? `\n输出文件：${started.outputPath}` : ""
+        }`
+      };
+    case "gone":
+      return { ...base, ok: false, text: disconnectedComputer(name, started?.outputPath) };
+    case "silent":
+      return { ...base, ok: false, text: unavailableComputer(name) };
+  }
+}
+
+function resultOf(name: string, frame: ResultFrame): Pick<ExecOutcome, "ok" | "text" | "image"> {
+  switch (frame.type) {
+    case "done":
+      return { ok: true, text: frame.path ? `在「${name}」上写好了：${frame.path}` : `在「${name}」上做完了。` };
+    case "data":
+      if (frame.binary) {
+        return { ok: false, text: `在「${name}」上，这个文件看起来是二进制的（${frame.bytes} 字节），没有当作文本读。` };
+      }
+      return {
+        ok: true,
+        text: `${frame.truncated ? `文件有 ${frame.bytes} 字节，这里是开头一部分。\n` : ""}${frame.text ?? ""}`
+      };
+    case "listed": {
+      const lines = frame.entries.map((entry) => `${entry.name}${entry.kind === "dir" ? "/" : ""}`);
+      const tail = frame.truncated ? "\n（还有更多，没有列完）" : "";
+      return { ok: true, text: lines.length ? `${lines.join("\n")}${tail}` : `（空目录）${tail}` };
+    }
+    case "picture":
+      return {
+        ok: true,
+        image: { data: frame.data, mimeType: frame.mime },
+        text: `在「${name}」上看了窗口，截图 ${frame.width}×${frame.height} 像素，原点在窗口左上角。${
+          frame.summary ? `\n${frame.summary}` : ""
+        }`
+      };
+  }
 }
 
 function staleText(computer: ComputerCandidate): string {

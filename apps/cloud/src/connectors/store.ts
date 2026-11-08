@@ -5,6 +5,8 @@
  * 连接属于谁由接入方自己记。
  */
 
+import { connectorMessage, type ConnectorClient } from "./client.ts";
+
 /** 设置里能连的服务。id 是 open-connector 的 provider id。 */
 export type ConnectorService = {
   readonly id: string;
@@ -146,9 +148,10 @@ export class ConnectorStore {
     return this.#db().exec("DELETE FROM pupu_connectors WHERE id = ? RETURNING id", id).toArray().length > 0;
   }
 
-  /** 还没有创建者时连的账号，创建者第一次登录后归他，和设备、电脑一样。 */
+  /** 还没有创建者时连的账号和还在授权的，创建者第一次登录后归他，和设备、电脑一样。 */
   claimUnowned(memberId: string): void {
     this.#db().exec("UPDATE pupu_connectors SET member_id = ? WHERE member_id IS NULL", memberId);
+    this.#db().exec("UPDATE pupu_connector_attempts SET member_id = ? WHERE member_id IS NULL", memberId);
   }
 
   addAttempt(attempt: ConnectorAttempt): void {
@@ -163,11 +166,77 @@ export class ConnectorStore {
     );
   }
 
-  /** 拿走一次授权：只能用一次，过期的不认。顺手删掉过期的。 */
-  takeAttempt(id: string, now: number): ConnectorAttempt | undefined {
+  /** 还在等的一次授权，过期的不认。顺手删掉过期的。 */
+  attempt(id: string, now: number): ConnectorAttempt | undefined {
     const db = this.#db();
     db.exec("DELETE FROM pupu_connector_attempts WHERE created_at < ?", now - ATTEMPT_TTL_MS);
-    const [row] = db.exec("DELETE FROM pupu_connector_attempts WHERE id = ? RETURNING *", id).toArray();
+    const [row] = db.exec("SELECT * FROM pupu_connector_attempts WHERE id = ?", id).toArray();
     return row ? toAttempt(row) : undefined;
+  }
+
+  dropAttempt(id: string): void {
+    this.#db().exec("DELETE FROM pupu_connector_attempts WHERE id = ?", id);
+  }
+}
+
+/** 授权页跳回来之后告诉用户的。`client` 决定是跳回 App 还是显示一页。 */
+export type AttemptResult = {
+  readonly client: "phone" | "browser";
+  readonly ok: boolean;
+  readonly service: string;
+  readonly message: string;
+};
+
+/**
+ * 授权页跳回来：问 open-connector 这次连上没有，连上了记下是谁的哪个账号。
+ * 授权记录只在有了结果时才删：连上了、失败了、过期了。还在授权中，或者没问到，留着，刷新这一页再问一次。
+ * 连上了但发起的人已经不在名单上（`memberIn` 说不在），在 open-connector 撤销掉，不留没人管的凭据。
+ * 没有这次授权（用过、过期、乱填的）是 undefined。
+ */
+export async function finishAttempt(
+  attemptId: string,
+  deps: {
+    readonly store: ConnectorStore;
+    /** 这个 Pupu 没开连接器是 null。 */
+    readonly client: Pick<ConnectorClient, "request" | "connection" | "disconnect"> | null;
+    readonly memberIn: (memberId: string) => boolean;
+  },
+  now: number
+): Promise<AttemptResult | undefined> {
+  const { store, client } = deps;
+  const attempt = store.attempt(attemptId, now);
+  if (!attempt) return undefined;
+  const name = serviceOf(attempt.service)?.name ?? attempt.service;
+  const done = (ok: boolean, message: string) => ({ client: attempt.client, ok, service: attempt.service, message });
+  if (!client) {
+    store.dropAttempt(attempt.id);
+    return done(false, "这个 Pupu 的连接器已经关了");
+  }
+  try {
+    const request = await client.request(attempt.requestId);
+    if (request.status === "initiated") return done(false, `${name} 那边还没授权完，授权完再刷新这一页`);
+    if (request.status !== "connected" || !request.appId) {
+      store.dropAttempt(attempt.id);
+      return done(false, request.status === "expired" ? "授权超时了，再连一次" : (request.errorMessage ?? `没连上 ${name}`));
+    }
+    const connection = await client.connection(request.appId);
+    if (attempt.memberId !== null && !deps.memberIn(attempt.memberId)) {
+      await client.disconnect(attempt.service, connection.alias);
+      store.dropAttempt(attempt.id);
+      return done(false, "你已经不在这个 Pupu 的成员名单上了，账号没有连上");
+    }
+    const known = store.byId(connection.id);
+    store.save({
+      id: connection.id,
+      service: attempt.service,
+      alias: connection.alias,
+      account: connection.account,
+      memberId: known?.memberId ?? attempt.memberId,
+      createdAt: known?.createdAt ?? now
+    });
+    store.dropAttempt(attempt.id);
+    return done(true, connection.account ? `${name}（${connection.account}）连好了` : `${name} 连好了`);
+  } catch (error) {
+    return done(false, connectorMessage(error));
   }
 }

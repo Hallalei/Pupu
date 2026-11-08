@@ -6,6 +6,7 @@
  *
  * 设备属于一个成员（见 members.ts）：用 Google 登录的是那个人的；配对码换的，跟着生成码的那台设备走；
  * 访问口令换的算创建者的。还没有创建者时配的先不属于谁，创建者第一次登录时归他。
+ * 配对码跟着生成它的设备：设备吊销、主人被移除，没用掉的码一起作废。
  */
 
 import type { ComputerPolicy } from "./bridge/policy.ts";
@@ -45,6 +46,16 @@ export type DeviceView = {
   readonly lastSeenAt: number | null;
   /** 发这次请求的就是它。 */
   readonly current: boolean;
+};
+
+/**
+ * 谁生成的配对码。`byPhone` 见 `mayPair`；换出来的设备归 `memberId`；`deviceId` 是生成码的设备，
+ * 它被吊销时码一起作废。本机开发不带设备，是 null。
+ */
+export type CodeMaker = {
+  readonly byPhone: boolean;
+  readonly memberId: string | null;
+  readonly deviceId: string | null;
 };
 
 /** 配对码 10 分钟内有效，用一次就作废。 */
@@ -248,6 +259,7 @@ export class DeviceStore {
       // 早先建的表没有后加的这几列，补上。
       this.#addColumn("pupu_pairing_codes", "by_phone", "INTEGER NOT NULL DEFAULT 0");
       this.#addColumn("pupu_pairing_codes", "member_id", "TEXT");
+      this.#addColumn("pupu_pairing_codes", "device_id", "TEXT");
       this.#addColumn("pupu_devices", "member_id", "TEXT");
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_pairing_attempts (
         id INTEGER PRIMARY KEY,
@@ -284,9 +296,10 @@ export class DeviceStore {
     return this.list().filter((row) => row.memberId === memberId);
   }
 
-  /** 还没有主人的设备都归这个成员。创建者第一次登录时用。 */
+  /** 还没有主人的设备和配对码都归这个成员。创建者第一次登录时用：之后换出来的设备不会再没有主人。 */
   claimUnowned(memberId: string): void {
     this.#db().exec("UPDATE pupu_devices SET member_id = ? WHERE member_id IS NULL", memberId);
+    this.#db().exec("UPDATE pupu_pairing_codes SET member_id = ? WHERE member_id IS NULL", memberId);
   }
 
   /** 配过手机没有，吊销了的也算。 */
@@ -313,14 +326,24 @@ export class DeviceStore {
     return created;
   }
 
+  /** 吊销一台设备，它生成、还没用掉的配对码一起作废。没记下生成设备的老码按主人算。 */
   revoke(id: string): DeviceRow | undefined {
-    this.#db().exec(
-      "UPDATE pupu_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
-      Date.now(),
-      id
+    const db = this.#db();
+    db.exec("UPDATE pupu_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", Date.now(), id);
+    const [raw] = db.exec("SELECT * FROM pupu_devices WHERE id = ?", id).toArray();
+    if (!raw) return undefined;
+    const row = toRow(raw);
+    db.exec(
+      "DELETE FROM pupu_pairing_codes WHERE device_id = ? OR (device_id IS NULL AND member_id IS ?)",
+      id,
+      row.memberId
     );
-    const [row] = this.#db().exec("SELECT * FROM pupu_devices WHERE id = ?", id).toArray();
-    return row ? toRow(row) : undefined;
+    return row;
+  }
+
+  /** 这个成员生成的配对码都作废。移除成员时用。 */
+  cancelCodes(memberId: string): void {
+    this.#db().exec("DELETE FROM pupu_pairing_codes WHERE member_id = ?", memberId);
   }
 
   /** 记下最近一次使用。每个请求都会来，所以隔一会儿才真写。 */
@@ -329,27 +352,25 @@ export class DeviceStore {
     this.#db().exec("UPDATE pupu_devices SET last_seen_at = ? WHERE id = ?", now, row.id);
   }
 
-  /**
-   * 撞上一个还没过期的同样的码就不写，返回 false，换一个再来。
-   * `byPhone` 记下是不是手机生成的，见 `mayPair`；`memberId` 是生成码的那台设备属于谁，换出来的设备也归他。
-   */
-  addCode(hash: string, expiresAt: number, now: number, from: { byPhone: boolean; memberId: string | null }): boolean {
+  /** 撞上一个还没过期的同样的码就不写，返回 false，换一个再来。 */
+  addCode(hash: string, expiresAt: number, now: number, from: CodeMaker): boolean {
     this.#db().exec("DELETE FROM pupu_pairing_codes WHERE expires_at <= ?", now);
     const inserted = this.#db()
       .exec(
-        `INSERT OR IGNORE INTO pupu_pairing_codes (code_hash, expires_at, by_phone, member_id)
-         VALUES (?, ?, ?, ?) RETURNING code_hash`,
+        `INSERT OR IGNORE INTO pupu_pairing_codes (code_hash, expires_at, by_phone, member_id, device_id)
+         VALUES (?, ?, ?, ?, ?) RETURNING code_hash`,
         hash,
         expiresAt,
         from.byPhone ? 1 : 0,
-        from.memberId
+        from.memberId,
+        from.deviceId
       )
       .toArray();
     return inserted.length > 0;
   }
 
   /** 码对、没过期就删掉它，返回它是谁生成的：一个码只能换一次凭据。不对返回 undefined。 */
-  takeCode(hash: string, now: number): { byPhone: boolean; memberId: string | null } | undefined {
+  takeCode(hash: string, now: number): Omit<CodeMaker, "deviceId"> | undefined {
     const [row] = this.#db()
       .exec("SELECT by_phone, member_id FROM pupu_pairing_codes WHERE code_hash = ? AND expires_at > ?", hash, now)
       .toArray();

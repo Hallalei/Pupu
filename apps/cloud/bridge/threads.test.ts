@@ -133,6 +133,8 @@ function sockets(owner: Record<string, string>) {
   const { threads } = stores();
   const submitted: { session: string; input: unknown }[] = [];
   const watched: string[] = [];
+  /** 按发生的顺序记下 pi 停了哪个会话、Pupu 收到了哪个会话停下。 */
+  const stops: string[] = [];
   const harness = {
     session: (session: string) => ({
       events: async () => {
@@ -143,7 +145,10 @@ function sockets(owner: Record<string, string>) {
         submitted.push({ session, input });
         return { ok: true };
       },
-      abort: async () => null
+      abort: async () => {
+        stops.push(`pi ${session}`);
+        return null;
+      }
     })
   };
   const options = new PiSessionSockets(
@@ -153,7 +158,7 @@ function sockets(owner: Record<string, string>) {
     () => {},
     () => null,
     (session, device) => mayOpen(threads.of(session), device === null ? null : (owner[device] ?? null)),
-    () => null
+    (session, at) => stops.push(`pupu ${session} ${typeof at}`)
   ).options();
   const handlers = options.handlers;
   /** 和运行时的顺序一样：先要标签，抛错就不接受这条连接；接受了才 onConnect。 */
@@ -170,7 +175,7 @@ function sockets(owner: Record<string, string>) {
   };
   const message = (connection: ReturnType<typeof fakeConnection>, body: unknown) =>
     handlers.onMessage!(connection as never, JSON.stringify(body));
-  return { threads, submitted, watched, connect, message };
+  return { threads, submitted, watched, stops, connect, message };
 }
 
 describe("按设备发的帧", () => {
@@ -193,7 +198,7 @@ describe("按设备发的帧", () => {
       () => {},
       () => null,
       () => true,
-      () => null,
+      () => {},
       [route]
     );
 
@@ -252,6 +257,17 @@ describe("私聊的连接", () => {
     assert.deepEqual(pupu.submitted, []);
     assert.deepEqual(pupu.watched, []);
     assert.deepEqual(connection.sent.map((frame) => frame.type), ["error", "error"]);
+  });
+
+  test("停下：pi 先停，再告诉 Pupu 停的是哪个会话，转来的事好报没做完", async () => {
+    const pupu = sockets(owner);
+    await pupu.threads.ensurePrivateChat("m1", async () => "7", 100);
+    const connection = await pupu.connect("7", "lin");
+
+    await pupu.message(connection, { type: "abort", id: "a" });
+
+    assert.deepEqual(pupu.stops, ["pi 7", "pupu 7 number"]);
+    assert.deepEqual(connection.sent.map((frame) => frame.type).at(-1), "result");
   });
 
   test("主会话谁都能开", async () => {

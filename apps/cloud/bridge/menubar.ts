@@ -20,8 +20,8 @@ export type MenubarState = {
   readonly remote?: boolean;
 };
 
-/** 没连上的原因：凭据被拒，或者这台电脑已经有别的桥连着。 */
-export type MenubarProblem = "rejected" | "busy";
+/** 没连上的原因：凭据被拒、这台电脑已经有别的桥连着、这边的 Pupu 太旧，云端不认。 */
+export type MenubarProblem = "rejected" | "busy" | "outdated";
 
 export type MenubarAction =
   | { readonly action: "takeback" }
@@ -153,7 +153,9 @@ export function menubarState(input: {
         ? "这台电脑的凭据被拒了，要重新配对"
         : input.problem === "busy"
           ? "这台电脑已经有别的桥连着"
-          : jobs > 0
+          : input.problem === "outdated"
+            ? "要更新 Pupu：这台电脑上的版本太旧，连不上"
+            : jobs > 0
             ? `没连上 Pupu，还有 ${jobs} 条命令在跑`
             : "没连上 Pupu";
   } else if (input.remote) {

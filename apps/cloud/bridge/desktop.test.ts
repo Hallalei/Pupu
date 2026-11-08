@@ -196,6 +196,22 @@ describe("TURN 凭证", () => {
     console.warn = original;
     assert.deepEqual(servers, [{ urls: ["stun:stun.cloudflare.com:3478"] }]);
   });
+
+  test("换凭证卡住时到点退回 STUN，租约不一直占着", async () => {
+    // 只在被取消时才结束，模拟 Cloudflare 那边一直不回。
+    const fetcher = ((_input: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    const original = console.warn;
+    console.warn = () => {};
+    // AbortSignal.timeout 的计时器不拖住 Node 的事件循环，测试自己留一个。
+    const hold = setTimeout(() => {}, 1_000);
+    const servers = await iceServersFrom({ TURN_KEY_ID: "k", TURN_KEY_TOKEN: "t" }, fetcher, 20);
+    clearTimeout(hold);
+    console.warn = original;
+    assert.deepEqual(servers, [{ urls: ["stun:stun.cloudflare.com:3478"] }]);
+  });
 });
 
 describe("电脑这边的把关", () => {

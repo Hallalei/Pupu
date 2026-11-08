@@ -16,7 +16,8 @@ const BODY_CHARS = 300;
 const OUTCOMES: Readonly<Record<Exclude<ApprovalStatus, "pending">, string>> = {
   allowed: "已允许",
   denied: "已拒绝",
-  expired: "已过期，没有做"
+  expired: "已过期，没有做",
+  aborted: "已中止，没有做"
 };
 
 export type PushSender = { send(push: ApnsPush): Promise<ApnsResult> };
@@ -36,22 +37,20 @@ export type ApprovalPusherOptions = {
  * 把审批推到手机上。新的推一条带按钮的通知，`apns-collapse-id` 用审批 id；处理完或作废了，
  * 用同一个 collapse id 推一条安静的「已处理」把它替换掉，免得锁屏上留着点了也没用的按钮。
  *
- * 不跟着某一处代码推，而是每次审批变了就对一遍账：还在等的没推过就推，推过的不在等了就换掉。
- * 审批在好几处结束（点了、过期、电脑上收回），这样哪一处都不会漏。
+ * 不跟着某一处代码推，而是每次审批变了、有手机登记了推送就对一遍账，按手机算：还在等的、这台手机没收到过就推，
+ * 推过的不在等了就换掉。审批在好几处结束（点了、过期、电脑上收回），这样哪一处都不会漏。
  */
 export class ApprovalPusher {
   readonly #options: ApprovalPusherOptions;
   #queue: Promise<void> = Promise.resolve();
-  /** 审批 id → 在哪台手机上批的。那台手机上的通知它自己会收掉，不用再给它推「已处理」。 */
-  readonly #decidedBy = new Map<string, string>();
 
   constructor(options: ApprovalPusherOptions) {
     this.#options = options;
   }
 
-  /** 在 `gate.decide` 之前调。 */
+  /** 在这台手机上批的：它上面的通知它自己会收掉，不用再给它推「已处理」。在 `gate.decide` 之前调。 */
   decidedBy(approvalId: string, deviceId: string): void {
-    this.#decidedBy.set(approvalId, deviceId);
+    this.#options.store.markDelivery(approvalId, deviceId, "cleared", this.#options.now());
   }
 
   /** 审批变了就调。一次只对一轮账，免得同一条推两次。 */
@@ -72,12 +71,13 @@ export class ApprovalPusher {
     const jobs: Promise<void>[] = [];
 
     for (const row of pending) {
-      if (store.approvalState(row.id)) continue;
-      // 先记下再发：发的时候又来一轮，也不会再推一次。
-      store.markApproval(row.id, "sent", now);
+      const delivered = store.deliveries(row.id);
       const to = this.#options.audience?.(row);
+      const fresh = tokens.filter((token) => !delivered.has(token.deviceId) && (!to || to(token.deviceId)));
+      // 先记下再发：发的时候又来一轮，也不会再推一次。
+      for (const token of fresh) store.markDelivery(row.id, token.deviceId, "sent", now);
       jobs.push(
-        this.#fanOut(apns, to ? tokens.filter((token) => to(token.deviceId)) : tokens, (token) => ({
+        this.#fanOut(apns, fresh, (token) => ({
           token: token.token,
           env: token.env,
           type: "alert",
@@ -91,14 +91,13 @@ export class ApprovalPusher {
 
     for (const id of store.sentApprovals()) {
       if (live.has(id)) continue;
-      store.markApproval(id, "cleared", now);
-      const decider = this.#decidedBy.get(id);
+      const showing = [...store.deliveries(id)].filter(([, state]) => state === "sent").map(([deviceId]) => deviceId);
+      for (const deviceId of showing) store.markDelivery(id, deviceId, "cleared", now);
       const row = approvals.byId(id);
-      const to = row ? this.#options.audience?.(row) : undefined;
       jobs.push(
         this.#fanOut(
           apns,
-          tokens.filter((token) => token.deviceId !== decider && (!to || to(token.deviceId))),
+          tokens.filter((token) => showing.includes(token.deviceId)),
           (token) => ({
             token: token.token,
             env: token.env,
@@ -112,9 +111,6 @@ export class ApprovalPusher {
       );
     }
 
-    for (const id of [...this.#decidedBy.keys()]) {
-      if (store.approvalState(id) !== "sent") this.#decidedBy.delete(id);
-    }
     store.pruneApprovals(now - KEEP_MS);
     await Promise.all(jobs);
   }

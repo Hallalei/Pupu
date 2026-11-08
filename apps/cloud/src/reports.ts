@@ -9,6 +9,7 @@
 
 import { progressLine } from "./projects.ts";
 import { MAIN_SESSION } from "./threads.ts";
+import { USAGE_LIMIT_MESSAGE } from "./usage.ts";
 
 /**
  * running：在做，或者排着队，聊天里不显示。waiting：停在一步等用户批准。
@@ -29,17 +30,15 @@ export type ReportRow = {
   readonly state: ReportState;
   /** 一句结果。还在做时是空串。 */
   readonly summary: string;
-  /**
-   * 替谁做的：发起这件事的人。主会话的报告卡人人都看得到，多人用时卡上写明替谁做、@ 那个人。
-   * 现在还没有成员，是 null。
-   */
-  readonly owner: string | null;
   /** 这件事是从哪条聊天转来的（主会话或者某人的私聊），报告卡回到那条聊天。 */
   readonly origin: string;
   readonly createdAt: number;
   /** 最后一次变成要给人看的状态的时间，卡片按它排进聊天。还没报过是 null。 */
   readonly reportedAt: number | null;
-  /** 用户打开过这个项目。 */
+  /**
+   * 看过这次的结果：卡所在那条聊天的人打开过这个项目（主会话的卡谁打开都算，私聊的卡只算本人）。
+   * 结果一变（报出新的结果、又卡住等批）就清掉，新结果还没人看过。
+   */
   readonly seenAt: number | null;
 };
 
@@ -108,6 +107,7 @@ export function failureSummary(error: string): string {
   if (status === 429 || lower.includes("rate limit")) return "模型那边限流了，这件事没做完。";
   if (status === 402 || lower.includes("insufficient balance")) return "模型账户的余额用完了，这件事没做完。";
   if (status === 401 || status === 403) return "模型的 key 用不了了，这件事没做完。";
+  if (error === USAGE_LIMIT_MESSAGE) return "今天的额度用完了，这件事没做完。";
   if (status >= 500 || lower.includes("overloaded")) return "模型那边太忙，这件事没做完。";
   let detail = error.trim();
   try {
@@ -120,6 +120,9 @@ export function failureSummary(error: string): string {
   detail = progressLine(detail);
   return detail ? `模型出错，这件事没做完：${detail}` : "模型出错，这件事没做完。";
 }
+
+/** 用户在项目里点了停下：这一轮和排在后面的转交都不做了。 */
+export const STOPPED_SUMMARY = "这件事被停下了，没做完。";
 
 /** 用户引用回复报告卡时，引用里写的话。带上项目名，聊天里的 Pupu 才知道在说哪个项目。 */
 export function reportQuote(card: Pick<ReportCard, "projectName" | "status" | "summary">): string {
@@ -175,7 +178,6 @@ function toRow(row: Row): ReportRow {
     state:
       state === "waiting" || state === "done" || state === "asking" || state === "failed" ? state : "running",
     summary: String(row.summary),
-    owner: row.owner === null ? null : String(row.owner),
     origin: String(row.origin),
     createdAt: Number(row.created_at),
     reportedAt: row.reported_at === null ? null : Number(row.reported_at),
@@ -200,6 +202,7 @@ export class ReportStore {
         task TEXT NOT NULL,
         state TEXT NOT NULL DEFAULT 'running',
         summary TEXT NOT NULL DEFAULT '',
+        -- 早先给「替谁做」留的，不再读写。列留着，回滚到旧代码时它写得进去。
         owner TEXT,
         errors INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -218,19 +221,15 @@ export class ReportStore {
   }
 
   /** 转交时记一条在做的。要在提交到项目会话之前记，时间才早于那条消息。 */
-  open(
-    input: { id: string; projectId: string; session: string; task: string; origin: string; owner?: string | null },
-    now: number
-  ): void {
+  open(input: { id: string; projectId: string; session: string; task: string; origin: string }, now: number): void {
     const task = input.task.trim().split("\n")[0]?.trim() ?? "";
     this.#db().exec(
-      `INSERT OR IGNORE INTO pupu_reports (id, project_id, session, task, owner, origin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO pupu_reports (id, project_id, session, task, origin, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       input.id,
       input.projectId,
       input.session,
       progressLine(task) || task.slice(0, 80),
-      input.owner ?? null,
       input.origin,
       now
     );
@@ -248,10 +247,10 @@ export class ReportStore {
       .map(toRow);
   }
 
-  /** 这一轮结束：填上结果。改了返回 true。 */
+  /** 这一轮结束：填上结果，新结果还没人看过。改了返回 true。 */
   settle(session: string, upTo: number, state: "done" | "asking" | "failed", summary: string, now: number): boolean {
     const cursor = this.#db().exec(
-      `UPDATE pupu_reports SET state = ?, summary = ?, errors = 0, reported_at = ?
+      `UPDATE pupu_reports SET state = ?, summary = ?, errors = 0, reported_at = ?, seen_at = NULL
        WHERE session = ? AND state IN ${UNFINISHED} AND created_at <= ?`,
       state,
       summary,
@@ -260,6 +259,11 @@ export class ReportStore {
       upTo
     );
     return cursor.rowsWritten > 0;
+  }
+
+  /** 用户把这个会话停下了：`at` 之前转来还没做完的，这一轮的和排着队的，都报没做完。改了返回 true。 */
+  stop(session: string, at: number, now: number): boolean {
+    return this.settle(session, at, "failed", STOPPED_SUMMARY, now);
   }
 
   /** 模型出错、会自动重试：记一次，返回这一轮已经错了几次。 */
@@ -298,10 +302,13 @@ export class ReportStore {
       const wait = waiting.get(row.session);
       if (wait && row.createdAt <= wait.upTo) {
         if (row.state === "waiting" && row.summary === wait.summary) continue;
+        // 刚卡住是新的结果，还没人看过；一直在等、只是换了等的那一步，不算。
+        const fresh = row.state !== "waiting";
         this.#db().exec(
-          "UPDATE pupu_reports SET state = 'waiting', summary = ?, reported_at = ? WHERE id = ?",
+          "UPDATE pupu_reports SET state = 'waiting', summary = ?, reported_at = ?, seen_at = ? WHERE id = ?",
           wait.summary,
-          row.state === "waiting" ? row.reportedAt : now,
+          fresh ? now : row.reportedAt,
+          fresh ? null : row.seenAt,
           row.id
         );
         changed = true;
@@ -313,12 +320,14 @@ export class ReportStore {
     return changed;
   }
 
-  /** 用户打开了这个项目：报给他的都算看过了。改了返回 true。 */
-  markSeen(projectId: string, now: number): boolean {
+  /** 有人打开了这个项目：报到他看得到的这几条聊天（`chats`）里的，都算看过了。改了返回 true。 */
+  markSeen(projectId: string, chats: readonly string[], now: number): boolean {
     const cursor = this.#db().exec(
-      `UPDATE pupu_reports SET seen_at = ? WHERE project_id = ? AND seen_at IS NULL AND state IN ${VISIBLE}`,
+      `UPDATE pupu_reports SET seen_at = ?
+       WHERE project_id = ? AND seen_at IS NULL AND state IN ${VISIBLE} AND origin IN (${chats.map(() => "?").join(", ")})`,
       now,
-      projectId
+      projectId,
+      ...chats
     );
     return cursor.rowsWritten > 0;
   }

@@ -134,12 +134,16 @@ export class ConnectorClient {
     };
   }
 
-  /** 断开并在服务那边撤销授权。 */
+  /** 断开并在服务那边撤销授权。那边已经没有这个连接也算断开了。 */
   async disconnect(service: string, alias: string): Promise<void> {
-    await this.#call(`/api/connections/${encodeURIComponent(service)}`, {
-      method: "DELETE",
-      body: { connectionName: alias, revoke: true }
-    });
+    try {
+      await this.#call(`/api/connections/${encodeURIComponent(service)}`, {
+        method: "DELETE",
+        body: { connectionName: alias, revoke: true }
+      });
+    } catch (error) {
+      if (!(error instanceof ConnectorError && error.status === 404)) throw error;
+    }
   }
 
   async search(query: string, service?: string, limit = 8): Promise<ActionInfo[]> {
@@ -176,4 +180,9 @@ export function connectorConfigFrom(env: {
   const url = env.CONNECTOR_URL?.trim();
   const token = env.CONNECTOR_TOKEN?.trim();
   return url && token ? { url, token } : null;
+}
+
+/** 给用户看的连接器错误。 */
+export function connectorMessage(error: unknown): string {
+  return error instanceof Error ? `连接器出错了：${error.message}` : "连接器出错了";
 }

@@ -69,7 +69,7 @@ export class PiSessionSockets {
   readonly #onSubmit: (session: PiSessionId) => void;
   readonly #senderOf: (device: string | null) => Sender | null;
   readonly #mayOpen: (session: PiSessionId, device: string | null) => boolean;
-  readonly #refusal: () => string | null;
+  readonly #onAbort: (session: PiSessionId, at: number) => void;
   readonly #routes: readonly BridgeSocketHandlers[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
 
@@ -83,8 +83,8 @@ export class PiSessionSockets {
     senderOf: (device: string | null) => Sender | null,
     /** 这台设备能不能打开这个会话。私聊只有本人能开，见 threads.ts。 */
     mayOpen: (session: PiSessionId, device: string | null) => boolean,
-    /** 现在不接新消息的原因，比如当天额度用完了。接就是 null。 */
-    refusal: () => string | null,
+    /** 用户把这个会话停下了。`at` 是停下的时间，这之前提交的都不做了。 */
+    onAbort: (session: PiSessionId, at: number) => void,
     routes: readonly BridgeSocketHandlers[] = []
   ) {
     this.#harness = harness;
@@ -93,7 +93,7 @@ export class PiSessionSockets {
     this.#onSubmit = onSubmit;
     this.#senderOf = senderOf;
     this.#mayOpen = mayOpen;
-    this.#refusal = refusal;
+    this.#onAbort = onAbort;
     this.#routes = routes;
   }
 
@@ -235,8 +235,6 @@ export class PiSessionSockets {
     const handle = this.#harness.session(session);
     switch (message.type) {
       case "submit": {
-        const refused = this.#refusal();
-        if (refused) throw new Error(refused);
         const sender = this.#senderOf(deviceOfTags(connection.tags));
         const sent = sender ? sentInput(message.input, sender) : null;
         const receipt = await handle.submit(sent?.content ?? message.input, {
@@ -247,8 +245,12 @@ export class PiSessionSockets {
         this.#onSubmit(session);
         return receipt;
       }
-      case "abort":
-        return await handle.abort();
+      case "abort": {
+        const at = Date.now();
+        const result = await handle.abort();
+        this.#onAbort(session, at);
+        return result;
+      }
       case "resync":
         await this.#watch(connection, session);
         return null;

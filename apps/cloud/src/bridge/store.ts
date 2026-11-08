@@ -1,3 +1,4 @@
+import type { ScreenGrant } from "./gate.ts";
 import { DEFAULT_POLICY, isComputerPolicy, type ComputerPolicy } from "./policy.ts";
 
 /**
@@ -18,8 +19,8 @@ export type ComputerRow = {
   readonly lastSeenAt: number | null;
   /** 这台电脑的审批分级。 */
   readonly policy: ComputerPolicy;
-  /** 屏幕授权到这个时间失效。没有授权是 null。 */
-  readonly screenUntil: number | null;
+  /** 屏幕授权，怎么变见 gate.ts 的 `nextScreen`。 */
+  readonly screen: ScreenGrant;
 };
 
 export interface ComputerDirectory {
@@ -32,7 +33,7 @@ export interface ComputerDirectory {
     patch: { name?: string; localRoot?: string; terminalsFolder?: string; seenAt: number }
   ): void;
   setPolicy(id: string, policy: ComputerPolicy): boolean;
-  setScreenUntil(id: string, until: number | null): void;
+  setScreen(id: string, grant: ScreenGrant): void;
 }
 
 type Row = Record<string, SqlStorageValue>;
@@ -49,8 +50,18 @@ function toRow(row: Row): ComputerRow {
     revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
     lastSeenAt: row.last_seen_at === null ? null : Number(row.last_seen_at),
     policy: isComputerPolicy(row.policy) ? row.policy : DEFAULT_POLICY,
-    screenUntil: row.screen_until === null || row.screen_until === undefined ? null : Number(row.screen_until)
+    screen: screenOf(row)
   };
+}
+
+/**
+ * screen_state 是授权的状态，screen_until 是它的时间：有效时是到期的时间，收回了是收回的时间。
+ * 早先只有 screen_until 一列，state 是空的：有时间就当有效，过没过期读的时候再看。
+ */
+function screenOf(row: Row): ScreenGrant {
+  const at = row.screen_until === null || row.screen_until === undefined ? null : Number(row.screen_until);
+  if (at === null || row.screen_state === "none") return { kind: "none" };
+  return row.screen_state === "revoked" ? { kind: "revoked", at } : { kind: "active", until: at };
 }
 
 export class ComputerStore implements ComputerDirectory {
@@ -74,7 +85,12 @@ export class ComputerStore implements ComputerDirectory {
         last_seen_at INTEGER
       )`);
       // 后加的列。已经有了的话 ALTER 会报错，忽略就行。
-      for (const column of [`policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`, "screen_until INTEGER", "owner_id TEXT"]) {
+      for (const column of [
+        `policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`,
+        "screen_until INTEGER",
+        "owner_id TEXT",
+        "screen_state TEXT"
+      ]) {
         try {
           this.#sql.exec(`ALTER TABLE pupu_computers ADD COLUMN ${column}`);
         } catch {
@@ -163,7 +179,8 @@ export class ComputerStore implements ComputerDirectory {
     this.#db().exec("UPDATE pupu_computers SET owner_id = ? WHERE owner_id IS NULL", ownerId);
   }
 
-  setScreenUntil(id: string, until: number | null): void {
-    this.#db().exec("UPDATE pupu_computers SET screen_until = ? WHERE id = ?", until, id);
+  setScreen(id: string, grant: ScreenGrant): void {
+    const at = grant.kind === "active" ? grant.until : grant.kind === "revoked" ? grant.at : null;
+    this.#db().exec("UPDATE pupu_computers SET screen_state = ?, screen_until = ? WHERE id = ?", grant.kind, at, id);
   }
 }

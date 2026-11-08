@@ -554,10 +554,8 @@ final class SettingsViewController: UICollectionViewController {
                 message: "这台手机会从这个 Pupu 注销，回到连接页。要再连，就用配对码重新配对。",
                 preferredStyle: .actionSheet
             )
-            sheet.addAction(UIAlertAction(title: "换一个 Pupu", style: .destructive) { [weak self] _ in
-                self?.dismiss(animated: true) {
-                    Task { await Connection.shared.signOut() }
-                }
+            sheet.addAction(UIAlertAction(title: "换一个 Pupu", style: .destructive) { _ in
+                Connection.shared.signOut()
             })
             sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
             present(sheet, animated: true)
@@ -700,14 +698,15 @@ final class SettingsViewController: UICollectionViewController {
             preferredStyle: .actionSheet
         )
         sheet.addAction(UIAlertAction(title: "吊销「\(device.name)」", style: .destructive) { [weak self] _ in
+            // 吊销这台手机就是从这个 Pupu 注销：先在本机忘掉，之后到的 401 就不会被当成「在别处被吊销了」。
+            if device.current {
+                Connection.shared.signOut()
+                return
+            }
             guard let api = Store.shared.api else { return }
             Task {
                 do {
                     try await api.revoke(device: device.id)
-                    if device.current {
-                        self?.dismiss(animated: true) { Connection.shared.forget() }
-                        return
-                    }
                 } catch {
                     self?.show(error.localizedDescription)
                 }

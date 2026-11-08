@@ -64,8 +64,7 @@ test("命令结果告诉模型退出码、超时和输出文件", () => {
     outputPath: "/tmp/c1.log",
     output: "partial",
     truncated: false,
-    exitCode: undefined,
-    timedOut: true
+    end: { kind: "detached" }
   });
   assert.equal(running.ok, true);
   assert.match(running.text, /继续在后台跑/);
@@ -76,8 +75,7 @@ test("命令结果告诉模型退出码、超时和输出文件", () => {
     outputPath: "/tmp/c1.log",
     output: "",
     truncated: true,
-    exitCode: 1,
-    timedOut: false
+    end: { kind: "exited", code: 1 }
   });
   assert.equal(failed.ok, false);
   assert.match(failed.text, /退出码 1/);

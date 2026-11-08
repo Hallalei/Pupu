@@ -1,6 +1,6 @@
-import { onActivity, runningCommands, screenActivity, stopAllJobs } from "./actions.ts";
+import { onActivity, reconcileRequests, runningCommands, screenActivity, stopAllJobs, stopCommands } from "./actions.ts";
 import type { DesktopInput } from "../src/bridge/desktop.ts";
-import type { BridgeConfig } from "./config.ts";
+import { requestsDir, type BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
 import { menubarState, type Menubar, type MenubarAction, type MenubarProblem } from "./menubar.ts";
 import { InputHelper } from "./input.ts";
@@ -34,6 +34,9 @@ export type RunningBridge = {
   stop(): void;
 };
 
+/** 版本对不上时多久再试一次：云端回滚了，或者装了新版的桥，就能连上。 */
+const OUTDATED_RETRY_MS = 5 * 60_000;
+
 export function runBridge(options: RunOptions): RunningBridge {
   let current: BridgeConnection | null = null;
   let stopped = false;
@@ -64,7 +67,7 @@ export function runBridge(options: RunOptions): RunningBridge {
     if (action.action === "takeback") {
       takeback();
     } else if (action.action === "stopJobs") {
-      stopAllJobs();
+      stopCommands();
     } else if (action.action === "stopRemote") {
       remote.stop("takeback");
     } else if (action.action === "setAllowCommands") {
@@ -118,6 +121,8 @@ export function runBridge(options: RunOptions): RunningBridge {
 
   const loop = async () => {
     switches = await readLocal();
+    // 上次桥退出时做到一半的请求先对上账，云端再送来时照实说。
+    await reconcileRequests(requestsDir());
     refresh();
     let failures = 0;
     while (!stopped) {
@@ -143,6 +148,8 @@ export function runBridge(options: RunOptions): RunningBridge {
           onClosed() {
             connected = false;
             cloud = { pending: [], screen: false };
+            // 云端的租约跟着这条连接结束了，点对点的画面和输入不能还开着。
+            remote.stop("offline");
             refresh();
           }
         },
@@ -156,6 +163,13 @@ export function runBridge(options: RunOptions): RunningBridge {
         problem = "rejected";
         refresh();
         await options.rejected();
+        continue;
+      }
+      if (end === "outdated") {
+        problem = "outdated";
+        refresh();
+        console.error("这台电脑上的 Pupu 和云端对不上，要更新。过一会儿再试。");
+        await pause(OUTDATED_RETRY_MS);
         continue;
       }
       if (end === "busy") {

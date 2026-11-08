@@ -1,28 +1,56 @@
 import UIKit
 
 /// 顶栏下方的审批卡片。一次只摊开最早的一条，其余的在卡片上写「还有 N 条」。
+/// 在这台手机上批过的先收起来，不等下一次拉状态；列表里没了它，也就不用再记。
 final class ApprovalStackView: UIView {
+    private let relayout: () -> Void
     private var card: ApprovalCardView?
-    private var shownID: String?
+    private var approvals: [Approval] = []
+    /// 这台手机批过、刚拉到的列表里还有的。
+    private var decided = Set<String>()
 
-    func update(_ approvals: [Approval]) {
-        let pending = approvals.sorted { $0.createdAt < $1.createdAt }
+    /// relayout 在 Shell 里排版：出现、收起时页面内容跟着挤开或者合上。
+    init(relayout: @escaping () -> Void) {
+        self.relayout = relayout
+        super.init(frame: .zero)
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(_ next: [Approval]) {
+        approvals = next
+        decided.formIntersection(next.map(\.id))
+        render()
+    }
+
+    private func render() {
+        let pending = approvals.filter { !decided.contains($0.id) }.sorted { $0.createdAt < $1.createdAt }
+        let hidden = pending.isEmpty
+        defer {
+            if isHidden != hidden {
+                isHidden = hidden
+                relayout()
+            }
+        }
         guard let first = pending.first else {
             hide()
             return
         }
-        if shownID == first.id {
+        if card?.approval.id == first.id {
             card?.setMore(pending.count - 1)
             return
         }
         hide()
-        let next = ApprovalCardView(approval: first)
+        let next = ApprovalCardView(approval: first) { [weak self] id in
+            self?.decided.insert(id)
+            self?.render()
+        }
         next.setMore(pending.count - 1)
         next.translatesAutoresizingMaskIntoConstraints = false
         addSubview(next)
         next.pin(to: self)
         card = next
-        shownID = first.id
         if UIAccessibility.isReduceMotionEnabled {
             next.alpha = 0
             UIView.animate(withDuration: 0.2) { next.alpha = 1 }
@@ -40,7 +68,6 @@ final class ApprovalStackView: UIView {
     private func hide() {
         guard let card else { return }
         self.card = nil
-        shownID = nil
         UIView.animate(withDuration: 0.2) {
             card.alpha = 0
             card.transform = CGAffineTransform(translationX: 0, y: -12)
@@ -56,13 +83,16 @@ final class ApprovalStackView: UIView {
 }
 
 final class ApprovalCardView: SurfaceView {
-    private let approval: Approval
+    let approval: Approval
+    private let decided: (String) -> Void
     private let more = UILabel(style: .caption, color: Theme.inkMuted)
     private let deny = UIButton.glass(title: "拒绝")
     private let allow = UIButton.action(title: "允许")
 
-    init(approval: Approval) {
+    /// `decided` 在这台手机批成了以后调，卡片交给外面收起。
+    init(approval: Approval, decided: @escaping (String) -> Void) {
         self.approval = approval
+        self.decided = decided
         super.init(.strong, radius: Theme.Radius.panel, lifted: true)
 
         let mark = WaitingMark()
@@ -111,24 +141,28 @@ final class ApprovalCardView: SurfaceView {
         more.text = count > 0 ? "还有 \(count) 条" : nil
     }
 
+    /// 批的请求在路上时两个按钮都不能点，点的那个转圈。批成了交给外面收起；没批成按钮恢复，可以再点。
     private func decide(allow: Bool) {
         guard let api = Store.shared.api else { return }
-        deny.isEnabled = false
-        self.allow.isEnabled = false
-        (allow ? self.allow : deny).configuration?.showsActivityIndicator = true
+        setDeciding(allow ? self.allow : deny)
         Task {
             do {
                 try await api.decide(approval: approval.id, allow: allow)
                 Push.shared.clearDelivered(approval: approval.id)
                 UINotificationFeedbackGenerator().notificationOccurred(allow ? .success : .warning)
+                decided(approval.id)
             } catch {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
+                setDeciding(nil)
             }
             Store.shared.refresh()
-            deny.isEnabled = true
-            self.allow.isEnabled = true
-            self.allow.configuration?.showsActivityIndicator = false
-            deny.configuration?.showsActivityIndicator = false
+        }
+    }
+
+    private func setDeciding(_ pressed: UIButton?) {
+        for button in [deny, allow] {
+            button.isEnabled = pressed == nil
+            button.configuration?.showsActivityIndicator = button === pressed
         }
     }
 }

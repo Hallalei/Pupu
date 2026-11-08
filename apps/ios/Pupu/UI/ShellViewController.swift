@@ -3,24 +3,27 @@ import UIKit
 /// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边打开整页项目列表。
 /// 顶栏下方是等你批准的请示（哪一页都在）和聊天段的「正在做」，出现时把页面内容往下挤，不盖住对话。
 /// 项目名胶囊盖在内容上，不挤内容。
+/// 一个主界面只属于一个身份：换了 Pupu 或者重新配对，RootViewController 整个换一个新的。
 final class ShellViewController: UIViewController {
     private enum Section: Int {
         case chat, projects
     }
 
+    /// 上次打开的项目，按身份记：`[身份: 项目 id]`，只留现在这个身份的。
     private static let lastProjectKey = "pupu.last-project"
-    /// 每条聊天看到过的 lastAt，按 session 记。用云端的时间比，手机时钟不准也不会亮错。
+    /// 每条聊天看到过的 lastAt，按身份记：`[身份: [session: lastAt]]`，只留现在这个身份的。
+    /// 用云端的时间比，手机时钟不准也不会亮错。
     private static let seenKey = "pupu.chat-seen"
 
+    private let identity: Identity
     private let segments = SectionSwitch(titles: [Lane.main.title, "项目"], selected: Section.chat.rawValue)
     private let container = UIView()
-    private let approvals = ApprovalStackView()
+    private lazy var approvals = ApprovalStackView(relayout: { [weak self] in self?.relayoutTop() })
     private let pill = ProjectPill()
     private let top = PassThroughStackView()
     private var pillTop: NSLayoutConstraint!
     /// 顶栏下方那一叠占的高度，加给当前页面的安全区。
     private var topInset: CGFloat = 0
-    private var section: Section = .chat
     private var lane: Lane = .main
     private var switcherOpen = false
     /// 项目对话滚到了最新的消息：胶囊淡出。
@@ -54,6 +57,18 @@ final class ShellViewController: UIViewController {
     private lazy var noProject = NoProjectViewController(create: { [weak self] in self?.createProject() })
     private var shown: UIViewController?
 
+    init(identity: Identity) {
+        self.identity = identity
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 选中的那一段就是现在的页面，不另存一份。
+    private var section: Section {
+        Section(rawValue: segments.selectedIndex) ?? .chat
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
@@ -65,9 +80,9 @@ final class ShellViewController: UIViewController {
         navigationItem.compactAppearance = appearance
 
         segments.addAction(UIAction { [weak self] _ in
-            guard let self, let next = Section(rawValue: self.segments.selectedIndex) else { return }
+            guard let self else { return }
             UISelectionFeedbackGenerator().selectionChanged()
-            self.show(next)
+            self.show(self.section)
         }, for: .valueChanged)
         segments.chatMenu = { [weak self] in self?.laneMenu() }
         navigationItem.titleView = segments
@@ -86,7 +101,6 @@ final class ShellViewController: UIViewController {
         view.addSubview(switcher)
         switcher.pin(to: view)
 
-        approvals.isHidden = true
         top.axis = .vertical
         top.spacing = Theme.Space.s2
         top.addArrangedSubview(approvals)
@@ -123,14 +137,18 @@ final class ShellViewController: UIViewController {
 
     private func storeChanged() {
         approvals.update(Store.shared.approvals)
-        approvals.isHidden = Store.shared.approvals.isEmpty
-        pillTop.constant = approvals.isHidden ? 0 : Theme.Space.s2
         if Store.shared.chats[lane] == nil { setLane(.main) }
         render()
     }
 
+    /// 审批卡出现或收起：胶囊跟着让开，页面的安全区在 viewDidLayoutSubviews 里跟着改。
+    private func relayoutTop() {
+        pillTop.constant = approvals.isHidden ? 0 : Theme.Space.s2
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+    }
+
     private func show(_ next: Section) {
-        section = next
         segments.select(next.rawValue, animated: true)
         navigationItem.setLeftBarButton(next == .projects ? projectList : nil, animated: true)
         if next == .projects {
@@ -142,7 +160,7 @@ final class ShellViewController: UIViewController {
     }
 
     private func render() {
-        doing.update(section == .chat ? ComputerActivity.busy(Store.shared.activity) : [])
+        doing.update(Store.shared.activity, shown: section == .chat)
         switch section {
         case .chat: display(laneChat)
         case .projects: showProjects()
@@ -177,6 +195,7 @@ final class ShellViewController: UIViewController {
         let session = (chats[lane] ?? chats.main).session
         if let existing = laneChats[lane], existing.session == session { return existing }
         let chat = ChatViewController(
+            identity: identity,
             session: session,
             placeholder: lane.placeholder,
             projectTags: true,
@@ -192,10 +211,10 @@ final class ShellViewController: UIViewController {
     /// 看着的这条记下看到哪了，另一条比记下的新就亮圆点。
     private func updateUnread() {
         let chats = Store.shared.chats
-        var seen = UserDefaults.standard.dictionary(forKey: Self.seenKey) as? [String: Double] ?? [:]
+        var seen = (UserDefaults.standard.dictionary(forKey: Self.seenKey)?[identity.key] as? [String: Double]) ?? [:]
         if section == .chat, let current = chats[lane], let lastAt = current.lastAt, seen[current.session] != lastAt {
             seen[current.session] = lastAt
-            UserDefaults.standard.set(seen, forKey: Self.seenKey)
+            UserDefaults.standard.set([identity.key: seen], forKey: Self.seenKey)
         }
         let other = chats[lane.other]
         let unread = other.flatMap { chat in chat.lastAt.map { $0 > seen[chat.session] ?? 0 } } ?? false
@@ -206,17 +225,17 @@ final class ShellViewController: UIViewController {
     /// 「项目」直接打开上次的项目；没记住就打开最近活动的那个。
     private func showProjects() {
         let projects = Store.shared.projects
-        let last = UserDefaults.standard.string(forKey: Self.lastProjectKey)
-        guard let project = projects.first(where: { $0.id == last }) ?? projects.first else {
+        guard let project = projects.first(where: { $0.id == lastProject }) ?? projects.first else {
             noProject.loaded = Store.shared.loaded
             display(noProject)
             return
         }
         pill.name = project.name
         switcher.current = project.id
-        UserDefaults.standard.set(project.id, forKey: Self.lastProjectKey)
+        lastProject = project.id
         if projectChat?.session != project.session {
             let chat = ChatViewController(
+                identity: identity,
                 session: project.session,
                 placeholder: "在「\(project.name)」里说",
                 projectTags: false,
@@ -297,8 +316,13 @@ final class ShellViewController: UIViewController {
         }
     }
 
+    private var lastProject: String? {
+        get { UserDefaults.standard.dictionary(forKey: Self.lastProjectKey)?[identity.key] as? String }
+        set { UserDefaults.standard.set(newValue.map { [identity.key: $0] }, forKey: Self.lastProjectKey) }
+    }
+
     private func open(_ project: Project) {
-        UserDefaults.standard.set(project.id, forKey: Self.lastProjectKey)
+        lastProject = project.id
         setSwitcher(open: false)
         show(.projects)
     }

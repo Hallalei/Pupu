@@ -2,11 +2,12 @@ import UIKit
 
 /// 屏幕底部的输入栏：Liquid Glass 胶囊，回车换行，发送只靠按钮。
 /// Pupu 在回复、输入框又是空的时候，按钮换成停止；这时再发的消息排在这一轮后面。
+/// 发出去到 Pupu 收下之间，按钮转圈，字留在框里改不了。
 final class ComposerView: UIView, UITextViewDelegate {
     static let minHeight = Theme.Size.control
     static let maxHeight: CGFloat = 160
 
-    var onSend: ((String) -> Void)?
+    var onSend: (() -> Void)?
     var onStop: (() -> Void)?
     /// 高度变了，控制器要跟着动画并改列表的底部留白。
     var onResize: (() -> Void)?
@@ -24,6 +25,10 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     var connected = false {
         didSet { if connected != oldValue { update() } }
+    }
+
+    var sending = false {
+        didSet { if sending != oldValue { update() } }
     }
 
     var text: String { textView.text }
@@ -89,7 +94,11 @@ final class ComposerView: UIView, UITextViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     func clear() {
-        textView.text = ""
+        fill("")
+    }
+
+    func fill(_ text: String) {
+        textView.text = text
         update()
         resize()
     }
@@ -104,22 +113,28 @@ final class ComposerView: UIView, UITextViewDelegate {
         resize()
     }
 
+    /// 发送中不让改：键盘留着，字不动。
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        !sending
+    }
+
     private func pressed() {
         if running && text.isBlank {
             onStop?()
         } else {
-            onSend?(text)
+            onSend?()
         }
     }
 
     private func update() {
         placeholderLabel.isHidden = !textView.text.isEmpty
-        let stop = running && text.isBlank
+        let stop = running && text.isBlank && !sending
         button.configuration?.image = UIImage(systemName: stop ? "stop.fill" : "arrow.up")
-        let enabled = connected && (stop || !text.isBlank)
+        button.configuration?.showsActivityIndicator = sending
+        let enabled = !sending && connected && (stop || !text.isBlank)
         button.isEnabled = enabled
-        button.alpha = enabled ? 1 : 0.3
-        button.accessibilityLabel = stop ? "停止" : running ? "排队发送" : "发送"
+        button.alpha = enabled || sending ? 1 : 0.3
+        button.accessibilityLabel = sending ? "正在发送" : stop ? "停止" : running ? "排队发送" : "发送"
     }
 
     /// 最多长到 160pt，大约 6 行，再多就在框里滚动。

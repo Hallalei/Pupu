@@ -21,6 +21,8 @@ export const HEARTBEAT_MS = 10_000;
 export const STALE_MS = 30_000;
 /** 发出请求后，这么久还没有任何回包，就当成这台电脑没回应。 */
 export const FIRST_BYTE_MS = 10_000;
+/** 取消发出去以后，最多等电脑这么久说一声做没做。 */
+export const CANCEL_CONFIRM_MS = 3_000;
 export const FOREGROUND_DEFAULT_MS = 30_000;
 export const FOREGROUND_MAX_MS = 120_000;
 
@@ -36,8 +38,13 @@ export const MAX_STDIN_CHARS = 100_000;
 
 /** 这台电脑已经有一条健康连接，后来的连接让一下。 */
 export const ALREADY_CONNECTED_CODE = 4000;
-/** 凭据或协议不对，桥不该拿同一份凭据立刻重试。 */
+/** 凭据不对，桥不该拿同一份凭据立刻重试。 */
 export const REJECT_CODE = 1008;
+/**
+ * 凭据没问题，是桥的协议版本和云端对不上。不用 REJECT_CODE：0.2.1 之前的桥见了它会删掉凭据，
+ * 见了不认识的码只当断线，隔一会儿再连。
+ */
+export const OUTDATED_CODE = 4010;
 
 export type RunAction = {
   readonly kind: "run";
@@ -136,8 +143,16 @@ export type UpFrame =
       readonly commandId: string;
       readonly outputPath: string;
     }
-  | { readonly type: "exit"; readonly requestId: string; readonly code: number | null }
+  | {
+      readonly type: "exit";
+      readonly requestId: string;
+      readonly code: number | null;
+      /** 命令是被停掉的：用户在电脑上停的，或者云端取消的。自己退出的没有。 */
+      readonly stopped?: "user" | "cloud";
+    }
   | { readonly type: "error"; readonly requestId: string; readonly message: string }
+  /** 云端取消时这一步还没动手，桥没做。 */
+  | { readonly type: "cancelled"; readonly requestId: string }
   | {
       readonly type: "data";
       readonly requestId: string;
@@ -220,7 +235,10 @@ function stringField(value: Record<string, unknown>, key: string): string | null
   return typeof field === "string" ? field : null;
 }
 
-export function parseUpFrame(raw: string): UpFrame | null {
+/** 协议版本和这边不一样的 hello。那个版本别的字段可能也改了，不读，只拿来拒掉。不是线上的帧。 */
+export type OutdatedHello = { readonly type: "outdated" };
+
+export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -238,19 +256,12 @@ export function parseUpFrame(raw: string): UpFrame | null {
       return session && message ? { type: "desktop", session, message } : null;
     }
     case "hello": {
+      if (value.protocol !== PROTOCOL_VERSION) return { type: "outdated" };
       const computerId = stringField(value, "computerId");
       const name = stringField(value, "name");
       const localRoot = stringField(value, "localRoot");
       const terminalsFolder = stringField(value, "terminalsFolder");
-      if (
-        value.protocol !== PROTOCOL_VERSION ||
-        !computerId ||
-        name === null ||
-        !localRoot ||
-        !terminalsFolder
-      ) {
-        return null;
-      }
+      if (!computerId || name === null || !localRoot || !terminalsFolder) return null;
       return { type: "hello", protocol: PROTOCOL_VERSION, computerId, name, localRoot, terminalsFolder };
     }
     case "output":
@@ -266,8 +277,15 @@ export function parseUpFrame(raw: string): UpFrame | null {
     }
     case "exit":
       return requestId && (value.code === null || typeof value.code === "number")
-        ? { type: "exit", requestId, code: value.code }
+        ? {
+            type: "exit",
+            requestId,
+            code: value.code,
+            ...(value.stopped === "user" || value.stopped === "cloud" ? { stopped: value.stopped } : {})
+          }
         : null;
+    case "cancelled":
+      return requestId ? { type: "cancelled", requestId } : null;
     case "error":
       return requestId && typeof value.message === "string"
         ? { type: "error", requestId, message: value.message }

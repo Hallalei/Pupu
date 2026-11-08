@@ -18,6 +18,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private let projectTags: Bool
     private let opening: Opening
     private let openProject: (String) -> Void
+    private let identity: Identity
 
     private static let starters = ["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事", "我现在有哪些项目？"]
     /// 离底部这么近就算在底部，新内容来了跟着滚。
@@ -27,9 +28,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     private var socket: SessionSocket?
     private var state = SessionView()
-    private var status: SessionSocket.Status = .connecting
-    private var opened = false
     private var loaded = false
+    /// 输入栏里那条发出去了、Pupu 还没收下。这期间输入栏锁着，字和引用都留着；被拒了就解锁。
+    private var sending = false {
+        didSet { composer.sending = sending }
+    }
     private var toggled = Set<String>()
     private var rowsByID: [String: ChatRow] = [:]
     private var rowIDs: [String] = []
@@ -59,12 +62,14 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private var markingSeen = false
 
     init(
+        identity: Identity,
         session: String,
         placeholder: String,
         projectTags: Bool,
         opening: Opening,
         openProject: @escaping (String) -> Void
     ) {
+        self.identity = identity
         self.session = session
         self.placeholder = placeholder
         self.projectTags = projectTags
@@ -248,7 +253,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         background.strokeWidth = 1
         config.background = background
         let button = UIButton(configuration: config)
-        button.addAction(UIAction { [weak self] _ in self?.send(text) }, for: .primaryActionTriggered)
+        button.addAction(UIAction { [weak self] _ in
+            guard let self, !self.sending else { return }
+            self.composer.fill(text)
+            self.send()
+        }, for: .primaryActionTriggered)
         return button
     }
 
@@ -268,7 +277,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     private func setUpBottom() {
         composer.placeholder = placeholder
-        composer.onSend = { [weak self] text in self?.send(text) }
+        composer.onSend = { [weak self] in self?.send() }
         composer.onStop = { [weak self] in self?.socket?.abort() }
         composer.onResize = { [weak self] in
             guard let self, self.view.window != nil else { return }
@@ -316,17 +325,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     // MARK: - 连接
 
     private func connect() {
-        guard let endpoint = Connection.shared.endpoint else { return }
-        let socket = SessionSocket(endpoint: endpoint, session: session)
-        socket.onStatus = { [weak self] next in
-            guard let self else { return }
-            self.status = next
-            if next == .open { self.opened = true }
-            self.scheduleRender()
-        }
+        let socket = SessionSocket(endpoint: identity.endpoint, session: session)
+        socket.onOpenChanged = { [weak self] _ in self?.scheduleRender() }
         socket.onEvents = { [weak self] events in self?.receive(events) }
         socket.onChanged = { Store.shared.refresh() }
-        socket.onActivity = { Store.shared.apply(activity: $0) }
+        socket.onActivity = { [identity] in Store.shared.apply(activity: $0, for: identity) }
         socket.onError = { [weak self] message in
             self?.state.error = message
             self?.scheduleRender()
@@ -366,7 +369,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             computers: store.computers,
             approvals: store.approvals,
             members: store.members,
-            reports: store.reports(in: session),
+            reports: store.reportCards(in: session),
             toggled: toggled
         )
         let rows = ChatRows.build(state, context: context)
@@ -396,7 +399,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         empty.isHidden = !(loaded && ids.isEmpty)
         if loaded { spinner.stopAnimating() } else { spinner.startAnimating() }
         composer.running = state.running
-        composer.connected = status == .open
+        composer.connected = socket?.isOpen == true
         updateStatus()
         markSeen()
     }
@@ -535,9 +538,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     }
 
     private func updateStatus() {
-        let text: String? = switch status {
-        case .open: state.queued > 0 ? "还有 \(state.queued) 条消息排着队，Pupu 说完这轮就处理" : nil
-        case .connecting, .closed: opened ? "连接断开，正在重连…" : "正在连接 Pupu…"
+        let text: String? = if socket?.isOpen == true {
+            state.queued > 0 ? "还有 \(state.queued) 条消息排着队，Pupu 说完这轮就处理" : nil
+        } else {
+            loaded ? "连接断开，正在重连…" : "正在连接 Pupu…"
         }
         if let text, statusLabel.text != text { statusLabel.text = text }
         let hidden = text == nil
@@ -618,13 +622,24 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     // MARK: - 发送和引用
 
-    private func send(_ text: String) {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, let socket else { return }
+    /// 发输入栏里的字。Pupu 收下了才清空输入栏、收起引用；被拒了字留着，原因显示在对话末尾。
+    private func send() {
+        let value = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sending, !value.isEmpty, let socket else { return }
         let message = quote.map { SpecialMessage.quoted($0, reply: value) } ?? value
-        guard socket.submit(message) else { return }
+        sending = true
+        socket.submit(message) { [weak self] refusal in self?.settled(refusal) }
+    }
+
+    private func settled(_ refusal: String?) {
+        sending = false
+        if let refusal {
+            state.error = refusal
+            scheduleRender()
+            return
+        }
         composer.clear()
-        if quote != nil { cancelQuote() }
+        cancelQuote()
         stick = true
         scrollToBottom()
     }

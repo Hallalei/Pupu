@@ -7,6 +7,7 @@ import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
 import { MAIN_SESSION, type ChatsView } from "../threads";
+import { createSnapshotOrder } from "./snapshot-order";
 
 /** 这个浏览器没有凭据，或者凭据被吊销了。页面换成登录。 */
 export class UnauthorizedError extends Error {}
@@ -115,24 +116,32 @@ export function usePupuState() {
   const [loaded, setLoaded] = useState(false);
 
   const fetching = useRef(0);
+  const [order] = useState(createSnapshotOrder);
 
   const refresh = useCallback(async () => {
     fetching.current += 1;
+    const ticket = order.start();
     try {
       const state = await api.state();
-      setProjects(state.projects);
-      setComputers(state.computers);
-      setApprovals(state.approvals);
-      setDevices(state.devices);
-      setActivity(state.activity);
-      setMembers(state.members);
-      // 部署新云端之前的老 DO 没有这一项。
-      setReports(state.reports ?? []);
-      setChats(state.chats ?? NO_CHATS);
-      setError(null);
-      setUnauthorized(false);
-      setLoaded(true);
+      const use = order.arrived(ticket);
+      if (use.state) {
+        setProjects(state.projects);
+        setComputers(state.computers);
+        setApprovals(state.approvals);
+        setDevices(state.devices);
+        setMembers(state.members);
+        // 部署新云端之前的老 DO 没有这一项。
+        setReports(state.reports ?? []);
+        setChats(state.chats ?? NO_CHATS);
+        setLoaded(true);
+      }
+      if (use.activity) setActivity(state.activity);
+      if (use.outcome) {
+        setError(null);
+        setUnauthorized(false);
+      }
     } catch (cause) {
+      if (!order.failed(ticket)) return;
       if (cause instanceof UnauthorizedError) {
         setUnauthorized(true);
         setLoaded(true);
@@ -143,7 +152,15 @@ export function usePupuState() {
     } finally {
       fetching.current -= 1;
     }
-  }, []);
+  }, [order]);
+
+  const applyActivity = useCallback(
+    (next: PupuState["activity"]) => {
+      order.pushed();
+      setActivity(next);
+    },
+    [order]
+  );
 
   useEffect(() => {
     void refresh();
@@ -166,7 +183,7 @@ export function usePupuState() {
     devices,
     activity,
     members,
-    applyActivity: setActivity,
+    applyActivity,
     reports,
     chats,
     error,

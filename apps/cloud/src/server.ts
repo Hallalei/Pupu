@@ -49,11 +49,13 @@ import {
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
 import { createComputerTools } from "./bridge/tools";
-import { ConnectorClient, ConnectorError, connectorConfigFrom } from "./connectors/client";
+import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
 import {
   CONNECTOR_SERVICES,
   ConnectorStore,
+  finishAttempt,
   serviceOf,
+  type AttemptResult,
   type ConnectorService,
   type ConnectorView
 } from "./connectors/store";
@@ -81,6 +83,7 @@ import {
   sourceOf,
   TOKEN_BUCKET,
   TOKEN_LIMIT,
+  type CodeMaker,
   type DeviceKind,
   type DeviceView
 } from "./devices";
@@ -95,6 +98,7 @@ import {
   memberName,
   MemberStore,
   memberView,
+  removeMember,
   type Actor,
   type MemberRow,
   type MemberView
@@ -110,8 +114,8 @@ import { ApprovalPusher } from "./push/approvals";
 import { LivePusher, liveDue, type LiveInput } from "./push/live";
 import { PushStore, type PushTokenType } from "./push/store";
 import { PiSessionSockets } from "./sockets";
-import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore } from "./usage";
-import { MAIN_SESSION, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
+import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
+import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
 import { createPupuTools } from "./tools";
 
 /**
@@ -128,6 +132,8 @@ const INVITE_WRONG = "邀请码不对，或者已经用过了。";
 const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 /** 灵动岛到点重新看一眼：命令跑满 30 秒、屏幕授权到期。 */
 const LIVE_JOB = "live-activity";
+/** 屏幕授权到期：改回没有，菜单栏、网页、手机和灵动岛跟着换。 */
+const SCREEN_JOB = "screen-grant";
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
 
@@ -159,11 +165,18 @@ export type PairResult =
   | { readonly ok: true; readonly id: string; readonly name: string; readonly token: string }
   | { readonly ok: false; readonly status: 400 | 401 | 403 | 429; readonly error: string };
 
+/** 一张新凭据：明文发给对方，这边只存哈希。 */
+type Minted = { readonly token: string; readonly hash: string };
+
+const NOT_MEMBER = "你已经不在这个 Pupu 的成员名单上了。";
+
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
  * 主会话是 pi 的根会话，每人的私聊和每个项目各开一个 pi 会话，共用这个对象的 SQLite。
  */
 export class Pupu extends DurableObject<Env> {
+  /** 这是不是第一个 Pupu。按 Durable Object 的 id 认，不靠 meta 里记的名字：第一个 Pupu 从来不记。 */
+  readonly #root = this.ctx.id.equals(this.env.Pupu.idFromName(ROOT_PUPU));
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly threads = new ThreadStore(this.ctx.storage.sql, this.store);
   readonly reports = new ReportStore(this.ctx.storage.sql);
@@ -219,6 +232,8 @@ export class Pupu extends DurableObject<Env> {
   });
   /** 灵动岛下次要重新看一眼的时间，排在 Lifecycle 的任务队列里。 */
   #liveDue: number | null = null;
+  /** 排好的屏幕授权到期时间。屏幕操作会顺延授权，到点时 `expireScreens` 没收掉的就再排一次。 */
+  #screenDue: number | null = null;
   readonly gate = new ComputerGate({
     computers: () => this.bridge.list(),
     directory: this.computers,
@@ -326,7 +341,7 @@ export class Pupu extends DurableObject<Env> {
           fileExists: async () => false
         }
       });
-      models.setProvider(deepseekProvider());
+      models.setProvider(withDailyLimit(deepseekProvider(), () => this.#refusal()));
       return Harness.open(
         storage,
         {
@@ -359,7 +374,9 @@ export class Pupu extends DurableObject<Env> {
     (session) => this.store.touchSession(session),
     (device) => this.#senderOf(device),
     (session, device) => mayOpen(this.threads.of(session), this.#viewer(device)),
-    () => this.#refusal(),
+    (session, at) => {
+      if (this.reports.stop(session, at, Date.now())) this.#changed();
+    },
     [
       {
         tag: BRIDGE_TAG,
@@ -394,19 +411,31 @@ export class Pupu extends DurableObject<Env> {
     this.bridge.onTakeback = (computerId) => this.gate.takeback(computerId);
     this.bridge.onDesktop = (computerId, session, message) => this.desktop.fromBridge(computerId, session, message);
     this.bridge.onGone = (computerId) => this.desktop.bridgeGone(computerId);
+    // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
+    this.bridge.onChange = () => {
+      this.sockets.broadcast({ type: "computers_changed" });
+      this.#activityChanged();
+    };
+    this.bridge.onActivity = () => this.#activityChanged();
   }
 
   /** 宿主启动，harness 已经打开 pi 之后。 */
   async onStart(): Promise<void> {
     // 心跳是固定字符串，运行时直接回 pong，不把这个对象叫醒。
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(BRIDGE_PING, BRIDGE_PONG));
-    this.bridge.onChange = () => {
-      this.sockets.broadcast({ type: "computers_changed" });
-      this.#activityChanged();
-    };
-    this.bridge.onActivity = () => this.#activityChanged();
+    this.#revokeOrphans();
+    // 这个任务上线之前开的屏幕授权，还没排到期。
+    this.#scheduleScreen();
     await this.#syncModel();
     await this.sockets.reattach();
+  }
+
+  /** 以前移除成员没做完，可能留下挂在已经不在的人名下的设备和电脑。启动时补上吊销。 */
+  #revokeOrphans(): void {
+    const members = new Set(this.members.list().map((row) => row.id));
+    const gone = (memberId: string | null) => memberId !== null && !members.has(memberId);
+    for (const row of this.devices.list()) if (gone(row.memberId)) this.#revokeDevice(row.id);
+    for (const row of this.computers.list()) if (gone(row.ownerId)) this.#revokeComputer(row.id);
   }
 
   /** `defaults` 只管新会话；换了 MODEL 之后，把已有会话也切过去。 */
@@ -466,6 +495,7 @@ export class Pupu extends DurableObject<Env> {
     this.sockets.broadcast({ type: "approvals_changed" });
     this.#syncWaitingReports();
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
+    this.#scheduleScreen();
     this.#activityChanged();
     this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
   }
@@ -509,7 +539,10 @@ export class Pupu extends DurableObject<Env> {
       computers: this.bridge.list(),
       running: this.bridge.running(),
       pending: this.approvals.pending(now),
-      screenUntil: (id) => this.computers.list().find((row) => row.id === id)?.screenUntil ?? null
+      screenUntil: (id) => {
+        const grant = this.computers.list().find((row) => row.id === id)?.screen;
+        return grant?.kind === "active" ? grant.until : null;
+      }
     };
     this.ctx.waitUntil(this.live.sync(input).catch((error) => console.warn("实时活动推送失败", error)));
     const due = liveDue(input, now);
@@ -520,8 +553,23 @@ export class Pupu extends DurableObject<Env> {
     this.ctx.waitUntil(scheduled.then(() => undefined, (error) => console.warn("灵动岛的定时排不上", error)));
   }
 
+  #scheduleScreen(): void {
+    const due = this.gate.screenDue();
+    if (due === this.#screenDue) return;
+    this.#screenDue = due;
+    const { jobs } = this.lifecycle;
+    const scheduled = due === null ? jobs.cancel(SCREEN_JOB) : jobs.push({ id: SCREEN_JOB, fn: SCREEN_JOB, time: due + 500 });
+    this.ctx.waitUntil(scheduled.then(() => undefined, (error) => console.warn("屏幕授权的到期排不上", error)));
+  }
+
   /** Lifecycle 的任务队列到点了。 */
   onJob({ job }: LifecycleJobContext): void {
+    if (job.fn === SCREEN_JOB) {
+      this.#screenDue = null;
+      this.gate.expireScreens();
+      this.#scheduleScreen();
+      return;
+    }
     if (job.fn !== LIVE_JOB) return;
     this.#liveDue = null;
     this.#activityChanged();
@@ -598,15 +646,21 @@ export class Pupu extends DurableObject<Env> {
     return (deviceId) => phones.has(deviceId);
   }
 
-  /** 这个 Pupu 的 id，第一次有人登录时记下。Durable Object 自己不知道名字。 */
+  /**
+   * 这个 Pupu 的 id，别的 Pupu 第一次有人登录时记下（Durable Object 自己不知道名字）。
+   * 没记下就不是谁登录进来的，发不出凭据，抛错。
+   */
   #pupu(): string {
-    return this.store.meta("pupu") ?? ROOT_PUPU;
+    if (this.#root) return ROOT_PUPU;
+    const pupu = this.store.meta("pupu");
+    if (!pupu) throw new Error("这个 Pupu 还没记下自己的 id");
+    return pupu;
   }
 
-  /** 第一个 Pupu 不限额。 */
+  /** 现在不再调模型的原因：当天额度用完了。第一个 Pupu 不限额。 */
   #refusal(): string | null {
     const limit = dailyLimitFrom(this.env);
-    if (limit === null || this.#pupu() === ROOT_PUPU) return null;
+    if (limit === null || this.#root) return null;
     return this.usage.spent(dayOf(Date.now())) >= limit ? USAGE_LIMIT_MESSAGE : null;
   }
 
@@ -615,7 +669,7 @@ export class Pupu extends DurableObject<Env> {
    * 大家共用一把管理员 token，隔离还没验过。
    */
   #connectorClient(): ConnectorClient | null {
-    const config = this.#pupu() === ROOT_PUPU ? connectorConfigFrom(this.env) : null;
+    const config = this.#root ? connectorConfigFrom(this.env) : null;
     return config ? new ConnectorClient(config) : null;
   }
 
@@ -701,14 +755,18 @@ export class Pupu extends DurableObject<Env> {
   /** 主会话的卡大家都看，别人私聊转交的不发给你。 */
   #reportCards(own: PrivateChatRow | null): ReportCard[] {
     const names = new Map(this.store.listProjects().map((project) => [project.id, project.name]));
-    const chats = own ? [MAIN_SESSION, own.session] : [MAIN_SESSION];
-    return reportCards(this.reports.visible(chats), (id) => names.get(id));
+    return reportCards(this.reports.visible(chatSessions(own)), (id) => names.get(id));
   }
 
-  /** 用户打开了这个项目：项目报回聊天的结果都算看过，聊天里那几张卡不再合在一起。 */
-  async markProjectSeen(projectId: string): Promise<boolean> {
+  /**
+   * `device` 打开了这个项目：报到他看得到的聊天里的结果都算看过，那几张卡不再合在一起。
+   * 主会话的卡谁打开都算；私聊转去的卡只有本人打开才算。
+   */
+  async markProjectSeen(projectId: string, device: string | null = null): Promise<boolean> {
     if (!this.store.getProject(projectId)) return false;
-    if (this.reports.markSeen(projectId, Date.now())) this.#changed();
+    const viewer = this.#viewer(device);
+    const own = viewer === null ? undefined : this.threads.byMember(viewer);
+    if (this.reports.markSeen(projectId, chatSessions(own), Date.now())) this.#changed();
     return true;
   }
 
@@ -722,21 +780,29 @@ export class Pupu extends DurableObject<Env> {
 
   /**
    * 已经连上的设备要一个配对码，给新设备用。明文只在这一次返回。
-   * `device` 是要码的设备，记下它是不是手机（见 `mayPair`）、属于谁；本机开发不带设备，当手机算。
+   * `device` 是要码的设备，记下是哪台、是不是手机（见 `mayPair`）、属于谁；本机开发不带设备，当手机算。
+   * 这台设备已经吊销了是 null。
    */
-  async createPairingCode(device: string | null = null): Promise<{ code: string; expiresAt: number }> {
-    const row = device === null ? undefined : this.devices.list().find((each) => each.id === device);
-    const from = { byPhone: device === null || row?.kind === "phone", memberId: row?.memberId ?? null };
+  async createPairingCode(device: string | null = null): Promise<{ code: string; expiresAt: number } | null> {
     const now = Date.now();
     const expiresAt = now + PAIRING_TTL_MS;
     for (;;) {
       const code = newPairingCode();
       const hash = await tokenHash(code.replace("-", ""));
+      // 查设备和记下码之间不 await：设备这时被吊销了，码就不会漏下来。
+      const from = this.#codeMaker(device);
+      if (!from) return null;
       if (this.devices.addCode(hash, expiresAt, now, from)) {
-        if (this.#pupu() !== ROOT_PUPU) await directory(this.env).rememberCode(hash, this.#pupu(), expiresAt);
+        if (!this.#root) await directory(this.env).rememberCode(hash, this.#pupu(), expiresAt);
         return { code, expiresAt };
       }
     }
+  }
+
+  #codeMaker(device: string | null): CodeMaker | undefined {
+    if (device === null) return { byPhone: true, memberId: null, deviceId: null };
+    const row = this.devices.list().find((each) => each.id === device);
+    return row && { byPhone: row.kind === "phone", memberId: row.memberId, deviceId: row.id };
   }
 
   /** 配对码试错到顶了：Worker 就不去查别的 Pupu 的码，由这里回 429。 */
@@ -759,9 +825,9 @@ export class Pupu extends DurableObject<Env> {
     trusted: boolean;
   }): Promise<PairResult> {
     if (!input.code && !input.accessToken) {
-      return input.trusted
-        ? this.#issue({ ...input, memberId: this.#fallbackOwner() })
-        : { ok: false, status: 400, error: "要填配对码。" };
+      if (!input.trusted) return { ok: false, status: 400, error: "要填配对码。" };
+      const minted = await this.#mint();
+      return this.#issue({ ...input, memberId: this.#fallbackOwner() }, minted);
     }
     const code = input.code ? normalizePairingCode(input.code) : null;
     if (input.code && !code) {
@@ -776,9 +842,12 @@ export class Pupu extends DurableObject<Env> {
       return { ok: false, status: 429, error: "访问口令试错的次数太多了。过 10 分钟再试，或者用配对码。" };
     }
     const attempt = this.devices.addAttempt(code ? [source] : [source, TOKEN_BUCKET], now);
-    const taken = code ? this.devices.takeCode(await tokenHash(code), now) : undefined;
-    const matched = code ? taken !== undefined : await this.#isAccessToken(input.accessToken ?? "");
-    if (!matched) {
+    const hash = code ? await tokenHash(code) : null;
+    const tokenMatched = hash === null && (await this.#isAccessToken(input.accessToken ?? ""));
+    const minted = await this.#mint();
+    // 从这里到发出凭据不再 await：码在这之前作废了（吊销、移除成员）就换不到，之后作废的跟着新设备一起吊销。
+    const taken = hash === null ? undefined : this.devices.takeCode(hash, now);
+    if (!taken && !tokenMatched) {
       return { ok: false, status: 401, error: code ? "配对码不对，或者已经用过、过期了。" : "访问口令不对。" };
     }
     this.devices.forgive(attempt);
@@ -790,7 +859,7 @@ export class Pupu extends DurableObject<Env> {
       };
     }
     // 配对码换的设备和电脑归生成码的那个人；访问口令是创建者的救急钥匙，换的算创建者的。
-    return this.#issue({ ...input, memberId: taken ? taken.memberId : this.#fallbackOwner() });
+    return this.#issue({ ...input, memberId: taken ? taken.memberId : this.#fallbackOwner() }, minted);
   }
 
   async #isAccessToken(token: string): Promise<boolean> {
@@ -839,7 +908,8 @@ export class Pupu extends DurableObject<Env> {
       };
     }
     if (flow.client === "browser") {
-      return { kind: "cookie", token: (await this.#credential("browser", input.name, member.id)).token };
+      const credential = await this.#credential("browser", input.name, member.id);
+      return credential ? { kind: "cookie", token: credential.token } : { kind: "refused", error: NOT_MEMBER };
     }
     if (!flow.challenge) throw new Error("App 的登录缺少 challenge");
     const code = scopedCredential(this.#pupu(), randomToken());
@@ -896,36 +966,52 @@ export class Pupu extends DurableObject<Env> {
     }
     // 从登录到来换凭据这几分钟里被移除了，就不发。
     const member = this.members.byEmail(row.email);
-    if (!member) return { status: "refused", code: 403, error: "你已经不在这个 Pupu 的成员名单上了。" };
+    const gone = { status: "refused", code: 403, error: NOT_MEMBER } as const;
+    if (!member) return gone;
     if (row.client === "phone") {
-      return { status: "ok", device: await this.#credential("phone", row.name ?? name, member.id), computer: null };
+      const device = await this.#credential("phone", row.name ?? name, member.id);
+      return device ? { status: "ok", device, computer: null } : gone;
     }
     // 用谁的账号登录电脑 App，这台电脑就是谁的。
     const device = await this.#credential("desktop", name, member.id);
     const computer = input.computer ? await this.#credential("computer", name, member.id) : null;
+    if (!device || (input.computer && !computer)) return gone;
     return { status: "ok", device, computer };
   }
 
-  async #credential(kind: DeviceKind | "computer", name: string, memberId: string | null): Promise<SignInCredential> {
-    const result = await this.#issue({ kind, name, memberId });
-    if (!result.ok) throw new Error(result.error);
-    return { id: result.id, name: result.name, token: result.token };
+  /** 给成员发一张凭据。他这时已经不在名单上（正被移除）是 null。 */
+  async #credential(kind: DeviceKind | "computer", name: string, memberId: string): Promise<SignInCredential | null> {
+    const result = this.#issue({ kind, name, memberId }, await this.#mint());
+    return result.ok ? { id: result.id, name: result.name, token: result.token } : null;
   }
 
-  /** 配对过了关：电脑发桥的凭据，手机和浏览器发设备凭据。 */
-  async #issue(input: { kind: DeviceKind | "computer"; name: string; memberId: string | null }): Promise<PairResult> {
-    if (input.kind === "computer") {
-      return { ok: true, ...(await this.createComputer(input.name, input.memberId)) };
-    }
+  async #mint(): Promise<Minted> {
     const token = scopedCredential(this.#pupu(), newDeviceToken());
+    return { token, hash: await tokenHash(token) };
+  }
+
+  /**
+   * 配对过了关：电脑发桥的凭据，手机和浏览器发设备凭据。凭据要先 `#mint` 好，这里不 await：
+   * 核对主人还在名单上和写下凭据是一步，移除成员插不到中间。
+   */
+  #issue(input: { kind: DeviceKind | "computer"; name: string; memberId: string | null }, minted: Minted): PairResult {
+    if (input.memberId !== null && !this.members.byId(input.memberId)) {
+      return { ok: false, status: 403, error: NOT_MEMBER };
+    }
+    const name = input.name.trim().slice(0, 80);
+    if (input.kind === "computer") {
+      const row = this.computers.insert({ name: name || "电脑", ownerId: input.memberId, tokenHash: minted.hash });
+      this.bridge.onChange();
+      return { ok: true, id: row.id, name: row.name, token: minted.token };
+    }
     const row = this.devices.insert({
-      name: input.name.trim().slice(0, 80) || DEFAULT_DEVICE_NAMES[input.kind],
+      name: name || DEFAULT_DEVICE_NAMES[input.kind],
       kind: input.kind,
       memberId: input.memberId,
-      tokenHash: await tokenHash(token)
+      tokenHash: minted.hash
     });
     this.#devicesChanged();
-    return { ok: true, id: row.id, name: row.name, token };
+    return { ok: true, id: row.id, name: row.name, token: minted.token };
   }
 
   /**
@@ -942,6 +1028,8 @@ export class Pupu extends DurableObject<Env> {
   #revokeDevice(id: string): boolean {
     const row = this.devices.revoke(id);
     if (!row || row.revokedAt === null) return false;
+    // 先收起灵动岛再删 token，删了就推不到这台手机的灵动岛了。
+    this.ctx.waitUntil(this.live.end(id).catch((error) => console.warn("实时活动推送失败", error)));
     this.push.removeDevice(id);
     for (const socket of this.ctx.getWebSockets(deviceTag(id))) {
       try {
@@ -1051,16 +1139,6 @@ export class Pupu extends DurableObject<Env> {
     return this.gate.setPolicy(id, policy) ? "ok" : "missing";
   }
 
-  /** 发一张设备凭据。明文只在这一次返回。`ownerId` 是这台电脑的主人。 */
-  async createComputer(name: string, ownerId: string | null): Promise<{ id: string; name: string; token: string }> {
-    await this.lifecycle.start();
-    const trimmed = name.trim().slice(0, 80) || "电脑";
-    const token = scopedCredential(this.#pupu(), newDeviceToken());
-    const row = this.computers.insert({ name: trimmed, ownerId, tokenHash: await tokenHash(token) });
-    this.bridge.onChange();
-    return { id: row.id, name: row.name, token };
-  }
-
   /** 吊销一台电脑。主人自己能吊销，创建者能吊销所有人的（`mayRevoke`）。 */
   async revokeComputer(id: string, device: string | null = null): Promise<"ok" | "missing" | "forbidden"> {
     await this.lifecycle.start();
@@ -1074,6 +1152,7 @@ export class Pupu extends DurableObject<Env> {
     const row = this.computers.revoke(id);
     if (!row || row.revokedAt === null) return false;
     this.bridge.disconnect(id, 1008, "凭据已吊销");
+    this.gate.forgetComputer(id);
     this.bridge.onChange();
     return true;
   }
@@ -1093,6 +1172,8 @@ export class Pupu extends DurableObject<Env> {
     if (!mayInvite(actor)) return "creator_phone_only";
     if (!isEmail(email)) return "invalid";
     if (this.members.byEmail(email)) return "exists";
+    // 第一个 Pupu 的老成员不在目录里，目录认不出他已经有家了。
+    if (!this.#root && (await root(this.env).admits(email))) return "taken";
     const assignment = await directory(this.env).assign(email, this.#pupu());
     if (assignment !== "ok") return assignment;
     if (!this.members.invite(email, actor?.memberId ?? null, Date.now())) return "exists";
@@ -1101,21 +1182,30 @@ export class Pupu extends DurableObject<Env> {
   }
 
   /**
-   * 创建者移除一个成员：他名下的设备和电脑一起吊销，开着的连接马上断开。
+   * 创建者移除一个成员，步骤见 members.ts 的 `removeMember`。他连的账号有一个断不开是 failed，
+   * 他留在名单上、登录不了，创建者再点一次接着做完。
    * 他的私聊留着：映射还在，谁也打不开，创建者也一样。
    */
-  async removeMember(id: string, device: string | null = null): Promise<"ok" | "missing" | "creator_only"> {
-    const target = this.members.byId(id);
+  async removeMember(id: string, device: string | null = null): Promise<"ok" | "missing" | "creator_only" | "failed"> {
+    const target = this.members.list().find((row) => row.id === id);
     if (!target) return "missing";
     if (!mayRemoveMember(this.#actor(device), target)) return "creator_only";
-    await this.lifecycle.start();
-    for (const row of this.devices.ofMember(id)) this.#revokeDevice(row.id);
-    for (const row of this.computers.list()) if (row.ownerId === id) this.#revokeComputer(row.id);
-    for (const row of this.connectors.list()) if (row.memberId === id) await this.#disconnect(row.id);
-    this.members.remove(id);
-    await directory(this.env).release(target.email, this.#pupu());
+    const result = await removeMember(
+      target,
+      {
+        members: this.members,
+        devices: this.devices,
+        computers: this.computers,
+        connectors: this.connectors,
+        revokeDevice: (deviceId) => this.#revokeDevice(deviceId),
+        revokeComputer: (computerId) => this.#revokeComputer(computerId),
+        disconnect: (connectorId) => this.#disconnect(connectorId),
+        release: (email) => directory(this.env).release(email, this.#pupu())
+      },
+      Date.now()
+    );
     this.#devicesChanged();
-    return "ok";
+    return result;
   }
 
   // ---- 账户（连接器，需求说明 4.8）----
@@ -1156,36 +1246,19 @@ export class Pupu extends DurableObject<Env> {
     }
   }
 
-  /** 授权页跳回来：问 open-connector 这次连上没有，连上了记下是谁的哪个账号。一次授权只认一次。 */
-  async finishConnector(
-    attemptId: string
-  ): Promise<{ client: "phone" | "browser"; ok: boolean; service: string; message: string } | undefined> {
-    const attempt = this.connectors.takeAttempt(attemptId, Date.now());
-    if (!attempt) return undefined;
-    const name = serviceOf(attempt.service)?.name ?? attempt.service;
-    const done = (ok: boolean, message: string) => ({ client: attempt.client, ok, service: attempt.service, message });
-    const client = this.#connectorClient();
-    if (!client) return done(false, "这个 Pupu 的连接器已经关了");
-    try {
-      const request = await client.request(attempt.requestId);
-      if (request.status !== "connected" || !request.appId) {
-        return done(false, request.status === "expired" ? "授权超时了，再连一次" : (request.errorMessage ?? `没连上 ${name}`));
-      }
-      const connection = await client.connection(request.appId);
-      const known = this.connectors.byId(connection.id);
-      this.connectors.save({
-        id: connection.id,
-        service: attempt.service,
-        alias: connection.alias,
-        account: connection.account,
-        memberId: known?.memberId ?? attempt.memberId,
-        createdAt: known?.createdAt ?? Date.now()
-      });
-      this.#devicesChanged();
-      return done(true, connection.account ? `${name}（${connection.account}）连好了` : `${name} 连好了`);
-    } catch (error) {
-      return done(false, connectorMessage(error));
-    }
+  /** 授权页跳回来，规则见 connectors/store.ts 的 `finishAttempt`。 */
+  async finishConnector(attemptId: string): Promise<AttemptResult | undefined> {
+    const result = await finishAttempt(
+      attemptId,
+      {
+        store: this.connectors,
+        client: this.#connectorClient(),
+        memberIn: (memberId) => this.members.byId(memberId) !== undefined
+      },
+      Date.now()
+    );
+    if (result?.ok) this.#devicesChanged();
+    return result;
   }
 
   /** 断开一个账号：自己的自己能断，创建者能断所有人的（是收紧，哪个设备上都行）。 */
@@ -1205,10 +1278,8 @@ export class Pupu extends DurableObject<Env> {
       try {
         await client.disconnect(row.service, row.alias);
       } catch (error) {
-        if (!(error instanceof ConnectorError && error.status === 404)) {
-          console.warn("断开连接器失败", error);
-          return false;
-        }
+        console.warn("断开连接器失败", error);
+        return false;
       }
     }
     this.connectors.remove(id);
@@ -1366,10 +1437,6 @@ type PupuStub = DurableObjectStub<Pupu>;
  * 发请求的设备和它所在的 Pupu。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。
  */
 type Caller = { readonly device: string | null; readonly pupu: PupuStub; readonly name: string };
-
-function connectorMessage(error: unknown): string {
-  return error instanceof Error ? `连接器出错了：${error.message}` : "连接器出错了";
-}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
@@ -1531,7 +1598,8 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     return Response.json(await caller.pupu.state(caller.device));
   }
   if (pathname === "/api/pairing-codes" && method === "POST") {
-    return Response.json(await caller.pupu.createPairingCode(caller.device));
+    const code = await caller.pupu.createPairingCode(caller.device);
+    return code ? Response.json(code) : Response.json({ error: "这台设备已经吊销了" }, { status: 401 });
   }
   const device = pathname.match(/^\/api\/devices\/([^/]+)\/revoke$/);
   if (device && method === "POST") {
@@ -1642,6 +1710,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     const result = await caller.pupu.removeMember(decodeURIComponent(member[1] ?? ""), caller.device);
     if (result === "missing") return Response.json({ error: "没有这个成员" }, { status: 404 });
     if (result === "creator_only") return Response.json({ error: "只有创建者能移除成员，创建者自己移除不了" }, { status: 403 });
+    if (result === "failed") return Response.json({ error: "他连的账号有一个没断开，等一下再点一次移除" }, { status: 502 });
     return Response.json({ ok: true });
   }
   const connect = pathname.match(/^\/api\/connectors\/([a-z0-9_]+)\/connect$/);
@@ -1671,7 +1740,7 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   }
   const seen = pathname.match(/^\/api\/projects\/([^/]+)\/seen$/);
   if (seen && method === "POST") {
-    const ok = await caller.pupu.markProjectSeen(decodeURIComponent(seen[1] ?? ""));
+    const ok = await caller.pupu.markProjectSeen(decodeURIComponent(seen[1] ?? ""), caller.device);
     if (!ok) return Response.json({ error: "没有这个项目" }, { status: 404 });
     return Response.json({ ok: true });
   }

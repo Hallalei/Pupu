@@ -79,30 +79,43 @@ export function appendTail(
   return { text: next.slice(next.length - limit), truncated: true };
 }
 
+/** 前台命令这次调用怎么结束的：到时间转到后台、自己退出了、被停掉了。 */
+export type RunEnd =
+  | { readonly kind: "detached" }
+  | { readonly kind: "exited"; readonly code: number | null }
+  | { readonly kind: "stopped"; readonly by: "user" | "cloud" };
+
 export function formatRun(input: {
   name: string;
   commandId: string;
   outputPath: string;
   output: string;
   truncated: boolean;
-  /** 没有退出码表示命令还在跑。 */
-  exitCode: number | null | undefined;
-  timedOut: boolean;
+  end: RunEnd;
 }): { ok: boolean; text: string } {
   const head = input.truncated ? "（前面的输出省掉了，完整的在文件里）\n" : "";
   const body = input.output ? `\n\n${head}${input.output}` : "";
   const where = `命令 id：${input.commandId}\n输出文件：${input.outputPath}`;
-  if (input.timedOut || input.exitCode === undefined) {
-    return {
-      ok: true,
-      text: `在「${input.name}」上到时间还没结束，命令继续在后台跑。用 read_file 看输出，用 write_stdin 往里写输入。\n${where}${body}`
-    };
+  switch (input.end.kind) {
+    case "detached":
+      return {
+        ok: true,
+        text: `在「${input.name}」上到时间还没结束，命令继续在后台跑。用 read_file 看输出，用 write_stdin 往里写输入。\n${where}${body}`
+      };
+    case "exited":
+      return {
+        ok: input.end.code === 0,
+        text: `在「${input.name}」上跑完了，退出码 ${input.end.code ?? "无"}。\n${where}${body}`
+      };
+    case "stopped":
+      return {
+        ok: false,
+        text:
+          input.end.by === "user"
+            ? `在「${input.name}」上，这条命令被用户在电脑上停掉了。要不要再跑，先问用户。\n${where}${body}`
+            : `在「${input.name}」上，这条命令已经停掉了。\n${where}${body}`
+      };
   }
-  const ok = input.exitCode === 0;
-  return {
-    ok,
-    text: `在「${input.name}」上跑完了，退出码 ${input.exitCode ?? "无"}。\n${where}${body}`
-  };
 }
 
 export function fresh(lastBeatAt: number, now: number): boolean {

@@ -48,8 +48,17 @@ export async function readPairing(origin: string): Promise<Pairing> {
   return all.servers[origin] ?? EMPTY;
 }
 
-/** 改一个 Pupu 的凭据，其余的原样留着。`next` 为 null 就删掉这个 Pupu 的。 */
-export async function writePairing(origin: string, next: Pairing | null): Promise<void> {
+/** 上一次写凭据文件。读改写一次只做一份：两份交错，后写的会把先写的改动盖掉，还会争同一个临时文件。 */
+let writing: Promise<void> = Promise.resolve();
+
+/** 改一个 Pupu 的凭据，其余的原样留着。`next` 为 null 就删掉这个 Pupu 的。排在之前的写入后面做。 */
+export function writePairing(origin: string, next: Pairing | null): Promise<void> {
+  const write = writing.then(() => rewrite(origin, next));
+  writing = write.catch(() => {});
+  return write;
+}
+
+async function rewrite(origin: string, next: Pairing | null): Promise<void> {
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
     throw new Error("这台电脑上的钥匙串用不了，凭据没法加密保存。");
   }

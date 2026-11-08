@@ -7,6 +7,22 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         case google, code, token
     }
 
+    /// 这一页在干什么。请求在路上时不能换方式，按钮跟着状态走；离开这一页时取消。
+    private enum Flow {
+        case editing
+        /// 在登录或者配对，按钮转圈。
+        case connecting(Task<Void, Never>)
+        /// 新手机在等已有手机点允许，按钮是「取消」。
+        case waiting(Task<Void, Never>, expiresAt: Double)
+
+        var task: Task<Void, Never>? {
+            switch self {
+            case .editing: nil
+            case .connecting(let task), .waiting(let task, _): task
+            }
+        }
+    }
+
     private let server = UITextField()
     private let secret = UITextField()
     private lazy var secretRow = field(secret)
@@ -17,8 +33,9 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
     /// 填码的时候，回到 Google 登录。
     private let back = UIButton(configuration: .plain())
     private var current: Mode = .google
-    private var signIn: SignIn?
-    private var signInTask: Task<Void, Never>?
+    private var flow: Flow = .editing {
+        didSet { render() }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -35,6 +52,7 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         configure(secret, placeholder: "")
         secret.returnKeyType = .go
         showMode()
+        render()
 
         let fields = UIStackView(arrangedSubviews: [field(server), secretRow])
         fields.axis = .vertical
@@ -52,19 +70,12 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         mode.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             switch current {
-            case .google, .token: current = .code
-            case .code: current = .token
+            case .google, .token: switchMode(to: .code)
+            case .code: switchMode(to: .token)
             }
-            showMode()
-            show("", error: false)
         }, for: .primaryActionTriggered)
         back.configuration?.title = "用 Google 登录"
-        back.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            current = .google
-            showMode()
-            show("", error: false)
-        }, for: .primaryActionTriggered)
+        back.addAction(UIAction { [weak self] _ in self?.switchMode(to: .google) }, for: .primaryActionTriggered)
 
         let stack = UIStackView(arrangedSubviews: [title, note, fields, connect, mode, back, status])
         stack.axis = .vertical
@@ -89,17 +100,28 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         }
     }
 
+    /// 离开这一页（比如配对链接先连上了）：还在登录或配对的那一路取消，回来的凭据不再用。
+    override func willMove(toParent parent: UIViewController?) {
+        super.willMove(toParent: parent)
+        if parent == nil { flow.task?.cancel() }
+    }
+
+    private func switchMode(to next: Mode) {
+        guard case .editing = flow else { return }
+        current = next
+        showMode()
+        render()
+        show("", error: false)
+    }
+
     /// 用 Google 登录，还是第二个框填配对码或访问口令。
     private func showMode() {
         secret.text = nil
         secretRow.isHidden = current == .google
-        back.isHidden = current == .google
-        mode.isHidden = false
         server.returnKeyType = current == .google ? .go : .next
         switch current {
         case .google:
             note.text = "填 Pupu 的地址，用你的 Google 账号登录。这个 Pupu 连过手机的话，要在一台已经连上的手机上点「允许」。"
-            connect.configuration?.title = "用 Google 登录"
             mode.configuration?.title = "用配对码或访问口令"
         case .code:
             note.text = "填 Pupu 的地址和配对码。配对码在已经连上的手机上生成：设置 → 连接新设备。也可以用相机扫二维码。"
@@ -108,7 +130,6 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
             secret.textContentType = .oneTimeCode
             secret.keyboardType = .asciiCapable
             secret.autocapitalizationType = .allCharacters
-            connect.configuration?.title = "连接"
             mode.configuration?.title = "手边没有连上的设备？用访问口令"
         case .token:
             note.text = "访问口令只用这一次，换成这台手机自己的凭据。"
@@ -117,10 +138,36 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
             secret.textContentType = .password
             secret.keyboardType = .default
             secret.autocapitalizationType = .none
-            connect.configuration?.title = "连接"
             mode.configuration?.title = "用配对码"
         }
         if secret.isFirstResponder { secret.reloadInputViews() }
+    }
+
+    /// 按钮和换方式的链接只看 flow。
+    private func render() {
+        let editing: Bool
+        switch flow {
+        case .editing:
+            editing = true
+            connect.configuration?.title = current == .google ? "用 Google 登录" : "连接"
+            connect.configuration?.showsActivityIndicator = false
+            connect.isEnabled = true
+        case .connecting:
+            editing = false
+            connect.configuration?.showsActivityIndicator = true
+            connect.isEnabled = false
+        case .waiting(_, let expiresAt):
+            editing = false
+            let minutes = max(1, Int(((expiresAt - Date.now.timeIntervalSince1970 * 1000) / 60_000).rounded(.up)))
+            show("在已经连上的手机上点「允许」：锁屏上会有一条通知，打开 App 顶上也能看到。\(minutes) 分钟内没点就作废。", error: false)
+            connect.configuration?.title = "取消"
+            connect.configuration?.showsActivityIndicator = false
+            connect.isEnabled = true
+        }
+        mode.isHidden = !editing
+        back.isHidden = !editing || current == .google
+        server.isEnabled = editing
+        secret.isEnabled = editing
     }
 
     private func configure(_ field: UITextField, placeholder: String) {
@@ -151,85 +198,67 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
     }
 
     private func primary() {
-        // 正在等已有手机点允许：这个按钮是「取消」。
-        if let signInTask {
-            signInTask.cancel()
-            signIn?.cancel()
-            return
+        switch flow {
+        case .editing:
+            guard let base = Connection.normalize(server.text ?? "") else {
+                show("地址不对。填 https:// 开头的地址，比如 https://pupu.example.workers.dev。", error: true)
+                return
+            }
+            view.endEditing(true)
+            flow = .connecting(current == .google ? signIn(base) : pair(base))
+        case .connecting:
+            break
+        case .waiting(let task, _):
+            task.cancel()
+            flow = .editing
+            show("", error: false)
         }
-        if current == .google { tryGoogle() } else { tryConnect() }
     }
 
-    private func tryGoogle() {
-        guard let base = Connection.normalize(server.text ?? "") else {
-            show("地址不对。填 https:// 开头的地址，比如 https://pupu.example.workers.dev。", error: true)
-            return
-        }
-        view.endEditing(true)
-        connect.configuration?.showsActivityIndicator = true
-        connect.isEnabled = false
+    private func signIn(_ base: URL) -> Task<Void, Never> {
         show("", error: false)
         let signIn = SignIn(anchor: view.window)
-        self.signIn = signIn
-        signInTask = Task {
-            defer {
-                self.signIn = nil
-                signInTask = nil
-                connect.configuration?.showsActivityIndicator = false
-                connect.isEnabled = true
-                showMode()
-            }
+        return Task {
             do {
                 let paired = try await signIn.run(base: base) { [weak self] progress in
-                    guard let self else { return }
+                    guard let self, let task = flow.task else { return }
                     switch progress {
-                    case .waiting(let expiresAt): showWaiting(until: expiresAt)
+                    case .waiting(let expiresAt): flow = .waiting(task, expiresAt: expiresAt)
                     }
                 }
-                await Connection.shared.adopt(base: base, paired: paired)
-            } catch is CancellationError {
-                show("", error: false)
+                try Task.checkCancellation()
+                Connection.shared.adopt(base: base, paired: paired)
             } catch {
-                show("没连上：\(error.localizedDescription)", error: true)
+                finished(error)
             }
         }
     }
 
-    /// 新手机在等已有手机点允许。按钮换成「取消」。
-    private func showWaiting(until expiresAt: Double) {
-        let minutes = max(1, Int(((expiresAt - Date.now.timeIntervalSince1970 * 1000) / 60_000).rounded(.up)))
-        show("在已经连上的手机上点「允许」：锁屏上会有一条通知，打开 App 顶上也能看到。\(minutes) 分钟内没点就作废。", error: false)
-        connect.configuration?.showsActivityIndicator = false
-        connect.configuration?.title = "取消"
-        connect.isEnabled = true
-        mode.isHidden = true
-    }
-
-    private func tryConnect() {
-        guard let base = Connection.normalize(server.text ?? "") else {
-            show("地址不对。填 https:// 开头的地址，比如 https://pupu.example.workers.dev。", error: true)
-            return
-        }
+    private func pair(_ base: URL) -> Task<Void, Never> {
         let text = secret.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        view.endEditing(true)
-        connect.configuration?.showsActivityIndicator = true
-        connect.isEnabled = false
+        let accessToken = current == .token && !text.isEmpty ? text : nil
+        // 什么都不填，只有连本机的开发服务器时能过；线上会回「要填配对码」。
+        let code = current == .token || text.isEmpty ? nil : text
         show("正在连接…", error: false)
-        Task {
-            defer {
-                connect.configuration?.showsActivityIndicator = false
-                connect.isEnabled = true
-            }
+        return Task {
             do {
-                // 什么都不填，只有连本机的开发服务器时能过；线上会回「要填配对码」。
-                try await Connection.shared.pair(
-                    base: base,
-                    code: current == .token || text.isEmpty ? nil : text,
-                    accessToken: current == .token && !text.isEmpty ? text : nil
-                )
+                let paired = try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name)
+                try Task.checkCancellation()
+                Connection.shared.adopt(base: base, paired: paired)
             } catch {
-                show("没连上：\(error.localizedDescription)", error: true)
+                finished(error)
             }
+        }
+    }
+
+    /// 没连上。取消了就什么都不说：取消的那一方已经把页面摆回去了，或者这一页已经不在了。
+    private func finished(_ error: any Error) {
+        guard !Task.isCancelled else { return }
+        flow = .editing
+        if error is CancellationError {
+            show("", error: false)
+        } else {
+            show("没连上：\(error.localizedDescription)", error: true)
         }
     }
 

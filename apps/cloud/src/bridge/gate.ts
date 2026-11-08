@@ -1,4 +1,5 @@
 import { describeWaiting } from "./activity.ts";
+import { ABORTED, blockedText, EXPIRED } from "./blocked.ts";
 import type { ApprovalDirectory, ApprovalRow, ApprovalView } from "./approvals.ts";
 import {
   DEFAULT_POLICY,
@@ -17,6 +18,47 @@ import { actionForCall } from "./calls.ts";
 export const APPROVAL_TTL_MS = 10 * 60_000;
 
 const SCREEN_DETAIL = "看这台电脑的屏幕，用鼠标和键盘操作它。批准后，15 分钟没有屏幕操作才会再问。";
+const TAKEN_BACK = "用户在电脑上收回了屏幕控制";
+
+/**
+ * 一台电脑的屏幕授权。active 过了 until 就等于没有，到点由 `expireScreens` 改回 none 并广播。
+ * revoked 记下收回的时间：收回之前批的那一步，不能再把授权续回来。
+ */
+export type ScreenGrant =
+  | { readonly kind: "none" }
+  | { readonly kind: "active"; readonly until: number }
+  | { readonly kind: "revoked"; readonly at: number };
+
+export type ScreenEvent =
+  /** 批了屏幕请示，或者批了一步要用屏幕的操作。`decidedAt` 是批的时间。 */
+  | { readonly type: "grant"; readonly decidedAt: number }
+  /** 做了一次屏幕操作：授权还有效就往后顺延，没有效不续。 */
+  | { readonly type: "use" }
+  /** 用户在电脑上收回。 */
+  | { readonly type: "takeback" }
+  /** 到点了。 */
+  | { readonly type: "expire" };
+
+export const NO_SCREEN: ScreenGrant = { kind: "none" };
+
+export function screenOn(grant: ScreenGrant, now: number): boolean {
+  return grant.kind === "active" && grant.until > now;
+}
+
+/** 屏幕授权的所有变化。没变就原样返回同一个对象。 */
+export function nextScreen(grant: ScreenGrant, event: ScreenEvent, now: number): ScreenGrant {
+  switch (event.type) {
+    case "grant":
+      if (grant.kind === "revoked" && event.decidedAt <= grant.at) return grant;
+      return { kind: "active", until: now + SCREEN_GRANT_IDLE_MS };
+    case "use":
+      return screenOn(grant, now) ? { kind: "active", until: now + SCREEN_GRANT_IDLE_MS } : grant;
+    case "takeback":
+      return { kind: "revoked", at: now };
+    case "expire":
+      return grant.kind === "active" && grant.until <= now ? NO_SCREEN : grant;
+  }
+}
 
 /** 给本机桥的状态：菜单栏上显示。 */
 export type BridgeStatus = {
@@ -26,7 +68,7 @@ export type BridgeStatus = {
 
 export type GateOptions = {
   readonly computers: () => readonly ComputerView[];
-  readonly directory: Pick<ComputerDirectory, "list" | "setPolicy" | "setScreenUntil">;
+  readonly directory: Pick<ComputerDirectory, "list" | "setPolicy" | "setScreen">;
   readonly approvals: ApprovalDirectory;
   readonly now: () => number;
   /** 这些电脑的审批或屏幕授权变了。 */
@@ -94,21 +136,16 @@ export class ComputerGate {
     return this.#await(row, signal);
   }
 
-  /** 这个动作是不是已经批过：分级是都放行、这次调用批过，或者屏幕授权还有效。 */
+  /**
+   * 这个动作是不是已经批过：分级是都放行，或者这次调用批过。屏幕操作只看授权还在不在，
+   * 这一步单独批过的，批的时候已经开了授权；之后在电脑上收回了就不算。
+   */
   approved(input: { readonly requestId: string; readonly computerId: string; readonly action: Action }): boolean {
     const computer = this.#row(input.computerId);
     if (!computer) return false;
     if (computer.policy === "trust") return true;
-    const screen = usesScreen(input.action);
-    if (this.#options.approvals.byCall(input.requestId)?.status === "allowed") {
-      if (screen) this.#touchScreen(input.computerId);
-      return true;
-    }
-    if (screen && this.screenActive(input.computerId)) {
-      this.#touchScreen(input.computerId);
-      return true;
-    }
-    return false;
+    if (usesScreen(input.action)) return screenOn(this.#screen(computer, { type: "use" }), this.#options.now());
+    return this.#options.approvals.byCall(input.requestId)?.status === "allowed";
   }
 
   decide(id: string, decision: "allow" | "deny"): "ok" | "missing" | "settled" {
@@ -128,7 +165,8 @@ export class ComputerGate {
     }
     this.#options.approvals.settle(id, decision === "allow" ? "allowed" : "denied", now);
     // 先开屏幕授权，等着的那次调用回来之前，别的屏幕操作也不用再问。
-    if (decision === "allow" && row.screen) this.#grantScreen(row.computerId);
+    const computer = this.#row(row.computerId);
+    if (decision === "allow" && row.screen && computer) this.#screen(computer, { type: "grant", decidedAt: now });
     this.#wake(id);
     this.#options.onChange([row.computerId]);
     return "ok";
@@ -136,13 +174,33 @@ export class ComputerGate {
 
   /** 在电脑上收回屏幕控制：授权作废，这台电脑还在等的屏幕请示都拒掉。 */
   takeback(computerId: string): void {
-    const now = this.#options.now();
-    this.#options.directory.setScreenUntil(computerId, null);
-    for (const row of this.#options.approvals.pending(now)) {
-      if (row.computerId !== computerId || !row.screen) continue;
-      if (this.#options.approvals.settle(row.id, "denied", now, "用户在电脑上收回了屏幕控制")) this.#wake(row.id);
-    }
+    const computer = this.#row(computerId);
+    if (computer) this.#screen(computer, { type: "takeback" });
+    this.#denyPending(computerId, (row) => row.screen, TAKEN_BACK);
     this.#options.onChange([computerId]);
+  }
+
+  /** 电脑被吊销了：它还在等的请示都拒掉，不然手机上一直挂着，批了也没处做。 */
+  forgetComputer(computerId: string): void {
+    this.#denyPending(computerId, () => true, "这台电脑的授权已经吊销");
+    this.#options.onChange([computerId]);
+  }
+
+  /** 到期的屏幕授权改回没有，告诉大家。由 DO 的定时任务在 `screenDue` 那一刻叫。 */
+  expireScreens(): void {
+    const lapsed: string[] = [];
+    for (const computer of this.#options.directory.list()) {
+      if (this.#screen(computer, { type: "expire" }) !== computer.screen) lapsed.push(computer.id);
+    }
+    if (lapsed.length > 0) this.#options.onChange(lapsed);
+  }
+
+  /** 最早一个屏幕授权到期的时间。屏幕操作会往后顺延，所以到点时还要再看一眼。 */
+  screenDue(): number | null {
+    const times = this.#options.directory
+      .list()
+      .flatMap((computer) => (computer.screen.kind === "active" ? [computer.screen.until] : []));
+    return times.length > 0 ? Math.min(...times) : null;
   }
 
   setPolicy(computerId: string, policy: ComputerPolicy): boolean {
@@ -152,8 +210,7 @@ export class ComputerGate {
   }
 
   screenActive(computerId: string): boolean {
-    const until = this.#row(computerId)?.screenUntil ?? null;
-    return until !== null && until > this.#options.now();
+    return screenOn(this.#row(computerId)?.screen ?? NO_SCREEN, this.#options.now());
   }
 
   /** `visible` 决定这一条给不给这个人看。 */
@@ -166,6 +223,7 @@ export class ComputerGate {
     const names = new Map(this.#options.computers().map((computer) => [computer.id, computer.name]));
     return this.#options.approvals.pending(now).filter(visible).map((row) => ({
       id: row.id,
+      callId: row.callId,
       computerId: row.computerId,
       computerName: names.get(row.computerId) ?? this.#options.subjectName?.(row.computerId) ?? "电脑",
       kind: row.kind,
@@ -241,25 +299,43 @@ export class ComputerGate {
       row = this.#options.approvals.byId(row.id);
       if (!row) return { block: "这次请示找不到了，这一步没有做。" };
       if (row.status === "allowed") {
-        if (row.screen && !this.screenActive(row.computerId)) this.#grantScreen(row.computerId);
+        if (!row.screen) return undefined;
+        // DO 重启后重跑的调用也走这里：授权过期了就按这次批准再开；批了之后在电脑上收回了，就不做。
+        const computer = this.#row(row.computerId);
+        if (!computer) return undefined;
+        const now = this.#options.now();
+        const grant = this.#screen(computer, { type: "grant", decidedAt: row.decidedAt ?? row.createdAt });
+        if (!screenOn(grant, now)) return { block: blockedText(TAKEN_BACK, row.title, "不要重试，告诉用户这一步没做。") };
+        if (!screenOn(computer.screen, now)) this.#options.onChange([computer.id]);
         return undefined;
       }
       if (row.status === "denied") {
         const why = row.note ?? "用户在手机上拒绝了这一步";
         return {
-          block: `${why}，没有执行：${row.title}。不要重试，也不要换个写法再做；告诉用户这一步没做，问他想怎么办。`
+          block: blockedText(why, row.title, "不要重试，也不要换个写法再做；告诉用户这一步没做，问他想怎么办。")
         };
       }
       if (row.status === "expired") {
         return {
-          block: `这条请示 ${APPROVAL_TTL_MS / 60_000} 分钟没人处理，已经作废，没有执行：${row.title}。告诉用户这一步没做，等他有空再说。`
+          block: blockedText(
+            `这条请示 ${APPROVAL_TTL_MS / 60_000} 分钟没人处理，${EXPIRED}`,
+            row.title,
+            "告诉用户这一步没做，等他有空再说。"
+          )
         };
       }
+      if (row.status === "aborted") {
+        return { block: blockedText(`等批准的时候${ABORTED}`, row.title, "要做的话重新来。") };
+      }
       const now = this.#options.now();
-      if (now >= row.expiresAt || signal?.aborted) {
+      if (signal?.aborted) {
+        this.#options.approvals.settle(row.id, "aborted", now);
+        this.#options.onChange([row.computerId]);
+        throw signal.reason ?? new Error("aborted");
+      }
+      if (now >= row.expiresAt) {
         this.#options.approvals.settle(row.id, "expired", now);
         this.#options.onChange([row.computerId]);
-        if (signal?.aborted) throw signal.reason ?? new Error("aborted");
         continue;
       }
       await this.#wait(row.id, row.expiresAt - now, signal);
@@ -291,14 +367,30 @@ export class ComputerGate {
     for (const listener of [...(this.#listeners.get(id) ?? [])]) listener();
   }
 
-  #grantScreen(computerId: string): void {
-    this.#options.directory.setScreenUntil(computerId, this.#options.now() + SCREEN_GRANT_IDLE_MS);
-    this.#options.onChange([computerId]);
+  /**
+   * 屏幕授权的每一次变化都从这里写进去，广播由调用的地方做。
+   * 授权刚开的时候，这台电脑别的屏幕请示一起放行：它们问的就是这一件事。
+   */
+  #screen(computer: ComputerRow, event: ScreenEvent): ScreenGrant {
+    const now = this.#options.now();
+    const after = nextScreen(computer.screen, event, now);
+    if (after === computer.screen) return after;
+    this.#options.directory.setScreen(computer.id, after);
+    if (screenOn(after, now) && !screenOn(computer.screen, now)) {
+      for (const row of this.#options.approvals.pending(now)) {
+        if (row.computerId !== computer.id || row.kind !== "screen") continue;
+        if (this.#options.approvals.settle(row.id, "allowed", now)) this.#wake(row.id);
+      }
+    }
+    return after;
   }
 
-  /** 每次屏幕操作把授权往后顺延，不广播。 */
-  #touchScreen(computerId: string): void {
-    this.#options.directory.setScreenUntil(computerId, this.#options.now() + SCREEN_GRANT_IDLE_MS);
+  #denyPending(computerId: string, matches: (row: ApprovalRow) => boolean, note: string): void {
+    const now = this.#options.now();
+    for (const row of this.#options.approvals.pending(now)) {
+      if (row.computerId !== computerId || !matches(row)) continue;
+      if (this.#options.approvals.settle(row.id, "denied", now, note)) this.#wake(row.id);
+    }
   }
 
   #row(computerId: string): ComputerRow | undefined {

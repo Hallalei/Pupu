@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, mock } from "node:test";
 import test from "node:test";
+import { RemoteDesktopHub } from "../src/bridge/desktop.ts";
 import { ComputerBridge, type BridgeSocket } from "../src/bridge/hub.ts";
 import {
   ALREADY_CONNECTED_CODE,
   BRIDGE_PING,
+  CANCEL_CONFIRM_MS,
   FIRST_BYTE_MS,
+  OUTDATED_CODE,
   REJECT_CODE,
   STALE_MS,
   tokenHash
@@ -34,7 +37,7 @@ class MemoryDirectory implements ComputerDirectory {
       revokedAt: null,
       lastSeenAt: null,
       policy: "ask_risky",
-      screenUntil: null
+      screen: { kind: "none" }
     };
     this.rows.push(row);
     return row;
@@ -56,10 +59,10 @@ class MemoryDirectory implements ComputerDirectory {
     return true;
   }
 
-  setScreenUntil(id: string, until: number | null): void {
+  setScreen(id: string, grant: ComputerRow["screen"]): void {
     const index = this.rows.findIndex((row) => row.id === id);
     const row = this.rows[index];
-    if (row) this.rows[index] = { ...row, screenUntil: until };
+    if (row) this.rows[index] = { ...row, screen: grant };
   }
 
   markSeen(
@@ -152,6 +155,16 @@ async function harness() {
       now = value;
     },
     now: () => now
+  };
+}
+
+/** 桥收到某种帧时怎么回。 */
+function answer(env: { hub: ComputerBridge }, socket: FakeSocket, on: string, reply: (requestId: string) => object[]) {
+  socket.send = (data: string) => {
+    socket.sent.push(data);
+    const frame = JSON.parse(data) as { type?: string; requestId?: string };
+    if (frame.type !== on || !frame.requestId) return;
+    for (const up of reply(frame.requestId)) void env.hub.onMessage(socket, JSON.stringify(up));
   };
 }
 
@@ -290,10 +303,11 @@ test("发出去的调用记在 running 里，回完就清掉", async () => {
   assert.equal(changes, 2);
 });
 
-test("取消和没回应都会停掉这次请求", async () => {
+test("取消时桥确认没动手，就说没做", async () => {
   const env = await harness();
   const socket = await env.connect();
   await env.hello(socket);
+  answer(env, socket, "cancel", (requestId) => [{ type: "cancelled", requestId }]);
   const controller = new AbortController();
   const pending = env.hub.exec({
     requestId: "run-abort",
@@ -301,11 +315,55 @@ test("取消和没回应都会停掉这次请求", async () => {
     signal: controller.signal
   });
   controller.abort();
-  const aborted = await pending;
-  assert.equal(aborted.ok, false);
-  assert.match(aborted.text, /取消/);
-  assert.equal(sentTypes(socket).includes("cancel"), true);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.match(result.text, /取消了，没有做/);
+});
 
+test("取消发出去桥没确认，照实说可能已经做了", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const controller = new AbortController();
+    const pending = env.hub.exec({
+      requestId: "run-abort",
+      action: { kind: "run", command: "sleep 10", background: false },
+      signal: controller.signal
+    });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sentTypes(socket).includes("cancel"), true);
+    mock.timers.tick(CANCEL_CONFIRM_MS);
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.match(result.text, /没有确认，这一步可能已经做了/);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("取消的时候已经做完了，结果照样交回去", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
+  answer(env, socket, "cancel", (requestId) => [
+    { type: "listed", requestId, entries: [{ name: "a.txt", kind: "file" }], truncated: false }
+  ]);
+  const controller = new AbortController();
+  const pending = env.hub.exec({ requestId: "list-late", action: { kind: "list", path: "" }, signal: controller.signal });
+  controller.abort();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.match(result.text, /取消的时候这一步已经做完了/);
+  assert.match(result.text, /a\.txt/);
+});
+
+test("第一帧没来就停掉这次请求", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const quiet = env.hub.exec({
@@ -317,10 +375,82 @@ test("取消和没回应都会停掉这次请求", async () => {
     const timed = await quiet;
     assert.equal(timed.ok, false);
     assert.match(timed.text, /没有回应/);
-    assert.equal(sentTypes(socket).filter((type) => type === "cancel").length >= 2, true);
+    assert.equal(sentTypes(socket).includes("cancel"), true);
   } finally {
     mock.timers.reset();
   }
+});
+
+test("用户在电脑上停掉的命令，照实告诉模型，不说转后台", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
+  answer(env, socket, "exec", (requestId) => [
+    { type: "started", requestId, commandId: "cmd-1", outputPath: "/tmp/cmd-1.log" },
+    { type: "output", requestId, text: "working\n" },
+    { type: "exit", requestId, code: 143, stopped: "user" }
+  ]);
+  const result = await env.hub.exec({
+    requestId: "run-stopped",
+    action: { kind: "run", command: "npm run build", background: false }
+  });
+  assert.match(result.text, /被用户在电脑上停掉了/);
+  assert.match(result.text, /working/);
+  assert.doesNotMatch(result.text, /后台/);
+});
+
+test("协议版本对不上的 hello 关掉，并说明是版本旧了", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hub.onMessage(
+    socket,
+    JSON.stringify({
+      type: "hello",
+      protocol: 99,
+      computerId: env.row.id,
+      name: "书房",
+      localRoot: "/Users/me",
+      terminalsFolder: "/Users/me/.pupu/terminals"
+    })
+  );
+  assert.deepEqual(socket.closed, { code: OUTDATED_CODE, reason: "outdated" });
+  assert.equal(env.hub.list()[0]?.online, false);
+});
+
+test("被替换的旧连接晚些才关，新连接上的远程桌面不停", async () => {
+  const env = await harness();
+  const phones: FakeSocket[] = [];
+  const desktop = new RemoteDesktopHub({
+    sockets: () => phones,
+    deviceOf: () => "phone",
+    toBridge: (computerId, session, message) => env.hub.sendDesktop(computerId, session, message),
+    mayView: () => true,
+    iceServers: async () => [],
+    deviceName: (device) => device ?? "",
+    newSession: () => "s1"
+  });
+  env.hub.onGone = (computerId) => desktop.bridgeGone(computerId);
+
+  const old = await env.connect();
+  await env.hello(old);
+  env.setNow(env.now() + STALE_MS + 1);
+  const fresh = await env.connect();
+  await env.hello(fresh);
+  assert.equal(old.closed?.reason, "replaced");
+
+  const phone = new FakeSocket();
+  phones.push(phone);
+  await desktop.onConnect(phone, new Request(`https://pupu.example/api/desktop/${env.row.id}`));
+  await desktop.onMessage(phone, JSON.stringify({ type: "start", quality: "auto" }));
+  assert.equal(sentTypes(phone).at(-1), "lease");
+
+  env.hub.onClose(old);
+  assert.equal(sentTypes(phone).includes("ended"), false);
+  assert.equal(env.hub.list()[0]?.online, true);
+
+  fresh.close(1006, "");
+  env.hub.onClose(fresh);
+  assert.match(phone.sent.at(-1) ?? "", /"ended".*"offline"/);
 });
 
 test("前台到时间改为后台，不杀进程", async () => {

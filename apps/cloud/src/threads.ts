@@ -53,6 +53,11 @@ export function workFilter(
     seesWork(session === null ? undefined : threads.of(session), viewer, ownerOf(computerId));
 }
 
+/** 有这条私聊（`own`）的人看得到的聊天：主会话加他自己的私聊。 */
+export function chatSessions(own: Pick<PrivateChatRow, "session"> | null | undefined): string[] {
+  return own ? [MAIN_SESSION, own.session] : [MAIN_SESSION];
+}
+
 type Row = Record<string, SqlStorageValue>;
 
 const MAIN_LAST_REPLY = "main.last_reply_at";

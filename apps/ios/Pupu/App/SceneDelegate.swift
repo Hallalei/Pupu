@@ -36,10 +36,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     private func openPairLink(_ url: URL) {
         guard let link = Connection.pairLink(url) else { return }
         let host = link.server.host() ?? link.server.absoluteString
-        if let current = Connection.shared.endpoint, current.base == link.server {
-            alert(title: "已经连着 \(host)", message: "这台手机已经连着这个 Pupu，不用再配对。")
-            return
-        }
+        // 同一个地址上可以有好几个 Pupu，地址一样也可能是另一个，所以照样问。
         var message = "用配对码 \(link.code) 把这台手机连到 \(link.server.absoluteString)。"
         if let current = Connection.shared.endpoint {
             message += "\n\n现在连着 \(current.base.host() ?? current.base.absoluteString)，连上新的之后会从那边注销。"

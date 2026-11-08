@@ -46,7 +46,7 @@ describe("名额", () => {
     const store = new DirectoryStore(sqlStorage());
     const first = store.claim("A@Example.com", 1, NOW);
     assert.deepEqual(store.claim("a@example.com", 1, NOW), first);
-    assert.equal(store.seatsTaken(), 1);
+    assert.equal(store.invites(1).left, 0);
   });
 
   test("邀请的人也占名额，满了邀请不进来", () => {
@@ -59,7 +59,7 @@ describe("名额", () => {
   test("第一个 Pupu 的成员不占名额", () => {
     const store = new DirectoryStore(sqlStorage());
     assert.equal(store.assign("a@example.com", ROOT_PUPU, 0, NOW), "ok");
-    assert.equal(store.seatsTaken(), 0);
+    assert.equal(store.invites(1).left, 1);
   });
 
   test("移除成员空出名额，创建者不会被移走", () => {
@@ -69,7 +69,7 @@ describe("名额", () => {
     store.assign("b@example.com", pupu, 2, NOW);
     store.release("b@example.com", pupu);
     store.release("a@example.com", pupu);
-    assert.equal(store.seatsTaken(), 1);
+    assert.equal(store.invites(2).left, 1);
     assert.equal(store.home("b@example.com"), null);
   });
 });
@@ -197,13 +197,22 @@ describe("邀请码", () => {
     assert.equal(store.invites(5).invites[0]?.usedBy, null);
   });
 
-  test("码发出去后名额被成员占满，码留着，这次登录还能再填", () => {
+  test("发出去的码占着名额，邀请成员占不走它", () => {
     const store = new DirectoryStore(sqlStorage());
-    const code = store.createInvite(1, NOW) ?? "";
-    store.assign("member@example.com", "other", 1, NOW);
+    const code = store.createInvite(2, NOW) ?? "";
+    const home = store.claim("owner@example.com", 2, NOW);
+    assert.equal(store.assign("member@example.com", home?.pupu ?? "", 2, NOW), "full");
+    assert.equal(store.activate(held(store, "a@example.com"), code, 2, NOW).status, "ok");
+  });
+
+  test("名额调小到比发出去的码还少：码留着，作废多的之后才能用，这次登录还能再填", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const code = store.createInvite(2, NOW) ?? "";
+    const extra = store.createInvite(2, NOW) ?? "";
     const token = held(store, "a@example.com");
     assert.equal(store.activate(token, code, 1, NOW).status, "full");
-    assert.equal(store.invites(1).invites[0]?.usedBy, null);
-    assert.equal(store.activate(token, code, 2, NOW).status, "ok");
+    assert.equal(store.invites(1).invites.find((invite) => invite.code === code)?.usedBy, null);
+    assert.equal(store.revokeInvite(extra), true);
+    assert.equal(store.activate(token, code, 1, NOW).status, "ok");
   });
 });

@@ -1,4 +1,5 @@
 import type { ApprovalView } from "../bridge/approvals";
+import { blockedOutcome, blockedReason } from "../bridge/blocked.ts";
 import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
 import { parseHandoff, parseQuote, type Sender } from "../messages.ts";
@@ -257,18 +258,7 @@ function toolRow(
     context.computers.find((candidate) => candidate.id === computerId) ??
     (context.computers.length === 1 ? context.computers[0] : undefined);
 
-  let status: StepStatus;
-  if (result) {
-    // 没批准的一步，桥回给模型的话里写着「没有执行」。
-    if (result.text.includes("没有执行：")) status = result.text.includes("作废") ? "expired" : "denied";
-    else status = result.error ? "failed" : "done";
-  } else if (running) {
-    const waiting = context.approvals.some((approval) => !computer || approval.computerId === computer.id);
-    status = waiting ? "waiting" : "running";
-  } else {
-    status = "unfinished";
-  }
-
+  const status = stepStatus(part.id, result, running, context.approvals);
   const place = computer ? `在「${computer.name}」上` : "在电脑上";
   const did = status === "done" || status === "failed";
   const id = `tool:${part.id}`;
@@ -286,6 +276,26 @@ function toolRow(
       expanded: (status === "failed") !== context.toggled.has(id)
     }
   };
+}
+
+/**
+ * 一步走到哪了。有结果看结果；还没有结果时，有审批对着这次调用就是在等批，这一轮还在跑就是在做。
+ * 审批按调用 id 对，不按电脑：同一台电脑上别的会话在等批，不关这一步的事。
+ */
+function stepStatus(
+  callId: string,
+  result: Result | undefined,
+  running: boolean,
+  approvals: readonly ApprovalView[]
+): StepStatus {
+  if (result) {
+    // 没批准的调用只有一段文字，见 blocked.ts。等批准时这一轮停了，这一步算没做完。
+    const blocked = blockedOutcome(result.text);
+    if (blocked) return blocked === "aborted" ? "unfinished" : blocked;
+    return result.error ? "failed" : "done";
+  }
+  if (approvals.some((approval) => approval.callId === callId)) return "waiting";
+  return running ? "running" : "unfinished";
 }
 
 /**
@@ -313,11 +323,8 @@ export function readable(text: string, status: StepStatus): string {
     lines.push(line.slice(close + 1).trim().replace(/^Tool call blocked: /, ""));
   }
   const result = lines.join("\n").trim();
-  const cut = result.indexOf("，没有执行：");
-  if ((status === "denied" || status === "expired") && cut >= 0) {
-    return `${result.slice(0, cut)}，这一步没有做。`;
-  }
-  return result;
+  const reason = status === "done" || status === "failed" ? null : blockedReason(result);
+  return reason ?? result;
 }
 
 /** 连着的几步合成一组，点开再看每一步。 */

@@ -229,7 +229,27 @@ export class LivePusher {
 
   /** 电脑、请示或屏幕授权变了，手机登记了 token，或者定时到了，都调一次。一次只对一轮账。 */
   sync(input: LiveInput): Promise<void> {
-    const run = this.#queue.then(() => this.#sync(input));
+    return this.#enqueue(() => this.#sync(input));
+  }
+
+  /**
+   * 手机被吊销：它开着的活动推 end、马上从锁屏上拿掉，上面的「允许」也跟着没了。
+   * 要在删它的 token 之前调：这里当场记下活动的 token，之后推的时候 token 已经删了也不要紧。
+   */
+  end(deviceId: string): Promise<void> {
+    const activity = this.#options.store.tokens("activity").find((row) => row.deviceId === deviceId);
+    return this.#enqueue(async () => {
+      const state = readState(this.#options.state.get());
+      const { [deviceId]: was, ...devices } = state.devices;
+      this.#options.state.set(JSON.stringify({ ...state, devices } satisfies State));
+      const apns = this.#options.apns();
+      if (!apns || !activity || !was?.last) return;
+      await this.#send(apns, activity, "end", doneContent(was.last), this.#options.now(), null, 0);
+    });
+  }
+
+  #enqueue(work: () => Promise<void>): Promise<void> {
+    const run = this.#queue.then(work);
     this.#queue = run.catch(() => undefined);
     return run;
   }
@@ -301,9 +321,10 @@ export class LivePusher {
     event: "start" | "update" | "end",
     content: LiveContent,
     now: number,
-    lastMode: LiveContent["mode"] | null = null
+    lastMode: LiveContent["mode"] | null = null,
+    linger = LINGER_S
   ): Promise<void> {
-    const push = livePush(token, event, content, now, lastMode);
+    const push = livePush(token, event, content, now, lastMode, linger);
     const result = await apns.send(push);
     if (result.gone) {
       this.#options.store.remove(token.token);
@@ -316,7 +337,7 @@ export class LivePusher {
 
 /**
  * 一条实时活动推送。start 要带 attributes 和 alert（没有 alert iOS 会整条丢掉；标题留空、
- * passive，审批已经另有一条带响的通知）。end 带 dismissal-date，在锁屏上留 2 分钟。
+ * passive，审批已经另有一条带响的通知）。end 带 dismissal-date，在锁屏上留 `linger` 秒，默认 2 分钟。
  * 开活动和变成等批时立刻投，其余的交给系统挑时候。
  */
 export function livePush(
@@ -324,7 +345,8 @@ export function livePush(
   event: "start" | "update" | "end",
   content: LiveContent,
   now: number,
-  lastMode: LiveContent["mode"] | null = null
+  lastMode: LiveContent["mode"] | null = null,
+  linger = LINGER_S
 ): ApnsPush {
   const timestamp = seconds(now);
   const aps: Record<string, unknown> = { timestamp, event, "content-state": content };
@@ -334,7 +356,7 @@ export function livePush(
     aps.alert = { title: "", body: "" };
     aps["interruption-level"] = "passive";
   }
-  if (event === "end") aps["dismissal-date"] = timestamp + LINGER_S;
+  if (event === "end") aps["dismissal-date"] = timestamp + linger;
   const urgent = event === "start" || (content.mode === "approval" && lastMode !== "approval");
   return {
     token: token.token,

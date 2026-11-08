@@ -39,7 +39,7 @@ export type Invite = {
   readonly usedAt: number | null;
 };
 
-/** `left` 是还能生成几个：总名额减去已开的和没用掉的码。 */
+/** `left` 是还能生成几个，见 `#freeSeats`。 */
 export type InviteList = { readonly invites: readonly Invite[]; readonly left: number };
 
 /** Google 认过了、停在邀请码这一步的登录。 */
@@ -100,11 +100,11 @@ export class DirectoryStore {
     return row ? { pupu: String(row.pupu), founder: Number(row.founder) === 1 } : null;
   }
 
-  /** 给一个新账号开 Pupu。名额满了是 null。 */
-  claim(email: string, seats: number, now: number): Home | null {
+  /** 给一个新账号开 Pupu。`code` 是他填的邀请码，码一直替他占着一个名额。名额满了是 null。 */
+  claim(email: string, seats: number, now: number, code?: string): Home | null {
     const known = this.home(email);
     if (known) return known;
-    if (this.seatsTaken() >= seats) return null;
+    if (this.#freeSeats(seats, code) <= 0) return null;
     const pupu = crypto.randomUUID().replaceAll("-", "");
     this.#add(email, pupu, true, now);
     return { pupu, founder: true };
@@ -114,7 +114,7 @@ export class DirectoryStore {
   assign(email: string, pupu: string, seats: number, now: number): Assignment {
     const known = this.home(email);
     if (known) return known.pupu === pupu ? "ok" : "taken";
-    if (pupu !== ROOT_PUPU && this.seatsTaken() >= seats) return "full";
+    if (pupu !== ROOT_PUPU && this.#freeSeats(seats) <= 0) return "full";
     this.#add(email, pupu, false, now);
     return "ok";
   }
@@ -126,11 +126,6 @@ export class DirectoryStore {
 
   knows(pupu: string): boolean {
     return this.#sql.exec("SELECT 1 FROM directory_accounts WHERE pupu = ? LIMIT 1", pupu).toArray().length > 0;
-  }
-
-  seatsTaken(): number {
-    const [row] = this.#sql.exec("SELECT COUNT(*) AS taken FROM directory_accounts WHERE pupu != ?", ROOT_PUPU).toArray();
-    return Number(row?.taken ?? 0);
   }
 
   rememberCode(codeHash: string, pupu: string, expiresAt: number, now: number): void {
@@ -150,9 +145,9 @@ export class DirectoryStore {
     return row ? String(row.pupu) : null;
   }
 
-  /** 没用掉的码也算名额，免得发出去的码到时候开不了。名额发完了是 null。 */
+  /** 名额发完了是 null。 */
   createInvite(seats: number, now: number): string | null {
-    if (this.#invitesLeft(seats) === 0) return null;
+    if (this.#freeSeats(seats) <= 0) return null;
     const code = newPairingCode();
     this.#sql.exec("INSERT INTO directory_invites (code, created_at) VALUES (?, ?)", code, now);
     return code;
@@ -169,7 +164,7 @@ export class DirectoryStore {
         usedBy: row.used_by === null ? null : String(row.used_by),
         usedAt: row.used_at === null ? null : Number(row.used_at)
       })),
-      left: this.#invitesLeft(seats)
+      left: Math.max(0, this.#freeSeats(seats))
     };
   }
 
@@ -216,7 +211,7 @@ export class DirectoryStore {
       return { status: "wrong" };
     }
 
-    const home = this.claim(signIn.email, seats, now);
+    const home = this.claim(signIn.email, seats, now, code);
     if (!home) return { status: "full" };
     this.#sql.exec("UPDATE directory_invites SET used_by = ?, used_at = ? WHERE code = ?", emailKey(signIn.email), now, code);
     this.#dropSignIn(tokenHash);
@@ -231,9 +226,20 @@ export class DirectoryStore {
     return this.#sql.exec("SELECT 1 FROM directory_invites WHERE code = ? AND used_by IS NULL", code).toArray().length > 0;
   }
 
-  #invitesLeft(seats: number): number {
-    const [row] = this.#sql.exec("SELECT COUNT(*) AS unused FROM directory_invites WHERE used_by IS NULL").toArray();
-    return Math.max(0, seats - this.seatsTaken() - Number(row?.unused ?? 0));
+  /**
+   * 空着的名额：总数减去开出去的（第一个 Pupu 的成员不算）和没用掉的邀请码。码一发出去就替拿码的人占着，
+   * 免得到时候开不了。`using` 是正要用掉的那个码，它占的那一个让给用它的人。
+   */
+  #freeSeats(seats: number, using?: string): number {
+    const [row] = this.#sql
+      .exec(
+        `SELECT (SELECT COUNT(*) FROM directory_accounts WHERE pupu != ?)
+              + (SELECT COUNT(*) FROM directory_invites WHERE used_by IS NULL AND code != ?) AS held`,
+        ROOT_PUPU,
+        using ?? ""
+      )
+      .toArray();
+    return seats - Number(row?.held ?? 0);
   }
 
   #add(email: string, pupu: string, founder: boolean, now: number): void {

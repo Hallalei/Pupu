@@ -421,6 +421,8 @@ export class RemoteDesktopHub {
 const STUN: readonly IceServer[] = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
 /** 一次远程会话的上限，TURN 凭证按它签。 */
 const TURN_TTL_SECONDS = 4 * 60 * 60;
+/** 换 TURN 凭证最多等这么久。等的时候租约已经占着，别的手机看到的是「忙」。 */
+export const TURN_FETCH_MS = 5_000;
 
 /**
  * 向 Cloudflare 换短期 TURN 凭证。没配密钥或者换不到就只用 STUN：局域网和大多数家用网络还能连上，
@@ -428,7 +430,8 @@ const TURN_TTL_SECONDS = 4 * 60 * 60;
  */
 export async function iceServersFrom(
   env: { readonly TURN_KEY_ID?: string; readonly TURN_KEY_TOKEN?: string },
-  fetcher: typeof fetch = (input, init) => fetch(input, init)
+  fetcher: typeof fetch = (input, init) => fetch(input, init),
+  timeoutMs = TURN_FETCH_MS
 ): Promise<readonly IceServer[]> {
   const id = env.TURN_KEY_ID?.trim();
   const token = env.TURN_KEY_TOKEN?.trim();
@@ -439,7 +442,8 @@ export async function iceServersFrom(
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ ttl: TURN_TTL_SECONDS })
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+        signal: AbortSignal.timeout(timeoutMs)
       }
     );
     if (!response.ok) throw new Error(`Cloudflare 返回 ${response.status}`);

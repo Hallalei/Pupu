@@ -59,39 +59,10 @@ export function Settings({
   onRemoveMember: (id: string) => Promise<void>;
   onCreatePairingCode: () => Promise<PairingCode>;
 }) {
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const origin = window.location.origin;
   const thisComputer = useDesktopComputer();
   const wide = useWide();
-
-  async function setPolicy(id: string, policy: ComputerPolicy) {
-    setPendingId(id);
-    setError(null);
-    try {
-      await onSetPolicy(id, policy);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPendingId(null);
-    }
-  }
-
   const emails = new Map(members.map((member) => [member.id, member.email]));
-
-  async function revoke(id: string, kind: "computer" | "device" | "member") {
-    setPendingId(id);
-    setError(null);
-    try {
-      await (kind === "computer" ? onRevoke(id) : kind === "device" ? onRevokeDevice(id) : onRemoveMember(id));
-      setConfirmId(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPendingId(null);
-    }
-  }
 
   const body = (
     <>
@@ -102,115 +73,20 @@ export function Settings({
           <p className="m-0 text-subheadline text-muted">还没有授权的电脑。</p>
         ) : (
           computers.map((computer) => (
-            <div
+            <ComputerRow
               key={computer.id}
-              className="flex flex-col gap-2 rounded-row bg-default px-3 py-3"
-            >
-              <div className="flex items-center gap-3">
-                <span
-                  className={`size-2 shrink-0 rounded-full ${
-                    computer.online ? "bg-online" : "bg-offline"
-                  }`}
-                  aria-hidden="true"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-body font-medium">
-                    {computer.name}
-                    {computer.id === thisComputer?.computerId && (
-                      <span className="font-normal text-muted"> · 这台电脑</span>
-                    )}
-                  </div>
-                  <div className="truncate text-subheadline text-muted">
-                    {computerLabel(computer)}
-                    {computer.ownerId && emails.has(computer.ownerId) ? ` · ${emails.get(computer.ownerId)}` : ""}
-                    {computer.screen ? " · 屏幕已授权" : ""}
-                  </div>
-                </div>
-                {confirmId !== computer.id && mayRevoke(actor, computer.ownerId) && (
-                  <button
-                    type="button"
-                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
-                    onClick={() => {
-                      setError(null);
-                      setConfirmId(computer.id);
-                    }}
-                  >
-                    吊销
-                  </button>
-                )}
-              </div>
-              <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col">
-                {POLICIES.map(([policy, label, hint]) => {
-                  const selected = computer.policy === policy;
-                  const locked = !mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
-                  return (
-                    <button
-                      key={policy}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={pendingId === computer.id || locked}
-                      onClick={() => {
-                        if (!selected) void setPolicy(computer.id, policy);
-                      }}
-                      className={`flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 ${
-                        locked ? "opacity-60" : ""
-                      }`}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-subheadline font-medium">
-                          {label}
-                          {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
-                        </span>
-                        {selected && <span className="block text-caption text-muted">{hint}</span>}
-                      </span>
-                      {selected && <CheckIcon className="shrink-0 text-[14px]" />}
-                    </button>
-                  );
-                })}
-              </div>
-              {confirmId === computer.id && (
-                <div className="flex flex-col gap-2">
-                  <p className="m-0 text-subheadline text-muted">
-                    吊销后「{computer.name}」会断开。要再用，就在那台电脑上重新配对。
-                  </p>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="tertiary"
-                      onPress={() => setConfirmId(null)}
-                    >
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      isPending={pendingId === computer.id}
-                      onPress={() => void revoke(computer.id, "computer")}
-                    >
-                      吊销
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+              computer={computer}
+              here={computer.id === thisComputer?.computerId}
+              owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
+              actor={actor}
+              onRevoke={() => onRevoke(computer.id)}
+              onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
+            />
           ))
         )}
-        {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </section>
 
-      <Members
-        members={members}
-        actor={actor}
-        confirmId={confirmId}
-        pendingId={pendingId}
-        onConfirm={(id) => {
-          setError(null);
-          setConfirmId(id);
-        }}
-        onRemove={(id) => void revoke(id, "member")}
-        onInvite={onInviteMember}
-      />
+      <Members members={members} actor={actor} onRemove={onRemoveMember} onInvite={onInviteMember} />
 
       {mayManageInvites(actor) && <Invites isOpen={isOpen} />}
 
@@ -220,60 +96,7 @@ export function Settings({
           <p className="m-0 text-subheadline text-muted">还没有配对的手机、浏览器或电脑 App。</p>
         ) : (
           devices.map((device) => (
-            <div
-              key={device.id}
-              className="flex flex-col gap-2 rounded-row bg-default px-3 py-3"
-            >
-              <div className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-body font-medium">
-                    {device.name}
-                    {device.current && (
-                      <span className="font-normal text-muted">
-                        {device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="truncate text-subheadline text-muted">{deviceLabel(device)}</div>
-                </div>
-                {confirmId !== device.id && mayRevoke(actor, device.memberId) && (
-                  <button
-                    type="button"
-                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
-                    onClick={() => {
-                      setError(null);
-                      setConfirmId(device.id);
-                    }}
-                  >
-                    吊销
-                  </button>
-                )}
-              </div>
-              {confirmId === device.id && (
-                <div className="flex flex-col gap-2">
-                  <p className="m-0 text-subheadline text-muted">
-                    {device.current
-                      ? device.kind === "desktop"
-                        ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
-                        : "吊销后这个浏览器马上退出，要再用就重新配对。"
-                      : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`}
-                  </p>
-                  <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="tertiary" onPress={() => setConfirmId(null)}>
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      isPending={pendingId === device.id}
-                      onPress={() => void revoke(device.id, "device")}
-                    >
-                      吊销
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <DeviceRow key={device.id} device={device} actor={actor} onRevoke={() => onRevokeDevice(device.id)} />
           ))
         )}
       </section>
@@ -334,6 +157,256 @@ function useWide(): boolean {
   );
 }
 
+/**
+ * 一行上的操作。吊销、移除先展开确认；改分级直接发。在发的时候这一行的按钮都等着，
+ * 没成的原因写在这一行下面，下一次操作时清掉。每行各管各的，别的行照常能点。
+ */
+type RowAction = {
+  readonly confirming: boolean;
+  readonly request: { readonly status: "idle" | "sending" } | { readonly status: "failed"; readonly error: string };
+};
+
+const IDLE_ROW: RowAction = { confirming: false, request: { status: "idle" } };
+
+function useRowAction() {
+  const [action, setAction] = useState<RowAction>(IDLE_ROW);
+  async function run(work: () => Promise<void>) {
+    setAction((current) => ({ ...current, request: { status: "sending" } }));
+    try {
+      await work();
+      setAction(IDLE_ROW);
+    } catch (cause) {
+      const error = cause instanceof Error ? cause.message : String(cause);
+      setAction((current) => ({ ...current, request: { status: "failed", error } }));
+    }
+  }
+  return {
+    confirming: action.confirming,
+    sending: action.request.status === "sending",
+    error: action.request.status === "failed" ? action.request.error : null,
+    confirm: () => setAction({ confirming: true, request: { status: "idle" } }),
+    cancel: () => setAction(IDLE_ROW),
+    run
+  };
+}
+
+/** 吊销、移除前的那一句确认，和两个按钮。 */
+function ConfirmPanel({
+  text,
+  label,
+  sending,
+  onCancel,
+  onConfirm
+}: {
+  text: string;
+  label: string;
+  sending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="m-0 text-subheadline text-muted">{text}</p>
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="tertiary" onPress={onCancel}>
+          取消
+        </Button>
+        <Button size="sm" variant="danger" isPending={sending} onPress={onConfirm}>
+          {label}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RowError({ error }: { error: string | null }) {
+  return error ? <p className="m-0 text-subheadline text-danger-ink">{error}</p> : null;
+}
+
+function ComputerRow({
+  computer,
+  here,
+  owner,
+  actor,
+  onRevoke,
+  onSetPolicy
+}: {
+  computer: ComputerView;
+  /** 就是打开设置的这台电脑 App。 */
+  here: boolean;
+  /** 主人的邮箱。 */
+  owner: string | null;
+  actor: Actor | null | undefined;
+  onRevoke: () => Promise<void>;
+  onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
+}) {
+  const row = useRowAction();
+  return (
+    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
+      <div className="flex items-center gap-3">
+        <span
+          className={`size-2 shrink-0 rounded-full ${computer.online ? "bg-online" : "bg-offline"}`}
+          aria-hidden="true"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-body font-medium">
+            {computer.name}
+            {here && <span className="font-normal text-muted"> · 这台电脑</span>}
+          </div>
+          <div className="truncate text-subheadline text-muted">
+            {computerLabel(computer)}
+            {owner ? ` · ${owner}` : ""}
+            {computer.screen ? " · 屏幕已授权" : ""}
+          </div>
+        </div>
+        {!row.confirming && mayRevoke(actor, computer.ownerId) && (
+          <button
+            type="button"
+            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+            onClick={row.confirm}
+          >
+            吊销
+          </button>
+        )}
+      </div>
+      <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col">
+        {POLICIES.map(([policy, label, hint]) => {
+          const selected = computer.policy === policy;
+          const locked = !mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
+          return (
+            <button
+              key={policy}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={row.sending || locked}
+              onClick={() => {
+                if (!selected) void row.run(() => onSetPolicy(policy));
+              }}
+              className={`flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 ${
+                locked ? "opacity-60" : ""
+              }`}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-subheadline font-medium">
+                  {label}
+                  {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
+                </span>
+                {selected && <span className="block text-caption text-muted">{hint}</span>}
+              </span>
+              {selected && <CheckIcon className="shrink-0 text-[14px]" />}
+            </button>
+          );
+        })}
+      </div>
+      {row.confirming && (
+        <ConfirmPanel
+          text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
+          label="吊销"
+          sending={row.sending}
+          onCancel={row.cancel}
+          onConfirm={() => void row.run(onRevoke)}
+        />
+      )}
+      <RowError error={row.error} />
+    </div>
+  );
+}
+
+function DeviceRow({
+  device,
+  actor,
+  onRevoke
+}: {
+  device: DeviceView;
+  actor: Actor | null | undefined;
+  onRevoke: () => Promise<void>;
+}) {
+  const row = useRowAction();
+  return (
+    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-body font-medium">
+            {device.name}
+            {device.current && (
+              <span className="font-normal text-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
+            )}
+          </div>
+          <div className="truncate text-subheadline text-muted">{deviceLabel(device)}</div>
+        </div>
+        {!row.confirming && mayRevoke(actor, device.memberId) && (
+          <button
+            type="button"
+            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+            onClick={row.confirm}
+          >
+            吊销
+          </button>
+        )}
+      </div>
+      {row.confirming && (
+        <ConfirmPanel
+          text={
+            device.current
+              ? device.kind === "desktop"
+                ? "吊销后这个窗口马上退出，要再用就在 App 里重新配对。"
+                : "吊销后这个浏览器马上退出，要再用就重新配对。"
+              : `吊销后「${device.name}」马上断开。要再用，就在那台设备上重新配对。`
+          }
+          label="吊销"
+          sending={row.sending}
+          onCancel={row.cancel}
+          onConfirm={() => void row.run(onRevoke)}
+        />
+      )}
+      <RowError error={row.error} />
+    </div>
+  );
+}
+
+function MemberRow({
+  member,
+  actor,
+  onRemove
+}: {
+  member: MemberView;
+  actor: Actor | null | undefined;
+  onRemove: () => Promise<void>;
+}) {
+  const row = useRowAction();
+  return (
+    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-body font-medium">
+            {member.email}
+            {member.current && <span className="font-normal text-muted"> · 你</span>}
+          </div>
+          <div className="text-subheadline text-muted">
+            {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
+          </div>
+        </div>
+        {!row.confirming && mayRemoveMember(actor, member) && (
+          <button type="button" className="shrink-0 text-subheadline text-danger-ink hover:opacity-75" onClick={row.confirm}>
+            移除
+          </button>
+        )}
+      </div>
+      {row.confirming && (
+        <ConfirmPanel
+          text={`移除后 ${member.email} 不能再登录，他名下的手机、浏览器、电脑 App 和电脑马上断开。`}
+          label="移除"
+          sending={row.sending}
+          onCancel={row.cancel}
+          onConfirm={() => void row.run(onRemove)}
+        />
+      )}
+      <RowError error={row.error} />
+    </div>
+  );
+}
+
 const DEVICE_KINDS: Record<DeviceView["kind"], string> = { phone: "手机", browser: "浏览器", desktop: "电脑 App" };
 
 /**
@@ -343,18 +416,12 @@ const DEVICE_KINDS: Record<DeviceView["kind"], string> = { phone: "手机", brow
 function Members({
   members,
   actor,
-  confirmId,
-  pendingId,
-  onConfirm,
   onRemove,
   onInvite
 }: {
   members: readonly MemberView[];
   actor: Actor | null | undefined;
-  confirmId: string | null;
-  pendingId: string | null;
-  onConfirm: (id: string | null) => void;
-  onRemove: (id: string) => void;
+  onRemove: (id: string) => Promise<void>;
   onInvite: (email: string) => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
@@ -379,39 +446,7 @@ function Members({
     <section className="flex flex-col gap-2">
       <h3 className="m-0 px-1 text-footnote text-muted">成员</h3>
       {members.map((member) => (
-        <div key={member.id} className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
-          <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-body font-medium">
-                {member.email}
-                {member.current && <span className="font-normal text-muted"> · 你</span>}
-              </div>
-              <div className="text-subheadline text-muted">
-                {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
-              </div>
-            </div>
-            {confirmId !== member.id && mayRemoveMember(actor, member) && (
-              <button type="button" className="shrink-0 text-subheadline text-danger-ink hover:opacity-75" onClick={() => onConfirm(member.id)}>
-                移除
-              </button>
-            )}
-          </div>
-          {confirmId === member.id && (
-            <div className="flex flex-col gap-2">
-              <p className="m-0 text-subheadline text-muted">
-                移除后 {member.email} 不能再登录，他名下的手机、浏览器、电脑 App 和电脑马上断开。
-              </p>
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="tertiary" onPress={() => onConfirm(null)}>
-                  取消
-                </Button>
-                <Button size="sm" variant="danger" isPending={pendingId === member.id} onPress={() => onRemove(member.id)}>
-                  移除
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
+        <MemberRow key={member.id} member={member} actor={actor} onRemove={() => onRemove(member.id)} />
       ))}
       {mayInvite(actor) ? (
         <form

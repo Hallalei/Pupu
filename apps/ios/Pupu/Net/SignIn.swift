@@ -74,7 +74,26 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
         ]
         guard let url = components.url else { throw APIError(message: "地址不对。") }
 
-        let callback: URL = try await withCheckedThrowingContinuation { continuation in
+        // 等登录的那一路被取消（比如连接页没了）：系统登录页跟着关掉。
+        let callback: URL = try await withTaskCancellationHandler {
+            try await present(url)
+        } onCancel: {
+            Task { @MainActor in self.cancel() }
+        }
+        session = nil
+
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let error = items.first(where: { $0.name == "error" })?.value {
+            throw APIError(message: error)
+        }
+        guard callback.host() == "auth", let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
+            throw APIError(message: "登录没有结果，再试一次。")
+        }
+        return code
+    }
+
+    private func present(_ url: URL) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(url: url, callback: .customScheme("pupu")) { url, error in
                 if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
                     continuation.resume(throwing: CancellationError())
@@ -94,16 +113,6 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
                 continuation.resume(throwing: APIError(message: "登录页打不开，再试一次。"))
             }
         }
-        session = nil
-
-        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        if let error = items.first(where: { $0.name == "error" })?.value {
-            throw APIError(message: error)
-        }
-        guard callback.host() == "auth", let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
-            throw APIError(message: "登录没有结果，再试一次。")
-        }
-        return code
     }
 
     /// 连账号：打开 open-connector 给的授权页，等 Pupu 跳回 `pupu://connector`，返回给人看的那句结果。

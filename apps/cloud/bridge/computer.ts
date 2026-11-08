@@ -127,36 +127,43 @@ export function toolCall(action: ComputerAction): ToolCall {
 
 const KEY_NAMES: Readonly<Record<string, string>> = { enter: "return", esc: "escape", command: "cmd", control: "ctrl", opt: "option" };
 
+/**
+ * 做一步屏幕动作。`begin` 在真正点下去之前问一句，云端已经取消了就不做，返回 false。
+ * 看窗口、查权限没有副作用，不问。
+ */
 export async function performComputer(
   requestId: string,
   action: ComputerAction,
   host: ActionHost,
+  begin: () => boolean = () => true,
   use: Driver | Promise<Driver> = driver()
-): Promise<void> {
+): Promise<boolean> {
   const cua = await use;
   if (action.op === "permissions") {
     host.send({ type: "data", requestId, ...textFrame(await permissionText(cua)) });
-    return;
+    return true;
   }
   if (action.op === "windows") {
     const listed = await windows(cua, action.app ? { app: action.app } : {});
     host.send({ type: "data", requestId, ...textFrame(windowList(listed)) });
-    return;
+    return true;
   }
   if (action.op === "look") {
     const window = action.pid !== undefined && action.windowId !== undefined ? (action as Window) : await pickWindow(cua, action.pid);
     await sendLook(requestId, host, cua, window, action.query);
-    return;
+    return true;
   }
   await yieldToHuman();
   await refuseSystemPrompt(cua, action.pid);
   if (action.foreground) await refuseWhileUserActive();
   const { name, args } = toolCall(action);
+  if (!begin()) return false;
   const result = await checked(cua, name, args);
   if (action.foreground) foregroundAt = Date.now();
   const window = action.op === "open" ? openedWindow(result) : (action as Window);
   if (window) await sendLook(requestId, host, cua, window, undefined, result.text);
   else host.send({ type: "data", requestId, ...textFrame(result.text) });
+  return true;
 }
 
 /** 被拒绝的动作都带着原因和下一步怎么办，原样交给模型。权限不够时换成用户看得懂、知道去哪开的话。 */

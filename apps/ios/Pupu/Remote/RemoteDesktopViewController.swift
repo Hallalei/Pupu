@@ -5,6 +5,7 @@ import WebRTC
 /// 远程桌面的全屏页。排法照 Cindy 的 Mobile viewer（docs/remote-desktop.md，Apache-2.0）：
 /// 四个工具「所有窗口、桌面、键盘、控制」，竖屏在底部，横屏在侧边；竖屏左上角有返回；
 /// 控制面板盖在画面上，不改画面大小；切到后台放掉租约，回来自动连回去。
+/// 连到哪了、结束没有、能不能操作，都在 DesktopSession 里；结束了的会话回到前台也不会再连。
 final class RemoteDesktopViewController: UIViewController {
     /// 打开时才允许横屏，见 AppDelegate。
     static var isOpen = false
@@ -21,11 +22,9 @@ final class RemoteDesktopViewController: UIViewController {
     private let backButton = UIButton(configuration: .glass())
     private let tools = UIStackView()
     private let keyboard = DesktopKeyboardField()
-    private var viewOnly = false
     private var track: RTCVideoTrack?
     private var latency: Int?
     private var observers: [NSObjectProtocol] = []
-    private var closing = false
 
     init(computer: Computer, endpoint: Endpoint) {
         self.computer = computer
@@ -69,15 +68,12 @@ final class RemoteDesktopViewController: UIViewController {
         observers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.session.stop() }
+            MainActor.assumeIsolated { self?.session.pause() }
         })
         observers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, !self.closing else { return }
-                self.session.start()
-            }
+            MainActor.assumeIsolated { self?.session.start() }
         })
         observers.append(NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
@@ -102,10 +98,10 @@ final class RemoteDesktopViewController: UIViewController {
         view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
     }
 
-    deinit {
-        MainActor.assumeIsolated {
-            for observer in observers { NotificationCenter.default.removeObserver(observer) }
-        }
+    /// 不管从哪条路离开（返回、断开、换了身份被收起），页面没了会话就结束。
+    isolated deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        session.end()
     }
 
     override func viewDidLayoutSubviews() {
@@ -219,13 +215,16 @@ final class RemoteDesktopViewController: UIViewController {
             self.stage.desktopSize = image.size
         }
         session.onBusy = { [weak self] by in self?.confirmTakeover(by) }
-        session.onControl = { [weak self] on, message in
-            guard let self else { return }
-            self.stage.control = on && !self.viewOnly
-            if let message { self.setBadge(message) }
-        }
+        session.onControl = { [weak self] control in self?.apply(control) }
         session.onLatency = { [weak self] value in self?.latency = value }
         session.onEnded = { [weak self] message in self?.ended(message) }
+        render(session.state)
+        apply(session.control)
+    }
+
+    private func apply(_ control: DesktopSession.Control) {
+        stage.control = control == .on
+        if case .refused(let reason?) = control { setBadge(reason) }
     }
 
     private func render(_ state: DesktopSession.State) {
@@ -241,13 +240,13 @@ final class RemoteDesktopViewController: UIViewController {
         let alert = UIAlertController(title: "\(by)正在看这台电脑", message: "接管以后对方会断开。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in self?.close() })
         alert.addAction(UIAlertAction(title: "接管", style: .default) { [weak self] _ in
-            self?.session.start(takeover: true)
+            self?.session.takeOver()
         })
         present(alert, animated: true)
     }
 
+    /// 电脑或云端结束了。会话已经停在结束，切到后台再回来也不会在弹窗背后连回去。
     private func ended(_ message: String) {
-        guard !closing else { return }
         let alert = UIAlertController(title: "远程桌面断开了", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "好", style: .default) { [weak self] _ in self?.close() })
         presentedViewController?.dismiss(animated: false)
@@ -255,8 +254,7 @@ final class RemoteDesktopViewController: UIViewController {
     }
 
     private func close() {
-        closing = true
-        session.stop()
+        session.end()
         track?.remove(video)
         dismiss(animated: true)
     }
@@ -284,7 +282,7 @@ final class RemoteDesktopViewController: UIViewController {
         let controls = DesktopControlsViewController(
             mode: stage.mode,
             quality: session.quality,
-            viewOnly: viewOnly,
+            viewOnly: session.control == .viewOnly,
             latency: latency
         )
         controls.onMode = { [weak self] mode in
@@ -295,12 +293,7 @@ final class RemoteDesktopViewController: UIViewController {
             self?.session.setQuality(quality)
             UserDefaults.standard.set(quality.rawValue, forKey: Self.qualityKey)
         }
-        controls.onViewOnly = { [weak self] on in
-            guard let self else { return }
-            self.viewOnly = on
-            self.stage.control = !on
-            self.session.setControl(!on)
-        }
+        controls.onViewOnly = { [weak self] on in self?.session.setViewOnly(on) }
         controls.onReset = { [weak self] in self?.stage.resetView() }
         controls.onRightClick = { [weak self] in self?.stage.rightClick() }
         controls.onDisconnect = { [weak self] in

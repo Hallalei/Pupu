@@ -73,7 +73,7 @@ test("看窗口要 JPEG 和控件，一起发回去", async () => {
     })
   });
   const { frames, host: sink } = host();
-  await performComputer("r1", computer({ op: "look", ...on }), sink, driver);
+  await performComputer("r1", computer({ op: "look", ...on }), sink, undefined, driver);
   assert.equal(calls[0]?.args.screenshot_format, "jpeg");
   const frame = frames[0];
   assert.equal(frame?.type, "picture");
@@ -94,7 +94,7 @@ test("不填 pid 就看当前桌面空间最前面的普通窗口", async () => 
     }),
     check_permissions: granted
   });
-  await performComputer("r1", computer({ op: "look" }), host().host, driver);
+  await performComputer("r1", computer({ op: "look" }), host().host, undefined, driver);
   assert.deepEqual(calls[0], { name: "list_windows", args: { on_screen_only: true } });
   assert.equal(calls[1]?.args.pid, 2);
   assert.equal(calls[1]?.args.window_id, 22);
@@ -113,7 +113,7 @@ test("只给 pid 就看这个进程最大的可见窗口，不跑到别的应用
     }),
     check_permissions: granted
   });
-  await performComputer("r1", computer({ op: "look", pid: 5 }), host().host, driver);
+  await performComputer("r1", computer({ op: "look", pid: 5 }), host().host, undefined, driver);
   assert.deepEqual(calls[0], { name: "list_windows", args: { pid: 5 } });
   assert.equal(calls[1]?.args.window_id, 3);
 });
@@ -133,7 +133,7 @@ test("窗口列表去掉系统噪音，前面的排在前面，标出别的桌�
     })
   });
   const { frames, host: sink } = host();
-  await performComputer("r1", computer({ op: "windows" }), sink, driver);
+  await performComputer("r1", computer({ op: "windows" }), sink, undefined, driver);
   const frame = frames[0];
   assert.ok(frame?.type === "data");
   assert.deepEqual(frame.text?.split("\n"), [
@@ -147,7 +147,7 @@ test("系统的授权和密码窗口只留给用户，看得到但点不了", as
     list_windows: result({ structuredJson: JSON.stringify({ windows: [{ pid: 1835, window_id: 1, app_name: "universalAccessAuthWarn" }] }) })
   });
   await assert.rejects(
-    performComputer("r1", computer({ op: "click", pid: 1835, windowId: 1, element: "s1:1" }), host().host, driver),
+    performComputer("r1", computer({ op: "click", pid: 1835, windowId: 1, element: "s1:1" }), host().host, undefined, driver),
     /只能用户自己处理/
   );
   assert.equal(calls.some((call) => call.name === "click"), false);
@@ -159,7 +159,7 @@ test("没有屏幕录制权限时控件照常给，并说明去哪开", async ()
     check_permissions: result({ structuredJson: JSON.stringify({ accessibility: true, screen_recording: false }) })
   });
   const { frames, host: sink } = host();
-  await performComputer("r1", computer({ op: "look", ...on }), sink, driver);
+  await performComputer("r1", computer({ op: "look", ...on }), sink, undefined, driver);
   const frame = frames[0];
   assert.ok(frame?.type === "data" && frame.text?.includes("AXButton") && frame.text.includes("屏幕录制"));
 });
@@ -167,7 +167,7 @@ test("没有屏幕录制权限时控件照常给，并说明去哪开", async ()
 test("做完一步马上再看一眼同一个窗口，模型拿到新编号", async () => {
   const { calls, driver } = fake({ click: result({ text: "已点" }), check_permissions: granted });
   const { frames, host: sink } = host();
-  await performComputer("r1", computer({ op: "click", ...on, element: "s1:3" }), sink, driver);
+  await performComputer("r1", computer({ op: "click", ...on, element: "s1:3" }), sink, undefined, driver);
   assert.deepEqual(calls.map((call) => call.name).slice(0, 3), ["list_windows", "click", "get_window_state"]);
   const frame = frames[0];
   assert.ok(frame?.type === "data" && frame.text?.startsWith("已点"));
@@ -178,7 +178,7 @@ test("驱动拒绝时不再看窗口，把原因交给模型", async () => {
     type_text: result({ text: "window_not_key", structuredJson: JSON.stringify({ effect: "refused" }) }),
     check_permissions: granted
   });
-  await assert.rejects(performComputer("r1", computer({ op: "type", ...on, text: "x" }), host().host, driver), /window_not_key/);
+  await assert.rejects(performComputer("r1", computer({ op: "type", ...on, text: "x" }), host().host, undefined, driver), /window_not_key/);
   assert.equal(calls.some((call) => call.name === "get_window_state"), false);
 });
 
@@ -187,7 +187,7 @@ test("没有辅助功能权限时说清楚去哪开、开给谁", async () => {
     click: result({ isError: true, text: "AX denied" }),
     check_permissions: result({ structuredJson: JSON.stringify({ accessibility: false, screen_recording: true }) })
   });
-  await assert.rejects(performComputer("r1", computer({ op: "click", ...on, x: 1, y: 2 }), host().host, driver), /辅助功能/);
+  await assert.rejects(performComputer("r1", computer({ op: "click", ...on, x: 1, y: 2 }), host().host, undefined, driver), /辅助功能/);
 });
 
 test("权限记在外层应用名下，不是里面的 Helper", () => {

@@ -3,7 +3,8 @@ import test, { describe } from "node:test";
 import type { ApprovalRow } from "../src/bridge/approvals.ts";
 import { Apns, PROVIDER_TOKEN_MS, apnsKeyFrom, signProviderToken, type ApnsPush, type ApnsResult } from "../src/push/apns.ts";
 import { APPROVAL_CATEGORY, ApprovalPusher } from "../src/push/approvals.ts";
-import type { ApprovalPushState, PushDirectory, PushTokenRow, PushTokenType } from "../src/push/store.ts";
+import { PushStore } from "../src/push/store.ts";
+import { sqlStorage } from "./sql-memory.ts";
 
 async function newKey(): Promise<{ pem: string; publicKey: CryptoKey }> {
   const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
@@ -159,50 +160,6 @@ describe("Apns", () => {
   });
 });
 
-class MemoryPush implements PushDirectory {
-  rows: PushTokenRow[] = [];
-  readonly states = new Map<string, { state: ApprovalPushState; at: number }>();
-
-  tokens(type: PushTokenType) {
-    return this.rows.filter((row) => row.type === type);
-  }
-
-  save(input: { deviceId: string; token: string; type: PushTokenType; env: "sandbox" | "production" }, now: number) {
-    this.rows = this.rows.filter(
-      (row) => !(row.type === input.type && (row.token === input.token || row.deviceId === input.deviceId))
-    );
-    this.rows.push({ ...input, createdAt: now, lastSeen: now });
-  }
-
-  remove(token: string) {
-    this.rows = this.rows.filter((row) => row.token !== token);
-  }
-
-  removeOwn(deviceId: string, token: string) {
-    this.rows = this.rows.filter((row) => !(row.deviceId === deviceId && row.token === token));
-  }
-
-  removeDevice(deviceId: string) {
-    this.rows = this.rows.filter((row) => row.deviceId !== deviceId);
-  }
-
-  approvalState(id: string) {
-    return this.states.get(id)?.state;
-  }
-
-  markApproval(id: string, state: ApprovalPushState, now: number) {
-    this.states.set(id, { state, at: now });
-  }
-
-  sentApprovals() {
-    return [...this.states].filter(([, value]) => value.state === "sent").map(([id]) => id);
-  }
-
-  pruneApprovals(before: number) {
-    for (const [id, value] of this.states) if (value.at < before) this.states.delete(id);
-  }
-}
-
 function approval(id: string, patch: Partial<ApprovalRow> = {}): ApprovalRow {
   return {
     id,
@@ -226,7 +183,7 @@ function approval(id: string, patch: Partial<ApprovalRow> = {}): ApprovalRow {
 function pusherSetup(options: { configured?: boolean; answer?: (push: ApnsPush) => ApnsResult } = {}) {
   let now = 2_000;
   let rows: ApprovalRow[] = [];
-  const store = new MemoryPush();
+  const store = new PushStore(sqlStorage());
   const sent: ApnsPush[] = [];
   const sender = {
     send: async (push: ApnsPush) => {
@@ -350,6 +307,39 @@ describe("ApprovalPusher", () => {
     off.set([approval("a1")]);
     await off.pusher.sync();
     assert.equal(off.sent.length, 0);
-    assert.equal(off.store.approvalState("a1"), undefined);
+    assert.equal(off.store.deliveries("a1").size, 0);
+  });
+
+  test("审批出来以后才登记推送的手机，下一轮对账也收到，只推它一台", async () => {
+    const { pusher, store, sent, set } = pusherSetup();
+    set([approval("a1")]);
+    await pusher.sync();
+    sent.length = 0;
+    store.save({ deviceId: "phone-c", token: "cc".repeat(32), type: "alert", env: "production" }, 3_000);
+    await pusher.sync();
+    assert.deepEqual(sent.map((push) => push.token), ["cc".repeat(32)]);
+    sent.length = 0;
+    await pusher.sync();
+    assert.equal(sent.length, 0);
+  });
+
+  test("「已处理」只推给收到过按钮的手机", async () => {
+    const { pusher, store, sent, set } = pusherSetup();
+    set([approval("a1")]);
+    await pusher.sync();
+    sent.length = 0;
+    store.save({ deviceId: "phone-c", token: "cc".repeat(32), type: "alert", env: "production" }, 3_000);
+    set([approval("a1", { status: "allowed", decidedAt: 3_000 })]);
+    await pusher.sync();
+    assert.deepEqual(sent.map((push) => push.token).sort(), ["aa".repeat(32), "bb".repeat(32)]);
+  });
+
+  test("手机吊销了，推送记录跟着删掉", async () => {
+    const { pusher, store, set } = pusherSetup();
+    set([approval("a1")]);
+    await pusher.sync();
+    store.removeDevice("phone-a");
+    assert.deepEqual([...store.deliveries("a1").keys()], ["phone-b"]);
+    assert.deepEqual(store.tokens("alert").map((row) => row.deviceId), ["phone-b"]);
   });
 });

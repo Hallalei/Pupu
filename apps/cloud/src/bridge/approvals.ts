@@ -8,7 +8,8 @@
  * sign_in：新手机用 Google 登录，等已有手机点允许，不在这张表里，见 src/auth/sign-ins.ts。
  */
 export type ApprovalKind = "step" | "screen" | "sign_in";
-export type ApprovalStatus = "pending" | "allowed" | "denied" | "expired";
+/** expired：10 分钟没人处理。aborted：还在等的时候这一轮停下了。 */
+export type ApprovalStatus = "pending" | "allowed" | "denied" | "expired" | "aborted";
 
 export type ApprovalRow = {
   readonly id: string;
@@ -34,6 +35,8 @@ export type ApprovalRow = {
 /** 网页上的审批卡片。 */
 export type ApprovalView = {
   readonly id: string;
+  /** 等批的那次工具调用，对话里那一步靠它显示「等你批准」。新手机登录没有。 */
+  readonly callId?: string;
   readonly computerId: string;
   readonly computerName: string;
   readonly kind: ApprovalKind;
@@ -73,7 +76,7 @@ function toRow(row: Row): ApprovalRow {
     detail: String(row.detail),
     reason: row.reason === null ? null : String(row.reason),
     status:
-      status === "allowed" || status === "denied" || status === "expired" ? status : "pending",
+      status === "allowed" || status === "denied" || status === "expired" || status === "aborted" ? status : "pending",
     note: row.note === null ? null : String(row.note),
     createdAt: Number(row.created_at),
     expiresAt: Number(row.expires_at),

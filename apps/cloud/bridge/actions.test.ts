@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { controlJob, perform, type ActionHost } from "./actions.ts";
+import { cancelCall, perform, reconcileRequests, stopCommands, type ActionHost } from "./actions.ts";
 import type { UpFrame } from "../src/bridge/protocol.ts";
 
 process.env.SHELL = "/bin/sh";
@@ -104,7 +104,7 @@ test("后台命令不往连接上送输出，取消会停掉进程", async (t) =
   t.after(() => rm(root, { recursive: true, force: true }));
   const frames: UpFrame[] = [];
   const host = hostIn(root, frames);
-  t.after(() => controlJob("bg-1", "kill"));
+  t.after(() => cancelCall("bg-1"));
   await perform("bg-1", { kind: "run", command: "echo background-out && sleep 30", background: true }, host);
   const started = frames.find((frame) => frame.type === "started");
   assert.equal(started?.type, "started");
@@ -114,7 +114,7 @@ test("后台命令不往连接上送输出，取消会停掉进程", async (t) =
     async () => (await readFile(started.outputPath, "utf8")).includes("\nbackground-out"),
     "background output"
   );
-  controlJob("bg-1", "kill");
+  cancelCall("bg-1");
   await waitFor(async () => (await readFile(started.outputPath, "utf8")).includes("--- exit"), "killed");
   assert.equal(frames.some((frame) => frame.type === "exit"), false);
 });
@@ -124,7 +124,7 @@ test("能往还在跑的命令写标准输入", async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const frames: UpFrame[] = [];
   const host = hostIn(root, frames);
-  t.after(() => controlJob("cat-1", "kill"));
+  t.after(() => cancelCall("cat-1"));
   await perform("cat-1", { kind: "run", command: "cat", background: true }, host);
   const started = frames.find((frame) => frame.type === "started");
   assert.equal(started?.type, "started");
@@ -152,4 +152,78 @@ test("二进制文件不按文本读", async (t) => {
     assert.equal(frame.binary, true);
     assert.equal(frame.text, undefined);
   }
+});
+
+test("动手之前取消的命令不跑，回 cancelled，再送来也照这样回", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const action = { kind: "run", command: "touch marker", background: false } as const;
+  const frames: UpFrame[] = [];
+  const pending = perform("early-run", action, hostIn(root, frames));
+  cancelCall("early-run");
+  await pending;
+  assert.deepEqual(frames.map((frame) => frame.type), ["cancelled"]);
+  await assert.rejects(access(path.join(root, "marker")));
+
+  const again: UpFrame[] = [];
+  await perform("early-run", action, hostIn(root, again));
+  assert.deepEqual(again.map((frame) => frame.type), ["cancelled"]);
+  await assert.rejects(access(path.join(root, "marker")));
+});
+
+test("动手之前取消的写文件不写", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const frames: UpFrame[] = [];
+  const pending = perform("early-write", { kind: "write", path: "b.txt", content: "x" }, hostIn(root, frames));
+  cancelCall("early-write");
+  await pending;
+  assert.deepEqual(frames.map((frame) => frame.type), ["cancelled"]);
+  await assert.rejects(access(path.join(root, "b.txt")));
+});
+
+test("菜单栏停掉的前台命令，退出那一帧说是用户停的", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const frames: UpFrame[] = [];
+  await perform("menubar-stop", { kind: "run", command: "sleep 30", background: false }, hostIn(root, frames));
+  assert.equal(frames[0]?.type, "started");
+  stopCommands();
+  await waitFor(() => frames.some((frame) => frame.type === "exit"), "exit");
+  const exit = frames.find((frame) => frame.type === "exit");
+  assert.equal(exit?.type === "exit" ? exit.stopped : undefined, "user");
+});
+
+test("云端取消在跑的前台命令，退出那一帧说是云端停的", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const frames: UpFrame[] = [];
+  await perform("cloud-stop", { kind: "run", command: "sleep 30", background: false }, hostIn(root, frames));
+  cancelCall("cloud-stop");
+  await waitFor(() => frames.some((frame) => frame.type === "exit"), "exit");
+  const exit = frames.find((frame) => frame.type === "exit");
+  assert.equal(exit?.type === "exit" ? exit.stopped : undefined, "cloud");
+});
+
+test("桥上次做到一半退出了，重放时说不知道做完没有，不再做一遍", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const requests = path.join(root, "requests");
+  await mkdir(requests, { recursive: true });
+  const outputPath = path.join(root, "terminals", "crashed.log");
+  await writeFile(
+    path.join(requests, "crashed.json"),
+    JSON.stringify({ status: "running", kind: "run", commandId: "crashed", outputPath })
+  );
+  await reconcileRequests(requests);
+  const frames: UpFrame[] = [];
+  await perform("crashed", { kind: "run", command: "touch marker", background: false }, hostIn(root, frames));
+  assert.equal(frames.length, 1);
+  const frame = frames[0];
+  assert.equal(frame?.type, "error");
+  if (frame?.type === "error") {
+    assert.match(frame.message, /桥退出了/);
+    assert.ok(frame.message.includes(outputPath));
+  }
+  await assert.rejects(access(path.join(root, "marker")));
 });
