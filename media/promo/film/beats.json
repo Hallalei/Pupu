@@ -1,0 +1,9 @@
+{
+  "fps": 30,
+  "duration": 54,
+  "questions": { "first": 0.7, "spread": 2.4, "title": 9.9, "rise": 12.3, "breach": 15.9 },
+  "reveal": { "dots": 16.6, "text": 18.0, "leave": 20.3 },
+  "relay": { "start": 21, "lift": 23.3, "enter": 27.4, "exit": 29.9, "land": 32.2, "end": 35 },
+  "flow": { "start": 35.2, "write": 39.0, "sun": 44.0 },
+  "end": { "line": 46.0, "logo": 49.6 }
+}

@@ -126,33 +126,30 @@ function setupScene(scene: HTMLElement): void {
   );
 }
 
-function setupApprove(root: HTMLElement): void {
-  const island = root.querySelector<HTMLElement>("[data-island]");
-  const badge = root.querySelector<HTMLElement>("[data-badge]");
-  const actions = root.querySelector<HTMLElement>("[data-actions]");
-  const resultRow = root.querySelector<HTMLElement>(".approve__result");
-  const result = root.querySelector<HTMLElement>("[data-result]");
-  if (!island || !badge || !actions || !resultRow || !result) return;
+/** 短片滚到眼前才播，滚走就停。浏览器只许静音自动播放，声音由人打开。播不了或减弱动效时留着系统控件。 */
+function setupFilm(root: HTMLElement): void {
+  const video = root.querySelector("video");
+  const sound = root.querySelector("button");
+  if (!video || !sound || calm) return;
 
-  const decide = (yes: boolean) => {
-    root.dataset.state = yes ? "yes" : "no";
-    island.textContent = yes ? "正在发布" : "已拒绝";
-    badge.hidden = true;
-    actions.hidden = true;
-    resultRow.hidden = false;
-    result.textContent = yes ? "已允许。发布好了我在项目里说。" : "已拒绝。这件事 Pupu 不做了。";
-  };
-
-  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-decide]")) {
-    button.addEventListener("click", () => decide(button.dataset.decide === "yes"));
-  }
-  root.querySelector("[data-again]")?.addEventListener("click", () => {
-    delete root.dataset.state;
-    island.textContent = "等你批准";
-    badge.hidden = false;
-    actions.hidden = false;
-    resultRow.hidden = true;
+  video.controls = false;
+  sound.hidden = false;
+  sound.addEventListener("click", () => {
+    video.muted = !video.muted;
+    sound.setAttribute("aria-pressed", String(!video.muted));
+    if (!video.muted) video.currentTime = 0;
   });
+
+  const play = async () => {
+    try {
+      await video.play();
+    } catch (error) {
+      if ((error as Error).name !== "NotAllowedError") return;
+      video.controls = true;
+      sound.hidden = true;
+    }
+  };
+  watch(root, () => void play(), () => video.pause(), 0.5);
 }
 
 function setupWaitlist(root: HTMLElement): void {
@@ -196,5 +193,5 @@ function setupWaitlist(root: HTMLElement): void {
 setupReveal();
 setupHeaderTone();
 document.querySelectorAll<HTMLElement>("[data-scene]").forEach(setupScene);
-document.querySelectorAll<HTMLElement>("[data-approve]").forEach(setupApprove);
+document.querySelectorAll<HTMLElement>("[data-film]").forEach(setupFilm);
 document.querySelectorAll<HTMLElement>("[data-waitlist]").forEach(setupWaitlist);
