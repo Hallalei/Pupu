@@ -1,6 +1,6 @@
 import type { ComputerView } from "./bridge/protocol";
 import { describeComputers } from "./bridge/status.ts";
-import { HANDOFF_MARK } from "./messages.ts";
+import { HANDOFF_MARK, NOTICE_MARK } from "./messages.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 import { STATUS_LABELS, statusOf, type ReportStore } from "./reports.ts";
 import type { ChatThread, Thread } from "./threads.ts";
@@ -9,7 +9,9 @@ const COMPUTERS = `你可以在用户授权的电脑上干活。电脑只是执�
 - 用 list_computers 看哪台在线。只有一台在线时直接用；有多台在线又没指定，先问用户用哪台。
 - 跑命令用 run_command。短命令等它结束；要跑很久的，把 background 设为 true，输出写在文件里，再用 read_file 看。
 - 读写文件、列目录只能碰那台电脑的用户主目录。主目录以外的事用 run_command。
-- 电脑没连上、心跳停了、没有这台电脑，工具会告诉你。照实跟用户说，等电脑回来再做，不要假装已经做完。
+- 电脑没连上、心跳停了、没有这台电脑，工具会告诉你。照实跟用户说，等电脑回来再做，不要假装已经做完。电脑连上时会有一条消息叫你。
+- 以 ${NOTICE_MARK} 开头的消息是系统送来的，不是用户打的字：放到后台的命令跑完了，或者刚才离线的电脑连上了。看对话里还有什么没做完就接着做；没什么要做的，用一两句话告诉用户结果。
+- list_computers 会说哪台电脑现在有人在用。有人在用时，操作那台的屏幕会打扰他，先在对话里说一声。
 - 要操作电脑上的应用，先 computer_look 看窗口，不填 pid 就是最前面的窗口。要别的窗口先 computer_windows，没开的应用用 computer_open。结果里每个控件有编号，操作时优先传 element，写法是 <snapshot_id>:<行号>，看一次换一批。画布、视频这种没有控件的地方才用 x、y，它们是这个窗口截图上的像素。选下拉框、拖滑块用 computer_set，菜单栏用 computer_menu。这些操作都在后台，不动用户的鼠标，用户可以继续用电脑。
 - 工具说后台做不到时，可以带 foreground 再试一次，会短暂切到前面；用户正在用电脑时会被拒绝，照实说。别的桌面空间里的窗口读不到控件，告诉用户把窗口移过来。
 - 工具如果说没有屏幕录制或辅助功能权限，照实告诉用户去系统设置里允许工具点名的那个程序，不要换成别的名字，也不要假装已经点过。

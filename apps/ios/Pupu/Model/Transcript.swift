@@ -303,15 +303,22 @@ nonisolated enum Reducer {
     }
 }
 
-/// 两种特殊的用户消息，和 apps/cloud/src/messages.ts 一致。
+/// 几种特殊的用户消息，和 apps/cloud/src/messages.ts 一致。
 nonisolated enum SpecialMessage {
     static let handoffMark = "[[pupu:handoff]]"
+    static let noticeMark = "[[pupu:notice]]"
     static let quoteLimit = 300
 
     /// 是聊天转来的事就返回要做的事。
     static func handoff(_ text: String) -> String? {
         guard text.hasPrefix(handoffMark) else { return nil }
         return String(text.dropFirst(handoffMark.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Pupu 自己送进对话的系统消息：后台命令跑完了、离线的电脑连上了。
+    static func notice(_ text: String) -> String? {
+        guard text.hasPrefix(noticeMark) else { return nil }
+        return String(text.dropFirst(noticeMark.count)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func quoted(_ quote: String, reply: String) -> String {

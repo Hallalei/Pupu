@@ -56,7 +56,8 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
       }
       const lines = computers.map((computer) => {
         const state = computer.online ? "在线" : computer.stale ? "心跳中断" : "离线";
-        return `- ${computer.name}（id: ${computer.id}）：${state}`;
+        const presence = computer.online && computer.inUse !== undefined ? (computer.inUse ? "，有人正在用" : "，没人在用") : "";
+        return `- ${computer.name}（id: ${computer.id}）：${state}${presence}`;
       });
       return { output: text(lines.join("\n")), details: { count: computers.length } };
     }

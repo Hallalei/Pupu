@@ -28,6 +28,8 @@ export const FOREGROUND_MAX_MS = 120_000;
 
 /** 交回给模型的输出，只留末尾这么多字符，完整的在终端文件里。 */
 export const OUTPUT_TAIL_CHARS = 32_000;
+/** 交出去的命令退出时，回到对话里的那段输出最多这么长。 */
+export const FINISHED_TAIL_CHARS = 2_000;
 /** 一次 write_file 的上限。再大就让模型用命令写。 */
 export const MAX_WRITE_CHARS = 200_000;
 export const MAX_READ_BYTES = 256 * 1024;
@@ -136,6 +138,22 @@ export type UpFrame =
   | { readonly type: "output"; readonly requestId: string; readonly text: string }
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
   | { readonly type: "takeback" }
+  /** 有没有人在用这台电脑：键盘鼠标最近动过。变了才发，连上时发一次。 */
+  | { readonly type: "presence"; readonly active: boolean }
+  /**
+   * 交出去的命令（后台命令、前台到时间转后台）退出了。那次调用早就结束了，云端凭它回到发起的那条对话。
+   * 只送最后一段输出，全文在 `outputPath`。
+   */
+  | {
+      readonly type: "finished";
+      readonly requestId: string;
+      readonly commandId: string;
+      readonly command: string;
+      readonly code: number | null;
+      readonly outputPath: string;
+      readonly tail: string;
+      readonly stopped?: "user" | "cloud";
+    }
   | { readonly type: "desktop"; readonly session: string; readonly message: DesktopUp }
   | {
       readonly type: "started";
@@ -187,6 +205,8 @@ export type ComputerView = {
   readonly policy: ComputerPolicy;
   /** 屏幕授权还有效。 */
   readonly screen: boolean;
+  /** 在线时，有没有人正在用它（键盘鼠标 1 分钟内动过）。老的桥不报，没有这一项。 */
+  readonly inUse?: boolean;
 };
 
 export function isBridgeRequest(request: Request): boolean {
@@ -250,6 +270,26 @@ export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
   switch (value.type) {
     case "takeback":
       return { type: "takeback" };
+    case "presence":
+      return typeof value.active === "boolean" ? { type: "presence", active: value.active } : null;
+    case "finished": {
+      const commandId = stringField(value, "commandId");
+      const command = stringField(value, "command");
+      const outputPath = stringField(value, "outputPath");
+      const tail = stringField(value, "tail");
+      const code = value.code === null || typeof value.code === "number" ? value.code : undefined;
+      if (!requestId || !commandId || command === null || !outputPath || tail === null || code === undefined) return null;
+      return {
+        type: "finished",
+        requestId,
+        commandId,
+        command,
+        code,
+        outputPath,
+        tail: tail.slice(-FINISHED_TAIL_CHARS),
+        ...(value.stopped === "user" || value.stopped === "cloud" ? { stopped: value.stopped } : {})
+      };
+    }
     case "desktop": {
       const session = stringField(value, "session");
       const message = parseDesktopUp(value.message);

@@ -48,6 +48,7 @@ import {
   tokenHash
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
+import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
 import { createComputerTools } from "./bridge/tools";
 import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
 import {
@@ -119,7 +120,7 @@ import {
   type Purpose,
   type RelyingParty
 } from "./passkeys";
-import { handoffMessage, type Sender } from "./messages";
+import { handoffMessage, noticeMessage, type Sender } from "./messages";
 import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
@@ -150,6 +151,8 @@ const MODEL_KEY = `${MODEL.provider}/${MODEL.id}`;
 const LIVE_JOB = "live-activity";
 /** 屏幕授权到期：改回没有，菜单栏、网页、手机和灵动岛跟着换。 */
 const SCREEN_JOB = "screen-grant";
+/** 新手机登录的确认到期：没有事件，到点把手机上带按钮的通知换掉。 */
+const SIGN_IN_JOB = "sign-in-expiry";
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
 
@@ -202,6 +205,8 @@ export class Pupu extends DurableObject<Env> {
   readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly members = new MemberStore(this.ctx.storage.sql);
   readonly passkeys = new PasskeyStore(this.ctx.storage.sql);
+  /** 后台命令跑完、离线的电脑连上了，要回到哪条对话。 */
+  readonly followUps = new FollowUpStore(this.ctx.storage.sql);
   readonly connectors = new ConnectorStore(this.ctx.storage.sql);
   readonly usage = new UsageStore(this.ctx.storage.sql);
   /** 连接器工具和审批要用的状态。 */
@@ -251,6 +256,7 @@ export class Pupu extends DurableObject<Env> {
   });
   /** 灵动岛下次要重新看一眼的时间，排在 Lifecycle 的任务队列里。 */
   #liveDue: number | null = null;
+  #signInDue: number | null = null;
   /** 排好的屏幕授权到期时间。屏幕操作会顺延授权，到点时 `expireScreens` 没收掉的就再排一次。 */
   #screenDue: number | null = null;
   readonly gate = new ComputerGate({
@@ -426,7 +432,22 @@ export class Pupu extends DurableObject<Env> {
     super(ctx, env);
     // 在构造时就接上，DO 重启后 pi 恢复的调用跑到桥上之前，审批已经能查了。
     this.bridge.approvedFor = (input) => this.gate.approved(input);
-    this.bridge.onReady = (computerId) => this.bridge.sendStatus(computerId, this.gate.statusFor(computerId));
+    this.bridge.onReady = (computerId) => {
+      this.bridge.sendStatus(computerId, this.gate.statusFor(computerId));
+      this.#computerArrived(computerId);
+    };
+    this.bridge.onUnavailable = (callId, computerId) => {
+      const session = this.#callSessions.of(callId);
+      if (session) this.followUps.wait(computerId ?? ANY_COMPUTER, session, Date.now());
+    };
+    this.bridge.onDetached = (callId, computerId, command) => {
+      const session = this.#callSessions.of(callId);
+      if (session) this.followUps.detached({ requestId: callId, session, computerId, command, startedAt: Date.now() });
+    };
+    this.bridge.onFinished = (computerId, frame) => {
+      const call = this.followUps.finished(frame.requestId, computerId, Date.now());
+      if (call) this.#notifyLater(call.session, finishedNotice(this.#computerName(computerId), call, frame, Date.now()));
+    };
     this.bridge.onTakeback = (computerId) => this.gate.takeback(computerId);
     this.bridge.onDesktop = (computerId, session, message) => this.desktop.fromBridge(computerId, session, message);
     this.bridge.onGone = (computerId) => this.desktop.bridgeGone(computerId);
@@ -515,6 +536,7 @@ export class Pupu extends DurableObject<Env> {
     this.#syncWaitingReports();
     for (const id of computerIds) this.bridge.sendStatus(id, this.gate.statusFor(id));
     this.#scheduleScreen();
+    this.#scheduleSignInExpiry();
     this.#activityChanged();
     this.ctx.waitUntil(this.pusher.sync().catch((error) => console.warn("审批推送失败", error)));
   }
@@ -581,8 +603,24 @@ export class Pupu extends DurableObject<Env> {
     this.ctx.waitUntil(scheduled.then(() => undefined, (error) => console.warn("屏幕授权的到期排不上", error)));
   }
 
+  /** 最早到期的那条等批登录，到点再看一次。 */
+  #scheduleSignInExpiry(): void {
+    const waiting = this.signIns.pending(Date.now());
+    const due = waiting.length === 0 ? null : Math.min(...waiting.map((row) => row.expiresAt));
+    if (due === this.#signInDue) return;
+    this.#signInDue = due;
+    const { jobs } = this.lifecycle;
+    const scheduled = due === null ? jobs.cancel(SIGN_IN_JOB) : jobs.push({ id: SIGN_IN_JOB, fn: SIGN_IN_JOB, time: due + 500 });
+    this.ctx.waitUntil(scheduled.then(() => undefined, (error) => console.warn("登录确认的到期排不上", error)));
+  }
+
   /** Lifecycle 的任务队列到点了。 */
   onJob({ job }: LifecycleJobContext): void {
+    if (job.fn === SIGN_IN_JOB) {
+      this.#signInDue = null;
+      this.#approvalsChanged([]);
+      return;
+    }
     if (job.fn === SCREEN_JOB) {
       this.#screenDue = null;
       this.gate.expireScreens();
@@ -1183,8 +1221,39 @@ export class Pupu extends DurableObject<Env> {
     if (!row || row.revokedAt === null) return false;
     this.bridge.disconnect(id, 1008, "凭据已吊销");
     this.gate.forgetComputer(id);
+    this.followUps.forgetComputer(id);
     this.bridge.onChange();
     return true;
+  }
+
+  // ---- 电脑那边晚些才有的消息（bridge/followups.ts）----
+
+  /** 刚才因为它离线没做成事的对话，叫醒它们。 */
+  #computerArrived(computerId: string): void {
+    const sessions = this.followUps.arrived(computerId, Date.now());
+    if (sessions.length === 0) return;
+    const text = `「${this.#computerName(computerId)}」连上了。刚才因为电脑不在线没做成的事，现在可以接着做；已经不需要了就不用做。`;
+    for (const session of sessions) this.#notifyLater(session, text);
+  }
+
+  #computerName(computerId: string): string {
+    return this.bridge.list().find((computer) => computer.id === computerId)?.name ?? "电脑";
+  }
+
+  #notifyLater(session: string, text: string): void {
+    this.ctx.waitUntil(this.#notify(session, text).catch((error) => console.warn("系统消息没送进对话", error)));
+  }
+
+  /** 以系统消息叫醒这条对话：闲着就开一轮，正忙就排在这一轮后面。对话没了就算了。 */
+  async #notify(session: string, text: string): Promise<void> {
+    await this.lifecycle.start();
+    if (!this.threads.of(session)) {
+      this.followUps.forgetSession(session);
+      return;
+    }
+    await this.harness.session(session).submit(noticeMessage(text), { whenBusy: "followUp" });
+    this.store.touchSession(session);
+    this.#changed();
   }
 
   // ---- 成员（需求说明 4.7）----
@@ -1630,6 +1699,35 @@ function authBackend(env: Env): AuthBackend {
       return home.redeemSignIn(input);
     }
   };
+}
+
+/** 后台命令跑完时送进对话的那句话。 */
+function finishedNotice(
+  computer: string,
+  call: { readonly command: string; readonly startedAt: number },
+  frame: { readonly code: number | null; readonly outputPath: string; readonly tail: string; readonly stopped?: "user" | "cloud" },
+  now: number
+): string {
+  const minutes = Math.max(1, Math.round((now - call.startedAt) / 60_000));
+  const how =
+    frame.stopped === "user"
+      ? "被用户在电脑上停掉了"
+      : frame.stopped === "cloud"
+        ? "被停掉了"
+        : frame.code === 0
+          ? "跑完了，退出码 0"
+          : frame.code === null
+            ? "结束了，没有退出码"
+            : `跑完了，退出码 ${frame.code}`;
+  const tail = frame.tail.trim();
+  return [
+    `「${computer}」上放到后台的命令${how}（大约跑了 ${minutes} 分钟）：`,
+    "```",
+    call.command.length > 300 ? `${call.command.slice(0, 300)}…` : call.command,
+    "```",
+    `完整输出在 ${frame.outputPath}。${tail ? "最后一段：" : "没有输出。"}`,
+    ...(tail ? ["```", tail, "```"] : [])
+  ].join("\n");
 }
 
 /** 一次通行密钥确认：浏览器给的结果，加上它是在哪个网址上做的。 */

@@ -72,6 +72,8 @@ export class PiSessionSockets {
   readonly #onAbort: (session: PiSessionId, at: number) => void;
   readonly #routes: readonly BridgeSocketHandlers[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
+  /** 每条连接第几次订阅，见 `#watch`。 */
+  readonly #watchTurns = new WeakMap<WebSocket, number>();
 
   constructor(
     harness: PiHarness,
@@ -182,8 +184,17 @@ export class PiSessionSockets {
   }
 
   async #watch(socket: WebSocket, session: PiSessionId): Promise<void> {
+    // 两次订阅重叠时（换会话很快、重连），只留最后一次：先回来的旧订阅自己停掉，不然流式文字会出两遍。
+    const turn = (this.#watchTurns.get(socket) ?? 0) + 1;
+    this.#watchTurns.set(socket, turn);
     await this.#unwatch(socket);
     const stream = await this.#harness.session(session).events();
+    const superseded = () => this.#watchTurns.get(socket) !== turn;
+    if (!superseded()) await this.#unwatch(socket);
+    if (superseded()) {
+      await stream.stop();
+      return;
+    }
     this.#watches.set(socket, stream);
     send(socket, { type: "events", session, events: [stream.snapshot] });
     stream.start(async (events) => {

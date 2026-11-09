@@ -490,3 +490,94 @@ test("前台到时间改为后台，不杀进程", async () => {
   }
 });
 });
+
+describe("电脑那边晚些才有的消息", () => {
+  test("报了有人在用：列表里在线的电脑带上 inUse，没变不再通知", async () => {
+    const env = await harness();
+    const socket = await env.connect();
+    await env.hello(socket);
+    assert.equal(env.hub.list()[0]?.inUse, undefined, "老的桥不报，就没有这一项");
+    let changes = 0;
+    env.hub.onChange = () => (changes += 1);
+    await env.hub.onMessage(socket, JSON.stringify({ type: "presence", active: true }));
+    await env.hub.onMessage(socket, JSON.stringify({ type: "presence", active: true }));
+    assert.equal(env.hub.list()[0]?.inUse, true);
+    assert.equal(changes, 1);
+    await env.hub.onMessage(socket, JSON.stringify({ type: "presence", active: false }));
+    assert.equal(env.hub.list()[0]?.inUse, false);
+  });
+
+  test("指定的电脑离线：报给 onUnavailable，带上是哪台", async () => {
+    const env = await harness();
+    const unavailable: [string, string | null][] = [];
+    env.hub.onUnavailable = (requestId, computerId) => unavailable.push([requestId, computerId]);
+    const result = await env.hub.exec({
+      requestId: "r1",
+      computerId: env.row.id,
+      action: { kind: "run", command: "ls", background: false }
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(unavailable, [["r1", env.row.id]]);
+  });
+
+  test("没指定、一台都不在线：等随便哪台", async () => {
+    const env = await harness();
+    const unavailable: [string, string | null][] = [];
+    env.hub.onUnavailable = (requestId, computerId) => unavailable.push([requestId, computerId]);
+    await env.hub.exec({ requestId: "r2", action: { kind: "run", command: "ls", background: false } });
+    assert.deepEqual(unavailable, [["r2", null]]);
+  });
+
+  test("没有这台电脑不算离线，不等", async () => {
+    const env = await harness();
+    let called = false;
+    env.hub.onUnavailable = () => (called = true);
+    await env.hub.exec({ requestId: "r3", computerId: "nope", action: { kind: "run", command: "ls", background: false } });
+    assert.equal(called, false);
+  });
+
+  test("后台命令开始了：报给 onDetached；退出时的 finished 交给 onFinished", async () => {
+    const env = await harness();
+    const socket = await env.connect();
+    await env.hello(socket);
+    answer(env, socket, "exec", (requestId) => [
+      { type: "started", requestId, commandId: "cmd-1", outputPath: "/tmp/cmd-1.log" }
+    ]);
+    const detached: [string, string, string][] = [];
+    env.hub.onDetached = (requestId, computerId, command) => detached.push([requestId, computerId, command]);
+    const result = await env.hub.exec({
+      requestId: "bg-1",
+      action: { kind: "run", command: "npm run build", background: true }
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(detached, [["bg-1", env.row.id, "npm run build"]]);
+
+    const finished: [string, string, number | null][] = [];
+    env.hub.onFinished = (computerId, frame) => finished.push([computerId, frame.requestId, frame.code]);
+    await env.hub.onMessage(
+      socket,
+      JSON.stringify({
+        type: "finished",
+        requestId: "bg-1",
+        commandId: "cmd-1",
+        command: "npm run build",
+        code: 0,
+        outputPath: "/tmp/cmd-1.log",
+        tail: "built"
+      })
+    );
+    assert.deepEqual(finished, [[env.row.id, "bg-1", 0]]);
+  });
+
+  test("还没 hello 的连接发来的 finished 不认", async () => {
+    const env = await harness();
+    const socket = await env.connect();
+    let called = false;
+    env.hub.onFinished = () => (called = true);
+    await env.hub.onMessage(
+      socket,
+      JSON.stringify({ type: "finished", requestId: "x", commandId: "c", command: "ls", code: 0, outputPath: "/tmp/x", tail: "" })
+    );
+    assert.equal(called, false);
+  });
+});

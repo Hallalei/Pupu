@@ -6,6 +6,7 @@ import { ABORTED, blockedText } from "../src/bridge/blocked.ts";
 import { buildRows, readable, type RowContext, type StepStatus } from "../src/client/chat-rows.ts";
 import type { TranscriptMessage } from "../src/protocol.ts";
 import { EMPTY_VIEW } from "../src/view.ts";
+import { noticeMessage } from "../src/messages.ts";
 
 const MAC: ComputerView = {
   id: "mac",
@@ -121,4 +122,19 @@ describe("对话里一步的状态", () => {
     assert.deepEqual(statuses([call("stopped"), result("stopped", wrapped, true)], { running: false }), ["unfinished"]);
     assert.equal(readable(wrapped, "unfinished"), "等批准的时候这一轮停下了，这一步没有做。");
   });
+});
+
+test("系统消息画成居中的一行，只放第一句", () => {
+  const notice: TranscriptMessage = {
+    id: "n1",
+    role: "user",
+    timestamp: 3,
+    parts: [{ type: "text", text: noticeMessage("「mbpro」上放到后台的命令跑完了，退出码 0：\n```\nnpm run build\n```") }]
+  };
+  const context: RowContext = { projectTags: false, projects: new Map(), computers: [MAC], approvals: [], members: [] };
+  const rows = buildRows({ ...EMPTY_VIEW, messages: [notice], running: false }, context);
+  assert.deepEqual(
+    rows.map((row) => (row.kind === "notice" ? row.text : row.kind)),
+    ["「mbpro」上放到后台的命令跑完了，退出码 0："]
+  );
 });

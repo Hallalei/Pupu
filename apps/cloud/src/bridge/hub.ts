@@ -45,6 +45,8 @@ export type BridgeLink = {
   readonly seenPingAt?: number;
   readonly localRoot: string;
   readonly terminalsFolder: string;
+  /** 桥报的有没有人在用这台电脑。老的桥不报。 */
+  readonly present?: boolean;
 };
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -104,6 +106,12 @@ export class ComputerBridge {
   onDesktop: (computerId: string, session: string, message: DesktopUp) => void = () => {};
   /** 这台电脑的桥断了。 */
   onGone: (computerId: string) => void = () => {};
+  /** 调用找不到能用的电脑：`computerId` 是离线的那台，没指定、一台都不在线是 null。 */
+  onUnavailable: (requestId: string, computerId: string | null) => void = () => {};
+  /** 命令交出去了：后台命令，或者前台到时间转到后台。退出时桥发 finished。 */
+  onDetached: (requestId: string, computerId: string, command: string) => void = () => {};
+  /** 交出去的命令退出了。 */
+  onFinished: (computerId: string, frame: Extract<UpFrame, { type: "finished" }>) => void = () => {};
   /** 这个动作批过没有。批过的在 exec 帧里带上 approved，桥上的二次判断认它。 */
   approvedFor: (input: { requestId: string; computerId: string; action: Action }) => boolean = () => false;
 
@@ -174,6 +182,18 @@ export class ComputerBridge {
       if (link?.ready) this.onDesktop(link.computerId, frame.session, frame.message);
       return;
     }
+    if (frame.type === "presence") {
+      const link = readLink(socket);
+      if (!link?.ready || link.present === frame.active) return;
+      this.#writeLink(socket, { ...link, present: frame.active });
+      this.onChange();
+      return;
+    }
+    if (frame.type === "finished") {
+      const link = readLink(socket);
+      if (link?.ready) this.onFinished(link.computerId, frame);
+      return;
+    }
     const waiter = this.#waiters.get(frame.requestId);
     if (!waiter || waiter.socket !== socket) return;
     waiter.frames.push(frame);
@@ -219,11 +239,20 @@ export class ComputerBridge {
     signal?: AbortSignal;
     onOutput?: (chunk: string) => void;
   }): Promise<ExecOutcome> {
-    const selected = selectComputer(this.list(), input.computerId);
-    if (!selected.ok) return { ok: false, text: selected.text };
+    const computers = this.list();
+    const selected = selectComputer(computers, input.computerId);
+    if (!selected.ok) {
+      const wanted = input.computerId ? computers.find((computer) => computer.id === input.computerId) : undefined;
+      if (wanted && !wanted.online) this.onUnavailable(input.requestId, wanted.id);
+      else if (!input.computerId && computers.length > 0 && computers.every((computer) => !computer.online)) {
+        this.onUnavailable(input.requestId, null);
+      }
+      return { ok: false, text: selected.text };
+    }
     const computer = selected.computer;
     const socket = this.#socketFor(computer.id);
     if (!socket) {
+      this.onUnavailable(input.requestId, computer.id);
       return {
         ok: false,
         text: computer.stale ? staleText(computer) : offlineText(computer),
@@ -247,6 +276,7 @@ export class ComputerBridge {
     } satisfies DownFrame;
     if (!this.#send(socket, frame)) {
       this.#waiters.delete(input.requestId);
+      this.onUnavailable(input.requestId, computer.id);
       return {
         ok: false,
         text: disconnectedComputer(computer.name),
@@ -264,7 +294,11 @@ export class ComputerBridge {
     this.onActivity();
     const log: RunLog = { started: null, output: "", truncated: false };
     try {
-      return outcomeOf(computer, await this.#collect(input, waiter, log), log);
+      const collected = await this.#collect(input, waiter, log);
+      if ((collected.kind === "detached" || collected.kind === "started") && input.action.kind === "run") {
+        this.onDetached(input.requestId, computer.id, input.action.command);
+      }
+      return outcomeOf(computer, collected, log);
     } finally {
       this.#waiters.delete(input.requestId);
       this.#running.delete(input.requestId);
@@ -414,7 +448,8 @@ export class ComputerBridge {
       stale,
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
-      screen: screenOn(row.screen, now)
+      screen: screenOn(row.screen, now),
+      ...(alive && link?.present !== undefined ? { inUse: link.present } : {})
     };
   }
 
@@ -653,6 +688,7 @@ export function readLink(socket: { deserializeAttachment(): unknown }): BridgeLi
     ready: link.ready === true,
     ...(typeof link.seenPingAt === "number" ? { seenPingAt: link.seenPingAt } : {}),
     localRoot: typeof link.localRoot === "string" ? link.localRoot : "",
-    terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : ""
+    terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : "",
+    ...(typeof link.present === "boolean" ? { present: link.present } : {})
   };
 }

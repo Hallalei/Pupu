@@ -2,7 +2,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import { blockedOutcome, blockedReason } from "../bridge/blocked.ts";
 import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
-import { parseHandoff, parseQuote, type Sender } from "../messages.ts";
+import { parseHandoff, parseNotice, parseQuote, type Sender } from "../messages.ts";
 import type { Project } from "../projects";
 import type { SessionView, TranscriptMessage, TranscriptPart } from "../protocol";
 import type { ReportCard } from "../reports";
@@ -120,8 +120,12 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
     if (message.role === "user") {
       const text = textOf(message);
       const task = parseHandoff(text);
+      const notice = parseNotice(text);
       if (task !== null) {
         own.push({ id: message.id, kind: "handoff", text: task });
+      } else if (notice !== null) {
+        // 界面上只放第一句，命令输出留给模型看。
+        own.push({ id: message.id, kind: "notice", text: notice.split("\n")[0] ?? "" });
       } else {
         const { quote, body } = parseQuote(text);
         own.push({ id: message.id, kind: "user", body, quote, sender: otherSender(message, context) });

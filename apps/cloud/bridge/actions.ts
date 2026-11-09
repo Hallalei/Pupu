@@ -9,6 +9,7 @@ import {
   MAX_LIST_ENTRIES,
   MAX_READ_BYTES,
   MAX_TRANSFER_BYTES,
+  FINISHED_TAIL_CHARS,
   OUTPUT_TAIL_CHARS,
   safeRequestId,
   type Action,
@@ -43,8 +44,11 @@ type Phase =
   | { readonly name: "running" }
   /** 命令在停，退出那一帧说是谁停的。 */
   | { readonly name: "stopping"; readonly by: "user" | "cloud" }
-  /** 这次调用交出去了：后台命令、前台到时间转后台，或者桥要退出。进程留着，什么都不再往云端送。 */
-  | { readonly name: "detached" };
+  /**
+   * 这次调用交出去了：后台命令、前台到时间转后台，或者桥要退出。进程留着，这次调用不再回帧；
+   * 命令退出时另发一帧 finished（见 `reportFinished`），`stopped` 是谁停的。
+   */
+  | { readonly name: "detached"; readonly stopped?: "user" | "cloud" };
 
 type Call = {
   readonly requestId: string;
@@ -108,6 +112,7 @@ export function stopCommands(): void {
 
 /** 桥自己要退出：所有命令都停，还没动手的不做了。连接马上就关，不再回帧。 */
 export function stopAllJobs(): void {
+  quitting = true;
   for (const call of calls.values()) {
     call.phase = DETACHED;
     if (call.process) killChild(call.process.child);
@@ -117,7 +122,33 @@ export function stopAllJobs(): void {
 function stop(call: Call, by: "user" | "cloud"): void {
   if (!call.process) return;
   if (call.phase.name === "running") call.phase = { name: "stopping", by };
+  else if (call.phase.name === "detached") call.phase = { name: "detached", stopped: by };
   killChild(call.process.child);
+}
+
+type Finished = Extract<UpFrame, { type: "finished" }>;
+
+/** 交出去的命令退出了、还没送到云端的。桥没连着时先攒着，最多留这么多条。 */
+const FINISHED_QUEUE = 20;
+const finishedQueue: Finished[] = [];
+let finishedSink: ((frame: UpFrame) => boolean) | null = null;
+/** 桥在退出：命令是它停的，不用报。 */
+let quitting = false;
+
+/** 云端收下 hello 后接上当前连接，连接断了传 null。接上时把攒着的送出去。 */
+export function reportFinishedTo(send: ((frame: UpFrame) => boolean) | null): void {
+  finishedSink = send;
+  while (finishedSink && finishedQueue.length > 0) {
+    if (!finishedSink(finishedQueue[0]!)) return;
+    finishedQueue.shift();
+  }
+}
+
+function reportFinished(frame: Finished): void {
+  if (quitting) return;
+  finishedQueue.push(frame);
+  if (finishedQueue.length > FINISHED_QUEUE) finishedQueue.shift();
+  reportFinishedTo(finishedSink);
 }
 
 /** 这次调用的帧还送不送：取消过、交出去了的就不送了。 */
@@ -327,7 +358,7 @@ async function finish(
   // 退出和启动失败都会进来。只收尾一次，避免把同一段结果送两遍。
   if (calls.get(call.requestId) !== call || !call.process) return;
   const { requestId, phase } = call;
-  const { commandId, outputPath } = call.process;
+  const { commandId, outputPath, command } = call.process;
   forget(call);
   try {
     await log.write(`\n--- exit ${error ? "error" : String(code)} ---\n`);
@@ -345,6 +376,18 @@ async function finish(
   });
   if (error) host.send({ type: "error", requestId, message: error });
   else host.send({ type: "exit", requestId, code, ...(phase.name === "stopping" ? { stopped: phase.by } : {}) });
+  if (phase.name === "detached") {
+    reportFinished({
+      type: "finished",
+      requestId,
+      commandId,
+      command,
+      code: error ? null : code,
+      outputPath,
+      tail: (error ? `${tail}\n${error}` : tail).slice(-FINISHED_TAIL_CHARS),
+      ...(phase.stopped ? { stopped: phase.stopped } : {})
+    });
+  }
 }
 
 async function write(

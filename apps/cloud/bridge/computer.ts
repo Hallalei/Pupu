@@ -301,6 +301,19 @@ export async function refuseWhileUserActive(idleMs: () => Promise<number> = hidI
   }
 }
 
+/** 键盘鼠标在这么久里动过，就算有人坐在电脑前。 */
+export const PRESENCE_MS = 60_000;
+
+/** 有没有人在用这台电脑。Pupu 自己切到前面时的输入不算。看不出来（不是 Mac、读不到）是 null。 */
+export async function userPresent(idleMs: () => Promise<number> = hidIdleMs, now: () => number = Date.now): Promise<boolean | null> {
+  try {
+    const idle = await idleMs();
+    return idle < PRESENCE_MS && idle < now() - foregroundAt;
+  } catch {
+    return null;
+  }
+}
+
 function hidIdleMs(): Promise<number> {
   return new Promise((resolve, reject) => {
     execFile("/usr/sbin/ioreg", ["-c", "IOHIDSystem", "-d", "4"], { maxBuffer: 4_000_000 }, (error, stdout) => {

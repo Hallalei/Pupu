@@ -23,7 +23,7 @@ const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
 type PairingCode = { readonly code: string; readonly expiresAt: number };
 
 function computerLabel(computer: ComputerView): string {
-  if (computer.online) return "在线";
+  if (computer.online) return computer.inUse ? "在线 · 有人在用" : "在线";
   if (computer.stale) return "心跳中断";
   if (computer.lastSeenAt) return `离线 · ${ago(computer.lastSeenAt)}`;
   return "离线";

@@ -105,6 +105,10 @@ nonisolated enum ChatRows {
                 let text = message.text
                 if let task = SpecialMessage.handoff(text) {
                     own.append(ChatRow(id: message.id, kind: .handoff(task)))
+                } else if let notice = SpecialMessage.notice(text) {
+                    // 界面上只放第一句，命令输出留给模型看。
+                    let line = notice.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+                    own.append(ChatRow(id: message.id, kind: .notice(line)))
                 } else {
                     let split = SpecialMessage.splitQuote(text)
                     let kind: ChatRow.Kind = if let sender = otherSender(message, context: context) {

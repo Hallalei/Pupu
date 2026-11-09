@@ -15,6 +15,20 @@ export function handoffMessage(task: string): string {
   return `${HANDOFF_MARK}\n${task}`;
 }
 
+/**
+ * Pupu 自己送进对话的消息：电脑那边晚些才有的结果，比如后台命令跑完了、离线的电脑连上了（见 bridge/followups.ts）。
+ * 以用户消息的身份进去，好叫醒这条对话；模型看开头认得出不是人说的，界面画成居中的一行。
+ */
+export const NOTICE_MARK = "[[pupu:notice]]";
+
+export function noticeMessage(text: string): string {
+  return `${NOTICE_MARK}\n${text}`;
+}
+
+export function parseNotice(text: string): string | null {
+  return text.startsWith(NOTICE_MARK) ? text.slice(NOTICE_MARK.length).trim() : null;
+}
+
 /** 是转交消息就返回要做的事，不是就返回 null。 */
 export function parseHandoff(text: string): string | null {
   return text.startsWith(HANDOFF_MARK)

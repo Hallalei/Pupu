@@ -1,4 +1,13 @@
-import { onActivity, reconcileRequests, runningCommands, screenActivity, stopAllJobs, stopCommands } from "./actions.ts";
+import {
+  onActivity,
+  reconcileRequests,
+  reportFinishedTo,
+  runningCommands,
+  screenActivity,
+  stopAllJobs,
+  stopCommands
+} from "./actions.ts";
+import { userPresent } from "./computer.ts";
 import type { DesktopInput } from "../src/bridge/desktop.ts";
 import { requestsDir, type BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
@@ -33,6 +42,9 @@ export type RunningBridge = {
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
+
+/** 连着时多久看一次有没有人在用电脑。 */
+const PRESENCE_POLL_MS = 20_000;
 
 /** 版本对不上时多久再试一次：云端回滚了，或者装了新版的桥，就能连上。 */
 const OUTDATED_RETRY_MS = 5 * 60_000;
@@ -129,6 +141,14 @@ export function runBridge(options: RunOptions): RunningBridge {
       config = await options.config();
       if (stopped) break;
       refresh();
+      // 有没有人在用：连上时报一次，之后变了才报。
+      let present: boolean | null = null;
+      let presenceTimer: ReturnType<typeof setInterval> | undefined;
+      const checkPresence = async () => {
+        const now = await userPresent();
+        if (now === null || now === present) return;
+        if (session.send({ type: "presence", active: now })) present = now;
+      };
       const session = openBridge(
         config,
         {
@@ -136,6 +156,11 @@ export function runBridge(options: RunOptions): RunningBridge {
             connected = true;
             problem = null;
             if (takebackQueued) takebackQueued = !session.send({ type: "takeback" });
+            reportFinishedTo((frame) => session.send(frame));
+            present = null;
+            void checkPresence();
+            presenceTimer ??= setInterval(() => void checkPresence(), PRESENCE_POLL_MS);
+            presenceTimer.unref?.();
             refresh();
           },
           onStatus(status) {
@@ -146,6 +171,9 @@ export function runBridge(options: RunOptions): RunningBridge {
             remote.handle(frame.session, frame.message);
           },
           onClosed() {
+            reportFinishedTo(null);
+            clearInterval(presenceTimer);
+            presenceTimer = undefined;
             connected = false;
             cloud = { pending: [], screen: false };
             // 云端的租约跟着这条连接结束了，点对点的画面和输入不能还开着。

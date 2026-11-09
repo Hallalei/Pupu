@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { cancelCall, perform, reconcileRequests, stopCommands, type ActionHost } from "./actions.ts";
+import { cancelCall, perform, reconcileRequests, reportFinishedTo, stopCommands, type ActionHost } from "./actions.ts";
 import type { UpFrame } from "../src/bridge/protocol.ts";
 
 process.env.SHELL = "/bin/sh";
@@ -117,6 +117,62 @@ test("后台命令不往连接上送输出，取消会停掉进程", async (t) =
   cancelCall("bg-1");
   await waitFor(async () => (await readFile(started.outputPath, "utf8")).includes("--- exit"), "killed");
   assert.equal(frames.some((frame) => frame.type === "exit"), false);
+});
+
+test("后台命令退出时报 finished：连着就送，没连着先攒着，连上再送", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const finished: UpFrame[] = [];
+  reportFinishedTo(null);
+  t.after(() => reportFinishedTo(null));
+  await perform("bg-done", { kind: "run", command: "echo all-built", background: true }, hostIn(root, []));
+  await waitFor(async () => {
+    reportFinishedTo((frame) => {
+      finished.push(frame);
+      return true;
+    });
+    return finished.some((frame) => frame.type === "finished" && frame.requestId === "bg-done");
+  }, "finished frame");
+  const frame = finished.find((each) => each.type === "finished" && each.requestId === "bg-done");
+  assert.equal(frame?.type, "finished");
+  if (frame?.type !== "finished") return;
+  assert.equal(frame.requestId, "bg-done");
+  assert.equal(frame.command, "echo all-built");
+  assert.equal(frame.code, 0);
+  assert.match(frame.tail, /all-built/);
+  assert.equal(frame.stopped, undefined);
+});
+
+test("后台命令被云端停掉：finished 说是云端停的", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const finished: UpFrame[] = [];
+  reportFinishedTo((frame) => {
+    finished.push(frame);
+    return true;
+  });
+  t.after(() => reportFinishedTo(null));
+  await perform("bg-stop", { kind: "run", command: "sleep 30", background: true }, hostIn(root, []));
+  cancelCall("bg-stop");
+  const mine = () => finished.find((each) => each.type === "finished" && each.requestId === "bg-stop");
+  await waitFor(async () => mine() !== undefined, "finished after stop");
+  const frame = mine();
+  assert.equal(frame?.type === "finished" && frame.stopped, "cloud");
+});
+
+test("前台命令自己跑完不报 finished：结果已经在那次调用里了", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const finished: UpFrame[] = [];
+  reportFinishedTo((frame) => {
+    finished.push(frame);
+    return true;
+  });
+  t.after(() => reportFinishedTo(null));
+  const frames: UpFrame[] = [];
+  await perform("fg-1", { kind: "run", command: "echo quick", background: false }, hostIn(root, frames));
+  await waitFor(async () => frames.some((frame) => frame.type === "exit"), "foreground exit");
+  assert.equal(finished.some((frame) => frame.type === "finished" && frame.requestId === "fg-1"), false);
 });
 
 test("能往还在跑的命令写标准输入", async (t) => {
