@@ -1,8 +1,10 @@
 import { Button } from "@heroui/react";
 import { useEffect, useState } from "react";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import type { ApprovalView } from "../bridge/approvals";
 import { ago } from "./ago";
 import { PhoneIcon } from "./icons";
+import { Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 
 export function WaitingChip() {
   return (
@@ -20,19 +22,22 @@ type Decision =
 /**
  * Pupu 在电脑上要做的、等你批准的事。挂在每一屏的顶栏下面，把内容往下挤。
  * 一次只摊开最早的一条，其余的写「还有 N 条」；点了允许或拒绝就换下一条。
- * 允许只认手机 App（见 `mayDecide`）：电脑 App 和浏览器里照常显示，允许换成「去手机上批准」，拒绝还能点。
+ * 允许要电脑主人亲手确认（见 `mayDecide`）：手机上直接点，浏览器里用通行密钥，电脑 App 交给浏览器，
+ * 有手机的人去手机上点。拒绝哪儿都能点。
  */
 export function Approvals({
   approvals,
-  canAllow,
+  where,
+  passkeys,
   phonePaired,
   onDecide
 }: {
   approvals: readonly ApprovalView[];
-  /** 这台设备是手机 App，或者本机开发没设访问口令。 */
-  canAllow: boolean;
+  /** 这一条在这台设备上怎么允许，见 passkey.ts 的 `confirmWhere`。 */
+  where: (approval: ApprovalView) => ConfirmWhere;
+  passkeys: Passkeys | null;
   phonePaired: boolean;
-  onDecide: (id: string, decision: "allow" | "deny") => Promise<void>;
+  onDecide: (id: string, decision: "allow" | "deny", proof?: AuthenticationResponseJSON) => Promise<void>;
 }) {
   // 点过的先藏起来，等下一次拉状态把它去掉，免得闪回来。
   const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
@@ -60,15 +65,19 @@ export function Approvals({
   if (!approval) return null;
   const current = request?.id === approval.id ? request : null;
   const pending = current?.status === "sending" ? current.decision : null;
+  const how = where(approval);
 
   async function decide(id: string, decision: "allow" | "deny") {
     setRequest({ id, status: "sending", decision });
     try {
-      await onDecide(id, decision);
+      const proof =
+        decision === "allow" && how === "passkey" && passkeys ? await confirm({ kind: "approval", id }, passkeys) : undefined;
+      await onDecide(id, decision, proof);
       setDecided((ids) => new Set([...ids, id]));
       setRequest(null);
     } catch (cause) {
-      setRequest({ id, status: "failed", error: cause instanceof Error ? cause.message : String(cause) });
+      if (cause instanceof Cancelled) setRequest(null);
+      else setRequest({ id, status: "failed", error: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -99,7 +108,7 @@ export function Approvals({
           </pre>
         )}
         {approval.reason && <p className="m-0 text-subheadline text-muted">{approval.reason}</p>}
-        {!canAllow && !phonePaired && (
+        {how === "phone" && !phonePaired && (
           <p className="m-0 text-subheadline text-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
         )}
         <div className="grid grid-cols-2 gap-2">
@@ -112,7 +121,7 @@ export function Approvals({
           >
             拒绝
           </Button>
-          {canAllow ? (
+          {how === "here" || how === "passkey" ? (
             <Button
               isPending={pending === "allow"}
               isDisabled={pending !== null}
@@ -120,6 +129,13 @@ export function Approvals({
               className="tap h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
             >
               允许
+            </Button>
+          ) : how === "browser" ? (
+            <Button
+              onPress={openInBrowser}
+              className="tap h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
+            >
+              在浏览器里允许
             </Button>
           ) : (
             <div className="flex h-control items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-muted">

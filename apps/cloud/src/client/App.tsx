@@ -1,6 +1,7 @@
 import { Button, Dropdown, Label, Spinner, Tabs } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
+import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
@@ -12,6 +13,7 @@ import { Doing } from "./Doing";
 import { ChatIcon, CheckIcon, LockIcon, MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
+import { confirmWhere, type ConfirmWhere } from "./passkey";
 import { Settings } from "./Settings";
 import { setNight } from "./theme";
 
@@ -95,6 +97,7 @@ export function App() {
     applyActivity,
     reports,
     chats,
+    passkeys,
     loaded,
     error,
     unauthorized,
@@ -107,9 +110,19 @@ export function App() {
   const lines = useChatLines(chats, route.kind === "chat");
   const { line, session, canSwitch } = lines;
   const thisComputer = useDesktopComputer();
-  // 审批的允许只认手机 App。本机开发没设访问口令时没有「这台设备」，照常能点。
+  // 允许和放宽权限要电脑主人亲手确认。本机开发没设访问口令时没有「这台设备」，照常能点。
   const current = devices.find((device) => device.current);
-  const canAllow = !current || current.kind === "phone";
+  const confirmBy = confirmWhere(current?.kind ?? null, passkeys);
+  // 通行密钥只证明是哪个成员：新手机登录、别人的电脑、没主人的电脑，还是要手机。
+  const approvalWhere = useCallback(
+    (approval: ApprovalView): ConfirmWhere => {
+      if (confirmBy === "here" || confirmBy === "phone") return confirmBy;
+      const owner =
+        approval.kind === "sign_in" ? null : (computers.find((computer) => computer.id === approval.computerId)?.ownerId ?? null);
+      return owner !== null && owner === current?.memberId ? confirmBy : "phone";
+    },
+    [confirmBy, computers, current?.memberId]
+  );
 
   const chat: ChatContext = useMemo(
     () => ({
@@ -290,10 +303,11 @@ export function App() {
         <div className="status relative z-10 flex shrink-0 flex-col lg:[&:not(:empty)]:pt-3">
           <Approvals
             approvals={approvals}
-            canAllow={canAllow}
+            where={approvalWhere}
+            passkeys={passkeys}
             phonePaired={devices.some((device) => device.kind === "phone")}
-            onDecide={async (id, decision) => {
-              await api.decideApproval(id, decision);
+            onDecide={async (id, decision, proof) => {
+              await api.decideApproval(id, decision, proof);
               await refresh();
             }}
           />
@@ -336,8 +350,8 @@ export function App() {
           await api.revokeComputer(id);
           await refresh();
         }}
-        onSetPolicy={async (id, policy) => {
-          await api.setPolicy(id, policy);
+        onSetPolicy={async (id, policy, proof) => {
+          await api.setPolicy(id, policy, proof);
           await refresh();
         }}
         devices={devices}
@@ -347,10 +361,13 @@ export function App() {
           await api.revokeDevice(id);
           await refresh();
         }}
-        onInviteMember={async (email) => {
-          await api.inviteMember(email);
+        onInviteMember={async (email, proof) => {
+          await api.inviteMember(email, proof);
           await refresh();
         }}
+        confirmBy={confirmBy}
+        passkeys={passkeys}
+        onPasskeysChanged={refresh}
         onRemoveMember={async (id) => {
           await api.removeMember(id);
           await refresh();

@@ -103,6 +103,22 @@ import {
   type MemberRow,
   type MemberView
 } from "./members";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
+import {
+  addRule,
+  asAuthentication,
+  asPurpose,
+  asRegistration,
+  PasskeyStore,
+  proofOptions,
+  register,
+  registrationOptions,
+  verifyProof,
+  type AddRule,
+  type PasskeyView,
+  type Purpose,
+  type RelyingParty
+} from "./passkeys";
 import { handoffMessage, type Sender } from "./messages";
 import { REVOKED_CLOSE_CODE } from "./protocol";
 import type { Project } from "./projects";
@@ -158,6 +174,8 @@ export type PupuState = {
   readonly reports: readonly ReportCard[];
   /** 这个人能进的两条聊天。没有成员身份时没有私聊。 */
   readonly chats: ChatsView;
+  /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
+  readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
 };
 
 /** 配对的结果。失败时带上给 Worker 回的状态码。 */
@@ -183,6 +201,7 @@ export class Pupu extends DurableObject<Env> {
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
   readonly members = new MemberStore(this.ctx.storage.sql);
+  readonly passkeys = new PasskeyStore(this.ctx.storage.sql);
   readonly connectors = new ConnectorStore(this.ctx.storage.sql);
   readonly usage = new UsageStore(this.ctx.storage.sql);
   /** 连接器工具和审批要用的状态。 */
@@ -740,7 +759,14 @@ export class Pupu extends DurableObject<Env> {
         accounts: this.#connectorViews(current)
       },
       reports: this.#reportCards(own),
-      chats: this.threads.chats(own)
+      chats: this.threads.chats(own),
+      passkeys:
+        viewer === null
+          ? null
+          : {
+              keys: this.passkeys.views(viewer),
+              add: addRule(this.passkeys.everHad(viewer), this.devices.memberHadPhone(viewer))
+            }
     };
   }
 
@@ -1049,12 +1075,14 @@ export class Pupu extends DurableObject<Env> {
   async decideApproval(
     id: string,
     decision: "allow" | "deny",
-    device: string | null = null
+    device: string | null = null,
+    proof: PasskeyProof | null = null
   ): Promise<"ok" | "missing" | "settled" | "phone_only"> {
     const signIn = this.signIns.byId(id);
     const computerId = signIn ? null : this.approvals.byId(id)?.computerId;
     const owner = computerId ? this.#ownerOf(computerId) : null;
-    if (!mayDecide(decision, this.#actor(device), owner)) return "phone_only";
+    const proven = decision === "allow" ? await this.#proven(device, { kind: "approval", id }, proof) : null;
+    if (!mayDecide(decision, this.#actor(device), owner, proven)) return "phone_only";
     if (signIn) {
       const result = this.signIns.decide(id, decision, Date.now());
       if (device) this.pusher.decidedBy(id, device);
@@ -1129,13 +1157,15 @@ export class Pupu extends DurableObject<Env> {
   async setComputerPolicy(
     id: string,
     policy: string,
-    device: string | null = null
+    device: string | null = null,
+    proof: PasskeyProof | null = null
   ): Promise<"ok" | "missing" | "phone_only"> {
     await this.lifecycle.start();
     if (!isComputerPolicy(policy)) throw new Error("没有这个分级");
     const computer = this.computers.list().find((row) => row.id === id);
     if (!computer) return "missing";
-    if (!mayChangePolicy(computer.policy, policy, this.#actor(device), computer.ownerId)) return "phone_only";
+    const proven = await this.#proven(device, { kind: "policy", computerId: id, policy }, proof);
+    if (!mayChangePolicy(computer.policy, policy, this.#actor(device), computer.ownerId, proven)) return "phone_only";
     return this.gate.setPolicy(id, policy) ? "ok" : "missing";
   }
 
@@ -1166,10 +1196,12 @@ export class Pupu extends DurableObject<Env> {
   /** 创建者在手机 App 上邀请一个人，见 `mayInvite`。之后那个人用这个 Google 账号登录就放行。 */
   async inviteMember(
     email: string,
-    device: string | null = null
+    device: string | null = null,
+    proof: PasskeyProof | null = null
   ): Promise<Assignment | "invalid" | "exists" | "creator_phone_only"> {
     const actor = this.#actor(device);
-    if (!mayInvite(actor)) return "creator_phone_only";
+    const proven = await this.#proven(device, { kind: "invite", email: emailKey(email) }, proof);
+    if (!mayInvite(actor, proven)) return "creator_phone_only";
     if (!isEmail(email)) return "invalid";
     if (this.members.byEmail(email)) return "exists";
     // 第一个 Pupu 的老成员不在目录里，目录认不出他已经有家了。
@@ -1204,8 +1236,57 @@ export class Pupu extends DurableObject<Env> {
       },
       Date.now()
     );
+    if (result === "ok") this.passkeys.revokeMember(id, Date.now());
     this.#devicesChanged();
     return result;
+  }
+
+  // ---- 通行密钥（passkeys.ts）----
+
+  /**
+   * 这台设备的主人刚为这件事亲手确认过：返回成员 id，否则 null。手机不走这里，手机本身就算确认。
+   * 确认一次只对 `purpose` 这一件事有效。
+   */
+  async #proven(device: string | null, purpose: Purpose, proof: PasskeyProof | null): Promise<string | null> {
+    const memberId = this.#viewer(device);
+    if (!proof || memberId === null) return null;
+    const ok = await verifyProof(this.passkeys, proof.rp, memberId, purpose, proof.response, Date.now());
+    if (ok) this.#devicesChanged();
+    return ok ? memberId : null;
+  }
+
+  /** 网页要确认一件事：先拿挑战。不是成员、或者在这个网址上没有通行密钥是 null。 */
+  async passkeyProofOptions(device: string | null, rp: RelyingParty, purpose: Purpose) {
+    const memberId = this.#viewer(device);
+    if (memberId === null) return null;
+    return proofOptions(this.passkeys, rp, memberId, purpose, Date.now());
+  }
+
+  /**
+   * 加一把通行密钥的选项。只给网页和电脑 App 的窗口：手机本身就算亲手确认，用不着。
+   * 规则见 `addRule`；要先确认的，`proof` 是用已有的那把为「add」确认过的结果。
+   */
+  async passkeyAddOptions(device: string | null, rp: RelyingParty, proof: PasskeyProof | null) {
+    const actor = this.#actor(device);
+    const member = actor?.memberId ? this.members.byId(actor.memberId) : undefined;
+    if (!actor || !member || actor.kind === "phone") return { ok: false as const, reason: "not_member" as const };
+    const rule = addRule(this.passkeys.everHad(member.id), this.devices.memberHadPhone(member.id));
+    if (rule === "has_phone") return { ok: false as const, reason: rule };
+    if (rule === "needs_proof" && (await this.#proven(device, { kind: "add" }, proof)) !== member.id) {
+      return { ok: false as const, reason: rule };
+    }
+    return { ok: true as const, options: await registrationOptions(this.passkeys, rp, member, Date.now()) };
+  }
+
+  /** 存下浏览器建好的那把。名字用这台设备的名字，比如「Chrome · Mac」。 */
+  async addPasskey(device: string | null, rp: RelyingParty, response: unknown): Promise<boolean> {
+    const actor = this.#actor(device);
+    const registration = asRegistration(response);
+    if (!actor?.memberId || actor.kind === "phone" || !registration) return false;
+    const name = this.devices.list().find((row) => row.id === device)?.name ?? "通行密钥";
+    const ok = await register(this.passkeys, rp, actor.memberId, registration, name, Date.now());
+    if (ok) this.#devicesChanged();
+    return ok;
   }
 
   // ---- 账户（连接器，需求说明 4.8）----
@@ -1551,6 +1632,20 @@ function authBackend(env: Env): AuthBackend {
   };
 }
 
+/** 一次通行密钥确认：浏览器给的结果，加上它是在哪个网址上做的。 */
+type PasskeyProof = { readonly rp: RelyingParty; readonly response: AuthenticationResponseJSON };
+
+/** 网页在哪个网址上：通行密钥绑在主机名上，app.getpupu.com 和 workers.dev 上各是各的。 */
+function relyingParty(url: URL): RelyingParty {
+  return { id: url.hostname, origin: url.origin };
+}
+
+/** 请求里带的确认。没带、形状不对都当没带，由权限判断去拒。 */
+function proofOf(url: URL, value: unknown): PasskeyProof | null {
+  const response = asAuthentication(value);
+  return response ? { rp: relyingParty(url), response } : null;
+}
+
 async function readJson<T>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
@@ -1613,28 +1708,36 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   }
   const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
   if (policy && method === "POST") {
-    const body = await readJson<{ policy?: string }>(request);
+    const body = await readJson<{ policy?: string; proof?: unknown }>(request);
     const result = await caller.pupu.setComputerPolicy(
       decodeURIComponent(policy[1] ?? ""),
       String(body.policy ?? ""),
-      caller.device
+      caller.device,
+      proofOf(url, body.proof)
     );
     if (result === "missing") return Response.json({ error: "没有这台电脑" }, { status: 404 });
     if (result === "phone_only") {
-      return Response.json({ error: "放宽权限要在这台电脑主人的手机 App 上改" }, { status: 403 });
+      return Response.json({ error: "放宽权限要电脑主人亲手确认：在手机 App 上改，或者用通行密钥" }, { status: 403 });
     }
     return Response.json({ ok: true });
   }
   const approval = pathname.match(/^\/api\/approvals\/([^/]+)$/);
   if (approval && method === "POST") {
-    const body = await readJson<{ decision?: string }>(request);
+    const body = await readJson<{ decision?: string; proof?: unknown }>(request);
     if (body.decision !== "allow" && body.decision !== "deny") {
       return Response.json({ error: "decision 只能是 allow 或 deny" }, { status: 400 });
     }
-    const result = await caller.pupu.decideApproval(decodeURIComponent(approval[1] ?? ""), body.decision, caller.device);
+    const result = await caller.pupu.decideApproval(
+      decodeURIComponent(approval[1] ?? ""),
+      body.decision,
+      caller.device,
+      proofOf(url, body.proof)
+    );
     if (result === "missing") return Response.json({ error: "没有这条请示" }, { status: 404 });
     if (result === "settled") return Response.json({ error: "这条请示已经处理过或过期了" }, { status: 409 });
-    if (result === "phone_only") return Response.json({ error: "要在这台电脑主人的手机 App 上批准" }, { status: 403 });
+    if (result === "phone_only") {
+      return Response.json({ error: "要电脑主人亲手批准：在手机 App 上点，或者用通行密钥" }, { status: 403 });
+    }
     return Response.json({ ok: true });
   }
   if (pathname === "/api/push-tokens" && method === "POST") {
@@ -1679,16 +1782,45 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     return Response.json({ ok: true });
   }
   if (pathname === "/api/members" && method === "POST") {
-    const body = await readJson<{ email?: unknown }>(request);
-    const result = await caller.pupu.inviteMember(typeof body.email === "string" ? body.email : "", caller.device);
+    const body = await readJson<{ email?: unknown; proof?: unknown }>(request);
+    const result = await caller.pupu.inviteMember(
+      typeof body.email === "string" ? body.email : "",
+      caller.device,
+      proofOf(url, body.proof)
+    );
     if (result === "invalid") return Response.json({ error: "填一个 Google 账号的邮箱" }, { status: 400 });
     if (result === "exists") return Response.json({ error: "这个人已经在成员名单上了" }, { status: 409 });
     if (result === "taken") return Response.json({ error: "这个账号已经有自己的 Pupu 了" }, { status: 409 });
     if (result === "full") return Response.json({ error: SEATS_FULL }, { status: 409 });
     if (result === "creator_phone_only") {
-      return Response.json({ error: "邀请成员要创建者在手机 App 上做" }, { status: 403 });
+      return Response.json({ error: "邀请成员要创建者亲手确认：在手机 App 上做，或者用通行密钥" }, { status: 403 });
     }
     return Response.json({ ok: true });
+  }
+  if (pathname === "/api/proofs" && method === "POST") {
+    const body = await readJson<{ purpose?: unknown }>(request);
+    const purpose = asPurpose(body.purpose);
+    if (!purpose) return Response.json({ error: "要确认什么没说清楚" }, { status: 400 });
+    const options = await caller.pupu.passkeyProofOptions(caller.device, relyingParty(url), purpose);
+    if (!options) return Response.json({ error: `你在 ${url.host} 上还没有通行密钥，先在设置里加一把` }, { status: 409 });
+    return Response.json(options);
+  }
+  if (pathname === "/api/passkeys/options" && method === "POST") {
+    const body = await readJson<{ proof?: unknown }>(request);
+    const result = await caller.pupu.passkeyAddOptions(caller.device, relyingParty(url), proofOf(url, body.proof));
+    if (result.ok) return Response.json(result.options);
+    const error =
+      result.reason === "has_phone"
+        ? "你连过手机，在手机 App 上批准就行"
+        : result.reason === "needs_proof"
+          ? "先用已有的通行密钥确认一次"
+          : "要先用 Google 登录，在网页或电脑 App 上加";
+    return Response.json({ error, reason: result.reason }, { status: 403 });
+  }
+  if (pathname === "/api/passkeys" && method === "POST") {
+    const body = await readJson<{ response?: unknown }>(request);
+    const ok = await caller.pupu.addPasskey(caller.device, relyingParty(url), body.response);
+    return ok ? Response.json({ ok }) : Response.json({ error: "没加上，再试一次" }, { status: 400 });
   }
   const inviteRevoke = pathname.match(/^\/api\/invites\/([^/]+)\/revoke$/);
   if (pathname === "/api/invites" || inviteRevoke) {

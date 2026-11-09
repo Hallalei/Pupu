@@ -1,8 +1,15 @@
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON
+} from "@simplewebauthn/browser";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
 import type { InviteList } from "../directory";
+import type { Purpose } from "../passkeys";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
 import type { PupuState } from "../server";
@@ -63,16 +70,27 @@ export const api = {
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/takeback`, {
       method: "POST"
     }),
-  setPolicy: (id: string, policy: ComputerPolicy) =>
+  /** `proof` 是往宽里改时用通行密钥确认过的结果，见 passkey.ts。 */
+  setPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/policy`, {
       method: "POST",
-      body: JSON.stringify({ policy })
+      body: JSON.stringify({ policy, proof })
     }),
-  decideApproval: (id: string, decision: "allow" | "deny") =>
+  decideApproval: (id: string, decision: "allow" | "deny", proof?: AuthenticationResponseJSON) =>
     request<{ ok: true }>(`/api/approvals/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ decision })
+      body: JSON.stringify({ decision, proof })
     }),
+  /** 用通行密钥确认一件事之前，先拿挑战。 */
+  proofOptions: (purpose: Purpose) =>
+    request<PublicKeyCredentialRequestOptionsJSON>("/api/proofs", { method: "POST", body: JSON.stringify({ purpose }) }),
+  passkeyOptions: (proof?: AuthenticationResponseJSON) =>
+    request<PublicKeyCredentialCreationOptionsJSON>("/api/passkeys/options", {
+      method: "POST",
+      body: JSON.stringify({ proof })
+    }),
+  addPasskey: (response: RegistrationResponseJSON) =>
+    request<{ ok: true }>("/api/passkeys", { method: "POST", body: JSON.stringify({ response }) }),
   /** 拿配对码或访问口令换这个浏览器的凭据。凭据写进 HttpOnly cookie，脚本拿不到。 */
   pair: (credential: { code: string } | { accessToken: string }) =>
     request<{ id: string; name: string }>("/api/pair", {
@@ -85,9 +103,9 @@ export const api = {
     request<{ ok: true }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {
       method: "POST"
     }),
-  /** 邀请成员。只有创建者在手机 App 上能邀请，网页上调会被拒（见 members.ts 的 `mayInvite`）。 */
-  inviteMember: (email: string) =>
-    request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email }) }),
+  /** 邀请成员。只有创建者能邀请，网页上要带通行密钥的确认（见 members.ts 的 `mayInvite`）。 */
+  inviteMember: (email: string, proof?: AuthenticationResponseJSON) =>
+    request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email, proof }) }),
   removeMember: (id: string) =>
     request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" }),
   invites: () => request<InviteList>("/api/invites"),
@@ -111,6 +129,7 @@ export function usePupuState() {
   const [members, setMembers] = useState<PupuState["members"]>([]);
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
+  const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -133,6 +152,7 @@ export function usePupuState() {
         // 部署新云端之前的老 DO 没有这一项。
         setReports(state.reports ?? []);
         setChats(state.chats ?? NO_CHATS);
+        setPasskeys(state.passkeys ?? null);
         setLoaded(true);
       }
       if (use.activity) setActivity(state.activity);
@@ -186,6 +206,7 @@ export function usePupuState() {
     applyActivity,
     reports,
     chats,
+    passkeys,
     error,
     unauthorized,
     loaded,

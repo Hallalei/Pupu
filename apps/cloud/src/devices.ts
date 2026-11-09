@@ -190,20 +190,28 @@ export function deviceView(
 }
 
 /**
- * 是不是电脑主人的手机。`owner` 是 null：还没主人的老电脑、新手机登录的等批，谁的手机都算。
- * 只认手机，是因为电脑 App 和浏览器的窗口就开在 Pupu 能操作的电脑上，它能自己点。
+ * 电脑主人亲手确认过：用他的手机 App 点的，或者他刚用通行密钥确认过这件事（`proven` 是确认过的成员，见 passkeys.ts）。
+ * 只认这两样，是因为电脑 App 和浏览器的窗口就开在 Pupu 能操作的电脑上，它能自己点；
+ * 手机在人手里，通行密钥要人按指纹或输系统密码。
+ * `owner` 是 null：还没主人的老电脑、新手机登录的等批，谁的手机都算；通行密钥不认，它只证明是哪个成员。
  */
-function isOwnersPhone(actor: Actor | undefined, owner: string | null): boolean {
-  return actor?.kind === "phone" && (owner === null || actor.memberId === owner);
+function confirmedByOwner(actor: Actor | undefined, owner: string | null, proven: string | null): boolean {
+  if (actor?.kind === "phone" && (owner === null || actor.memberId === owner)) return true;
+  return owner !== null && proven === owner && actor?.memberId === owner;
 }
 
 /**
- * 审批的「允许」只认这台电脑主人的手机 App（需求说明 4.7）。拒绝哪儿都能点，挡住的只是 Pupu 自己的请求。
+ * 审批的「允许」只认电脑主人亲手确认（需求说明 4.7）。拒绝哪儿都能点，挡住的只是 Pupu 自己的请求。
  * `actor` 是 null 说明请求没带设备凭据（本机开发没设访问口令），照常放行；
  * undefined 是带了凭据却查不到这台设备（刚被吊销），不放行。
  */
-export function mayDecide(decision: "allow" | "deny", actor: Actor | null | undefined, owner: string | null): boolean {
-  return decision === "deny" || actor === null || isOwnersPhone(actor, owner);
+export function mayDecide(
+  decision: "allow" | "deny",
+  actor: Actor | null | undefined,
+  owner: string | null,
+  proven: string | null = null
+): boolean {
+  return decision === "deny" || actor === null || confirmedByOwner(actor, owner, proven);
 }
 
 /**
@@ -220,16 +228,22 @@ export function mayPair(kind: DeviceKind | "computer", codeByPhone: boolean, had
 const STRICTNESS: Readonly<Record<ComputerPolicy, number>> = { trust: 0, ask_risky: 1, ask_all: 2 };
 
 /**
- * 电脑的权限分级往宽里改只认这台电脑主人的手机 App，理由和 `mayDecide` 一样：改成 `trust` 就等于以后都不用批。
- * 往严里改、不变，哪儿都行。`actor` 的 null 和 undefined、`owner` 的 null 也和 `mayDecide` 一样。
+ * 电脑的权限分级往宽里改只认电脑主人亲手确认，理由和 `mayDecide` 一样：改成 `trust` 就等于以后都不用批。
+ * 往严里改、不变，哪儿都行。`actor` 的 null 和 undefined、`owner` 的 null、`proven` 也和 `mayDecide` 一样。
  */
 export function mayChangePolicy(
   from: ComputerPolicy,
   to: ComputerPolicy,
   actor: Actor | null | undefined,
-  owner: string | null
+  owner: string | null,
+  proven: string | null = null
 ): boolean {
-  return STRICTNESS[to] >= STRICTNESS[from] || actor === null || isOwnersPhone(actor, owner);
+  return STRICTNESS[to] >= STRICTNESS[from] || actor === null || confirmedByOwner(actor, owner, proven);
+}
+
+/** 往宽里改：要亲手确认的那种改法。网页拿它决定点了要不要先过通行密钥。 */
+export function loosens(from: ComputerPolicy, to: ComputerPolicy): boolean {
+  return STRICTNESS[to] < STRICTNESS[from];
 }
 
 export class DeviceStore {
@@ -305,6 +319,13 @@ export class DeviceStore {
   /** 配过手机没有，吊销了的也算。 */
   hadPhone(): boolean {
     return this.#db().exec("SELECT 1 FROM pupu_devices WHERE kind = 'phone' LIMIT 1").toArray().length > 0;
+  }
+
+  /** 这个成员配过手机，吊销过的也算。 */
+  memberHadPhone(memberId: string): boolean {
+    return (
+      this.#db().exec("SELECT 1 FROM pupu_devices WHERE kind = 'phone' AND member_id = ? LIMIT 1", memberId).toArray().length > 0
+    );
   }
 
   insert(input: { name: string; kind: DeviceKind; tokenHash: string; memberId: string | null }): DeviceRow {

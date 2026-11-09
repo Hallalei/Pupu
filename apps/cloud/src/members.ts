@@ -81,12 +81,14 @@ export function isEmail(value: string): boolean {
 }
 
 /**
- * 邀请成员只有创建者能做，而且要在手机 App 上：加一个人等于放宽权限，电脑上的浏览器和电脑 App
- * Pupu 自己点得到，理由和 `mayChangePolicy` 一样。`actor` 是 null 是本机开发没带凭据。
+ * 邀请成员只有创建者能做，而且要他亲手确认：在手机 App 上点，或者刚用通行密钥确认过（`proven`）。
+ * 加一个人等于放宽权限，电脑上的浏览器和电脑 App Pupu 自己点得到，理由和 `mayChangePolicy` 一样。
+ * `actor` 是 null 是本机开发没带凭据。
  */
-export function mayInvite(actor: Actor | null | undefined): boolean {
+export function mayInvite(actor: Actor | null | undefined, proven: string | null = null): boolean {
   if (actor === null) return true;
-  return actor?.kind === "phone" && actor.role === "creator" && actor.memberId !== null;
+  if (actor?.role !== "creator" || actor.memberId === null) return false;
+  return actor.kind === "phone" || proven === actor.memberId;
 }
 
 /** 邀请码开的是别人自己的 Pupu，看不到这边的数据，所以不用像邀请成员那样限手机。 */

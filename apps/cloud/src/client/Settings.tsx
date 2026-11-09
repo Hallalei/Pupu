@@ -1,4 +1,5 @@
 import { Button, Drawer, Modal } from "@heroui/react";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
@@ -10,6 +11,7 @@ import { ago } from "./ago";
 import { api } from "./api";
 import { CheckIcon } from "./icons";
 import { useDesktopComputer } from "./desktop";
+import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ThisComputer } from "./ThisComputer";
 
 const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
@@ -43,21 +45,28 @@ export function Settings({
   onRevokeDevice,
   onInviteMember,
   onRemoveMember,
-  onCreatePairingCode
+  onCreatePairingCode,
+  confirmBy,
+  passkeys,
+  onPasskeysChanged
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   computers: readonly ComputerView[];
   onRevoke: (id: string) => Promise<void>;
-  onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
+  onSetPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
   devices: readonly DeviceView[];
   members: readonly MemberView[];
   /** 发请求的是谁（见 members.ts 的 `actorOf`），按钮灰不灰和接口的规则对得上；本机开发没设访问口令时是 null。 */
   actor: Actor | null | undefined;
   onRevokeDevice: (id: string) => Promise<void>;
-  onInviteMember: (email: string) => Promise<void>;
+  onInviteMember: (email: string, proof?: AuthenticationResponseJSON) => Promise<void>;
   onRemoveMember: (id: string) => Promise<void>;
   onCreatePairingCode: () => Promise<PairingCode>;
+  /** 允许、放宽权限、邀请这类要亲手确认的事，这台设备上怎么确认，见 passkey.ts。 */
+  confirmBy: ConfirmWhere;
+  passkeys: Passkeys | null;
+  onPasskeysChanged: () => Promise<void>;
 }) {
   const origin = window.location.origin;
   const thisComputer = useDesktopComputer();
@@ -79,14 +88,23 @@ export function Settings({
               here={computer.id === thisComputer?.computerId}
               owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
               actor={actor}
+              confirmBy={confirmBy}
+              passkeys={passkeys}
               onRevoke={() => onRevoke(computer.id)}
-              onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
+              onSetPolicy={(policy, proof) => onSetPolicy(computer.id, policy, proof)}
             />
           ))
         )}
       </section>
 
-      <Members members={members} actor={actor} onRemove={onRemoveMember} onInvite={onInviteMember} />
+      <Members
+        members={members}
+        actor={actor}
+        confirmBy={confirmBy}
+        passkeys={passkeys}
+        onRemove={onRemoveMember}
+        onInvite={onInviteMember}
+      />
 
       {mayManageInvites(actor) && <Invites isOpen={isOpen} />}
 
@@ -100,6 +118,10 @@ export function Settings({
           ))
         )}
       </section>
+
+      {passkeys && (confirmBy === "passkey" || confirmBy === "browser") && (
+        <PasskeyList passkeys={passkeys} confirmBy={confirmBy} onChanged={onPasskeysChanged} />
+      )}
 
       <PairNew
         origin={origin}
@@ -176,6 +198,10 @@ function useRowAction() {
       await work();
       setAction(IDLE_ROW);
     } catch (cause) {
+      if (cause instanceof Cancelled) {
+        setAction(IDLE_ROW);
+        return;
+      }
       const error = cause instanceof Error ? cause.message : String(cause);
       setAction((current) => ({ ...current, request: { status: "failed", error } }));
     }
@@ -228,6 +254,8 @@ function ComputerRow({
   here,
   owner,
   actor,
+  confirmBy,
+  passkeys,
   onRevoke,
   onSetPolicy
 }: {
@@ -237,10 +265,19 @@ function ComputerRow({
   /** 主人的邮箱。 */
   owner: string | null;
   actor: Actor | null | undefined;
+  confirmBy: ConfirmWhere;
+  passkeys: Passkeys | null;
   onRevoke: () => Promise<void>;
-  onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
+  onSetPolicy: (policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
 }) {
   const row = useRowAction();
+  /** 往宽里改：主人用通行密钥确认过就能改（`mayChangePolicy` 的 proven），别人和有手机的人去手机上。 */
+  function howTo(policy: ComputerPolicy): "now" | "passkey" | "browser" | "phone" {
+    if (mayChangePolicy(computer.policy, policy, actor, computer.ownerId)) return "now";
+    const proven = actor?.memberId ?? null;
+    if (!passkeys || !mayChangePolicy(computer.policy, policy, actor, computer.ownerId, proven)) return "phone";
+    return confirmBy === "passkey" || confirmBy === "browser" ? confirmBy : "phone";
+  }
   return (
     <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
       <div className="flex items-center gap-3">
@@ -272,7 +309,8 @@ function ComputerRow({
       <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col">
         {POLICIES.map(([policy, label, hint]) => {
           const selected = computer.policy === policy;
-          const locked = !mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
+          const how = howTo(policy);
+          const locked = how === "phone";
           return (
             <button
               key={policy}
@@ -281,7 +319,13 @@ function ComputerRow({
               aria-checked={selected}
               disabled={row.sending || locked}
               onClick={() => {
-                if (!selected) void row.run(() => onSetPolicy(policy));
+                if (selected) return;
+                if (how === "browser") openInBrowser();
+                else if (how === "passkey" && passkeys)
+                  void row.run(async () =>
+                    onSetPolicy(policy, await confirm({ kind: "policy", computerId: computer.id, policy }, passkeys))
+                  );
+                else void row.run(() => onSetPolicy(policy));
               }}
               className={`flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 ${
                 locked ? "opacity-60" : ""
@@ -291,6 +335,7 @@ function ComputerRow({
                 <span className="block text-subheadline font-medium">
                   {label}
                   {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
+                  {how === "browser" && <span className="font-normal text-muted"> · 在浏览器里改</span>}
                 </span>
                 {selected && <span className="block text-caption text-muted">{hint}</span>}
               </span>
@@ -410,33 +455,44 @@ function MemberRow({
 const DEVICE_KINDS: Record<DeviceView["kind"], string> = { phone: "手机", browser: "浏览器", desktop: "电脑 App" };
 
 /**
- * 成员名单：创建者在前。创建者能移除别人；邀请要在手机 App 上做（加人等于放宽权限，见 `mayInvite`），
- * 所以网页上只有本机开发没带凭据时才有邀请框。
+ * 成员名单：创建者在前。创建者能移除别人；邀请要亲手确认（加人等于放宽权限，见 `mayInvite`）：
+ * 手机上直接邀请，网页上用通行密钥，电脑 App 交给浏览器。
  */
 function Members({
   members,
   actor,
+  confirmBy,
+  passkeys,
   onRemove,
   onInvite
 }: {
   members: readonly MemberView[];
   actor: Actor | null | undefined;
+  confirmBy: ConfirmWhere;
+  passkeys: Passkeys | null;
   onRemove: (id: string) => Promise<void>;
-  onInvite: (email: string) => Promise<void>;
+  onInvite: (email: string, proof?: AuthenticationResponseJSON) => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (members.length === 0) return null;
+  const how: "now" | ConfirmWhere = mayInvite(actor)
+    ? "now"
+    : passkeys && mayInvite(actor, actor?.memberId ?? null)
+      ? confirmBy
+      : "phone";
 
   async function invite() {
     setInviting(true);
     setError(null);
     try {
-      await onInvite(email.trim());
+      const to = email.trim();
+      const proof = how === "passkey" && passkeys ? await confirm({ kind: "invite", email: to }, passkeys) : undefined;
+      await onInvite(to, proof);
       setEmail("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (!(cause instanceof Cancelled)) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setInviting(false);
     }
@@ -448,7 +504,7 @@ function Members({
       {members.map((member) => (
         <MemberRow key={member.id} member={member} actor={actor} onRemove={() => onRemove(member.id)} />
       ))}
-      {mayInvite(actor) ? (
+      {how === "now" || how === "passkey" ? (
         <form
           className="flex gap-2"
           onSubmit={(event) => {
@@ -468,6 +524,10 @@ function Members({
             邀请
           </Button>
         </form>
+      ) : how === "browser" ? (
+        <Button size="sm" variant="secondary" className="self-start" onPress={openInBrowser}>
+          在浏览器里邀请
+        </Button>
       ) : (
         actor?.role === "creator" && (
           <p className="m-0 text-subheadline text-muted">邀请成员要在手机 App 的设置里做。</p>
@@ -552,6 +612,62 @@ function Invites({ isOpen }: { isOpen: boolean }) {
 }
 
 /** 比如「手机 · a@gmail.com · 3 分钟前用过」。邮箱是这台设备属于的成员。 */
+/**
+ * 这个人的通行密钥。没有手机时，允许、放宽权限、邀请靠它确认：系统弹窗里按指纹或输电脑密码。
+ * 电脑 App 的窗口里加不了（见 passkey.ts），交给浏览器。
+ */
+function PasskeyList({
+  passkeys,
+  confirmBy,
+  onChanged
+}: {
+  passkeys: Passkeys;
+  confirmBy: "passkey" | "browser";
+  onChanged: () => Promise<void>;
+}) {
+  const row = useRowAction();
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="m-0 px-1 text-footnote text-muted">通行密钥</h3>
+      {passkeys.keys.length === 0 ? (
+        <p className="m-0 text-subheadline text-muted">
+          没有手机时，允许 Pupu 的请示、放宽电脑权限、邀请成员，都用通行密钥确认：按指纹或输电脑密码。
+        </p>
+      ) : (
+        passkeys.keys.map((key) => (
+          <div key={key.id} className="flex flex-col rounded-row bg-default px-3 py-3">
+            <div className="truncate text-body font-medium">{key.name}</div>
+            <div className="truncate text-subheadline text-muted">
+              {key.lastUsedAt ? `${ago(key.lastUsedAt)}用过` : `${ago(key.createdAt)}加的`}
+            </div>
+          </div>
+        ))
+      )}
+      {confirmBy === "browser" ? (
+        <Button size="sm" variant="secondary" className="self-start" onPress={openInBrowser}>
+          在浏览器里加
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="self-start"
+          isPending={row.sending}
+          onPress={() =>
+            void row.run(async () => {
+              await addPasskey(passkeys);
+              await onChanged();
+            })
+          }
+        >
+          加一把通行密钥
+        </Button>
+      )}
+      <RowError error={row.error} />
+    </section>
+  );
+}
+
 function deviceLabel(device: DeviceView): string {
   const seen = device.lastSeenAt ? `${ago(device.lastSeenAt)}用过` : null;
   return [DEVICE_KINDS[device.kind], device.member, seen].filter(Boolean).join(" · ");
