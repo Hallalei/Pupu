@@ -29,7 +29,9 @@ const { id } = Astro.props;
     <p class="bubble bubble--pupu" data-reply></p>
   </div>
   <noscript><p class="fine">申请内测要打开 JavaScript。</p></noscript>
+  <!-- 手机和平板下不了 Mac 版，换成一句话。按触屏判断，不按宽度：窄窗口的 Mac 照样给下载。 -->
   <p class="waitlist__have">
-    有邀请码：<a href="https://app.getpupu.com">打开网页版</a> · <a href="https://dl.getpupu.com/Pupu-arm64.dmg">下载 Mac 版</a>（Apple 芯片）
+    有邀请码：<a href="https://app.getpupu.com">打开网页版</a><span class="for-mac"> · <span class="nowrap"><a href="https://dl.getpupu.com/Pupu-arm64.dmg">下载 Mac 版</a>（Apple 芯片）</span></span>
+    <span class="for-touch">Mac 版请在 Mac 上打开本站下载。</span>
   </p>
 </div>
