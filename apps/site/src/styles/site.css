@@ -529,16 +529,6 @@ mark.is-lit { background: color-mix(in srgb, var(--warning) 42%, transparent); }
 .dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--offline); }
 .dot--on { background: var(--online); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chips li {
-  padding: 4px 12px;
-  border-radius: 999px;
-  background: var(--surface-strong);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-}
-
 .tool {
   padding: 10px 12px;
   border-radius: var(--radius-row);
