@@ -74,7 +74,7 @@ final class Connection {
         #if targetEnvironment(simulator)
         "http://localhost:5173"
         #else
-        "https://pupu.cobuilder-team.workers.dev"
+        "https://app.getpupu.com"
         #endif
     }
 

@@ -102,6 +102,21 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/members", method: "POST", body: ["email": email])
     }
 
+    /// 邀请码：开新 Pupu 用的，只有第一个 Pupu 的创建者能管，别人拿到 403。
+    func invites() async throws -> InviteList {
+        try await send("api/invites")
+    }
+
+    func createInvite() async throws -> String {
+        let created: Created = try await send("api/invites", method: "POST", body: [:])
+        return created.code
+    }
+
+    func revoke(invite code: String) async throws {
+        let encoded = code.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? code
+        let _: Done = try await send("api/invites/\(encoded)/revoke", method: "POST", body: [:])
+    }
+
     /// 移除成员：他名下的设备和电脑一起吊销。只有创建者能做。
     func remove(member id: String) async throws {
         let _: Done = try await send("api/members/\(id)/remove", method: "POST", body: [:])
@@ -120,6 +135,7 @@ nonisolated struct API: Sendable {
     }
 
     private struct Started: Decodable { let url: String }
+    private struct Created: Decodable { let code: String }
     private struct Done: Decodable {}
     private struct Failure: Decodable { let error: String }
 

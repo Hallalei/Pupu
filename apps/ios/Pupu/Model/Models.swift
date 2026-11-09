@@ -207,6 +207,20 @@ nonisolated struct Member: Decodable, Sendable, Hashable {
     }
 }
 
+/// 开新 Pupu 的邀请码，云端 directory.ts 的 InviteList。`left` 是还能生成几个。
+nonisolated struct InviteList: Decodable, Sendable, Hashable {
+    struct Invite: Decodable, Sendable, Hashable {
+        var code: String
+        let createdAt: Double
+        /// 用这个码开了 Pupu 的人的邮箱。没用过是 nil。
+        let usedBy: String?
+        let usedAt: Double?
+    }
+
+    var invites: [Invite]
+    var left: Int
+}
+
 /// 项目报回聊天的结果，云端 src/reports.ts 算好：同一个项目没看过的几条已经合成一张。
 nonisolated struct ReportCard: Decodable, Sendable, Hashable {
     enum Status: String, Sendable {

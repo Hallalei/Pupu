@@ -1,6 +1,12 @@
 import os from "node:os";
 
-export const DEFAULT_URL = "https://pupu.cobuilder-team.workers.dev";
+export const DEFAULT_URL = "https://app.getpupu.com";
+
+/**
+ * 以前的默认地址，和 DEFAULT_URL 是同一个 Worker，凭据两边都认。
+ * 0.2.1 以前的凭据按这个地址存，升级后搬过来，不用重新登录。
+ */
+export const LEGACY_URLS: readonly string[] = ["https://pupu.cobuilder-team.workers.dev"];
 
 /** 只留协议、主机和端口，比如 https://pupu.example.com。 */
 export function originOf(value: string): string {

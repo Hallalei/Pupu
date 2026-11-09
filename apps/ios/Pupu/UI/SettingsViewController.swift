@@ -1,7 +1,7 @@
 import UIKit
 
 /// 「我」：右上角点进来的那一页，照 Hark 的设置页做。第一页上面是我是谁，下面两组入口，点进去是二级页：
-/// 账户（连接器）、电脑和它的权限分级、成员、通知、设备和配对码、关于（连的是哪个 Pupu）。
+/// 账户（连接器）、电脑和它的权限分级、成员、邀请码、通知、设备和配对码、关于（连的是哪个 Pupu）。
 /// 一页一个 `Page`，共用这一个类：列表、格子、点了做什么都在这里。
 final class SettingsViewController: UICollectionViewController {
     nonisolated enum Page: Hashable, Sendable {
@@ -10,6 +10,7 @@ final class SettingsViewController: UICollectionViewController {
         case computers
         case computer(String)
         case members
+        case invites
         case notifications
         case devices
         case about
@@ -21,6 +22,7 @@ final class SettingsViewController: UICollectionViewController {
             case .computers: "电脑"
             case .computer: nil
             case .members: "成员"
+            case .invites: "邀请码"
             case .notifications: "通知"
             case .devices: "设备"
             case .about: "关于"
@@ -32,6 +34,7 @@ final class SettingsViewController: UICollectionViewController {
             case .accounts: "link"
             case .computers, .computer: "desktopcomputer"
             case .members: "person.2"
+            case .invites: "ticket"
             case .notifications: "bell"
             case .devices: "iphone"
             case .about, .root: "info.circle"
@@ -51,6 +54,7 @@ final class SettingsViewController: UICollectionViewController {
         case revokeComputer
         case notifications
         case members
+        case invites
         case devices
         case pair
         case connection
@@ -70,6 +74,8 @@ final class SettingsViewController: UICollectionViewController {
         case notifications(Push.Status, busy: Bool)
         case member(Member, removable: Bool)
         case invite
+        case inviteCode(InviteList.Invite)
+        case newInvite(left: Int, busy: Bool)
         case device(Device)
         case noDevice
         case newCode(note: String, busy: Bool)
@@ -96,6 +102,9 @@ final class SettingsViewController: UICollectionViewController {
     private var connecting: String?
     private var signIn: SignIn?
     private var pushToken: NSObjectProtocol?
+    /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，第一页也就不放这一行。
+    private var invites: InviteList?
+    private var creatingInvite = false
 
     init(page: Page = .root) {
         self.page = page
@@ -141,7 +150,14 @@ final class SettingsViewController: UICollectionViewController {
             MainActor.assumeIsolated { self?.render() }
         }
         if page == .root || page == .notifications { Push.shared.register() }
+        if page == .root || page == .invites { loadInvites() }
         render()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 从邀请码页回来时，第一页那一行的「还能生成几个」跟着变。
+        if page == .root, invites != nil { loadInvites() }
     }
 
     private var computerId: String? {
@@ -171,6 +187,7 @@ final class SettingsViewController: UICollectionViewController {
         case .computers: renderComputers(&snapshot)
         case .computer(let id): renderComputer(id, &snapshot)
         case .members: renderMembers(&snapshot)
+        case .invites: renderInvites(&snapshot)
         case .notifications:
             snapshot.appendSections([.notifications])
             snapshot.appendItems([.notifications(Push.shared.status, busy: testing)], toSection: .notifications)
@@ -196,6 +213,7 @@ final class SettingsViewController: UICollectionViewController {
         var first: [Item] = [.link(.accounts, summary: accounts), .link(.computers, summary: computers)]
         // 没开 Google 登录、还没有创建者时没有成员，不显示这一行。
         if !store.members.isEmpty { first.append(.link(.members, summary: "\(store.members.count) 人")) }
+        if let invites { first.append(.link(.invites, summary: "还能生成 \(invites.left) 个")) }
         snapshot.appendItems(first, toSection: .pages(0))
         snapshot.appendItems([
             .link(.notifications, summary: Push.shared.status.summary),
@@ -270,6 +288,18 @@ final class SettingsViewController: UICollectionViewController {
         }, toSection: .members)
         // 邀请只有创建者在手机上能做（云端 members.ts 的 mayInvite）。
         if me?.isCreator == true { snapshot.appendItems([.invite], toSection: .members) }
+    }
+
+    private func renderInvites(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
+        snapshot.appendSections([.invites, .note])
+        guard let invites else {
+            snapshot.appendItems([.note("加载中…")], toSection: .note)
+            return
+        }
+        snapshot.appendItems(invites.invites.map(Item.inviteCode) + [.newInvite(left: invites.left, busy: creatingInvite)], toSection: .invites)
+        snapshot.appendItems([
+            .note("一个码给一个人开他自己的 Pupu，用一次就失效。没用掉的码也占名额，用不上就作废。")
+        ], toSection: .note)
     }
 
     private func renderDevices(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
@@ -429,6 +459,25 @@ final class SettingsViewController: UICollectionViewController {
             content.text = "邀请成员"
             content.textProperties.font = Theme.font(.body, weight: .semibold)
             content.secondaryText = "填他的 Google 邮箱。他用这个账号登录就能一起用 Pupu；他的第一台手机要一台已经连上的手机点「允许」。"
+        case .inviteCode(let invite):
+            content.text = invite.code
+            content.textProperties.font = UIFontMetrics(forTextStyle: .body)
+                .scaledFont(for: .monospacedSystemFont(ofSize: 17, weight: .semibold))
+            if let usedBy = invite.usedBy {
+                content.secondaryText = usedBy
+            } else {
+                content.secondaryText = "点一下发给对方"
+                let revoke = UIButton(configuration: .plain(), primaryAction: UIAction(title: "作废") { [weak self] _ in
+                    self?.revokeInvite(invite.code)
+                })
+                revoke.configuration?.baseForegroundColor = Theme.dangerInk
+                cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+            }
+        case .newInvite(let left, let busy):
+            content.text = busy ? "正在生成…" : "生成邀请码"
+            content.textProperties.font = Theme.font(.body, weight: .semibold)
+            content.textProperties.color = left > 0 ? Theme.ink : Theme.inkMuted
+            content.secondaryText = left > 0 ? "还能生成 \(left) 个" : "名额用完了"
         case .device(let device):
             content.text = device.current ? "\(device.name) · 这台手机" : device.name
             content.secondaryText = device.label
@@ -502,6 +551,8 @@ final class SettingsViewController: UICollectionViewController {
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
         case .link, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .inviteCode(let invite): invite.usedBy == nil
+        case .newInvite(let left, let busy): left > 0 && !busy
         default: false
         }
     }
@@ -542,6 +593,11 @@ final class SettingsViewController: UICollectionViewController {
             }
         case .invite:
             askInvite()
+        case .inviteCode(let invite):
+            guard invite.usedBy == nil, let cell = collectionView.cellForItem(at: indexPath) else { return }
+            share(invite.code, from: cell)
+        case .newInvite:
+            createInvite()
         case .newCode:
             createCode()
         case .code(let pairing):
@@ -755,6 +811,68 @@ final class SettingsViewController: UICollectionViewController {
             }
         })
         present(alert, animated: true)
+    }
+
+    private func loadInvites() {
+        guard let api = Store.shared.api else { return }
+        Task {
+            // 不是第一个 Pupu 的创建者会拿到 403：留着 nil，这一行不出现。
+            invites = try? await api.invites()
+            render()
+        }
+    }
+
+    private func createInvite() {
+        guard !creatingInvite, let api = Store.shared.api else { return }
+        creatingInvite = true
+        render()
+        Task {
+            do {
+                let code = try await api.createInvite()
+                // 先把新码放上去，再拉一次整份；拉失败也不会看着像没生成。
+                invites?.invites.insert(.init(code: code, createdAt: Date.now.timeIntervalSince1970 * 1000, usedBy: nil, usedAt: nil), at: 0)
+                invites?.left -= 1
+            } catch {
+                show(error.localizedDescription)
+            }
+            creatingInvite = false
+            render()
+            if let fresh = try? await api.invites() {
+                invites = fresh
+                render()
+            }
+        }
+    }
+
+    private func revokeInvite(_ code: String) {
+        let sheet = UIAlertController(title: nil, message: "作废后 \(code) 不能再用，名额空出来。", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "作废 \(code)", style: .destructive) { [weak self] _ in
+            guard let api = Store.shared.api else { return }
+            Task {
+                do {
+                    try await api.revoke(invite: code)
+                    self?.invites?.invites.removeAll { $0.code == code }
+                    self?.invites?.left += 1
+                } catch {
+                    self?.show(error.localizedDescription)
+                }
+                self?.render()
+                if let fresh = try? await api.invites() {
+                    self?.invites = fresh
+                    self?.render()
+                }
+            }
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(sheet, animated: true)
+    }
+
+    /// 系统分享面板：发消息、拷贝都在里面。带上怎么用，对方不用再问。
+    private func share(_ code: String, from cell: UIView) {
+        let text = "Pupu 内测邀请码：\(code)\n网页版打开 https://app.getpupu.com ，Mac 版在 https://getpupu.com 下载。用 Google 账号登录，按提示填这个码。"
+        let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        sheet.popoverPresentationController?.sourceView = cell
+        present(sheet, animated: true)
     }
 
     private func confirmRemove(_ member: Member) {

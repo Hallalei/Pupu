@@ -36,7 +36,8 @@ import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
 import type { TrayAction } from "./tray-menu.ts";
 import { startUpdates } from "./updates.ts";
-import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, originOf, sameOrigin } from "./urls.ts";
+import { readWithLegacy } from "./legacy-pairing.ts";
+import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, LEGACY_URLS, originOf, sameOrigin } from "./urls.ts";
 import { computerView } from "./view.ts";
 import { windowChrome } from "./window-chrome.ts";
 
@@ -183,7 +184,9 @@ async function computerRejected(): Promise<void> {
 
 async function loadPairing(): Promise<Pairing> {
   try {
-    return await readPairing(origin);
+    const { pairing: found, from } = await readWithLegacy(origin, DEFAULT_URL, LEGACY_URLS, readPairing, writePairing);
+    if (from) log(`凭据从 ${from} 复制到 ${origin}`);
+    return found;
   } catch (error) {
     log(`凭据解不开，当成没配对：${message(error)}`);
     return { desktop: null, computer: null };

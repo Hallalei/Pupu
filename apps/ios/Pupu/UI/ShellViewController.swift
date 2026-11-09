@@ -1,6 +1,6 @@
 import UIKit
 
-/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边打开整页项目列表。
+/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边打开整页项目列表，聊天页左边是远程桌面。
 /// 顶栏下方是等你批准的请示（哪一页都在）和聊天段的「正在做」，出现时把页面内容往下挤，不盖住对话。
 /// 项目名胶囊盖在内容上，不挤内容。
 /// 一个主界面只属于一个身份：换了 Pupu 或者重新配对，RootViewController 整个换一个新的。
@@ -51,6 +51,11 @@ final class ShellViewController: UIViewController {
             self.setSwitcher(open: !self.switcherOpen)
         }
     )
+    /// 聊天页左上角的远程桌面。只算自己名下的电脑：远程桌面只给电脑主人自己的手机，云端也这么判。
+    /// 没有自己的电脑就不放；都离线时是淡的，点开写着离线。
+    private var desktop: UIBarButtonItem?
+    /// 上一次放按钮时的电脑和在线状态。没变就不换按钮，5 秒一次的轮询不会把开着的菜单关掉。
+    private var desktopKey: [String]?
     /// 两条聊天都留着，切回来不用等快照。
     private var laneChats: [Lane: ChatViewController] = [:]
     private var projectChat: ChatViewController?
@@ -121,6 +126,7 @@ final class ShellViewController: UIViewController {
         ])
 
         setLane(.main)
+        updateDesktop()
         storeToken = Store.shared.observe { [weak self] in self?.storeChanged() }
         Store.shared.startPolling()
         show(.chat)
@@ -137,6 +143,7 @@ final class ShellViewController: UIViewController {
 
     private func storeChanged() {
         approvals.update(Store.shared.approvals)
+        updateDesktop()
         if Store.shared.chats[lane] == nil { setLane(.main) }
         render()
     }
@@ -150,7 +157,7 @@ final class ShellViewController: UIViewController {
 
     private func show(_ next: Section) {
         segments.select(next.rawValue, animated: true)
-        navigationItem.setLeftBarButton(next == .projects ? projectList : nil, animated: true)
+        navigationItem.setLeftBarButton(next == .projects ? projectList : desktop, animated: true)
         if next == .projects {
             atLatest = false
         } else {
@@ -220,6 +227,59 @@ final class ShellViewController: UIViewController {
         let unread = other.flatMap { chat in chat.lastAt.map { $0 > seen[chat.session] ?? 0 } } ?? false
         let label = unread ? "\(lane.other.title)有新消息" : nil
         if segments.unread != label { segments.unread = label }
+    }
+
+    private var myComputers: [Computer] {
+        let me = Store.shared.members.first(where: \.current)?.id
+        return Store.shared.computers.filter { $0.ownerId == nil || $0.ownerId == me }
+    }
+
+    private func updateDesktop() {
+        let mine = myComputers
+        let key = mine.map { "\($0.id)\t\($0.name)\t\($0.online)" }
+        guard key != desktopKey else { return }
+        desktopKey = key
+        desktop = mine.isEmpty ? nil : desktopButton(mine)
+        if section == .chat { navigationItem.setLeftBarButton(desktop, animated: true) }
+    }
+
+    /// 只有一台、在线：点了直接开。别的情况弹菜单，离线的那台灰着，写上离线多久了。
+    private func desktopButton(_ mine: [Computer]) -> UIBarButtonItem {
+        let image = UIImage(systemName: "display")
+        let item: UIBarButtonItem
+        if mine.count == 1, let only = mine.first, only.online {
+            item = UIBarButtonItem(image: image, primaryAction: UIAction { [weak self] _ in self?.openDesktop(only.id) })
+            item.accessibilityLabel = "「\(only.name)」的远程桌面"
+        } else {
+            let online = mine.contains(where: \.online)
+            let menu = UIMenu(title: online ? "" : "电脑上的 Pupu 连上之后才能看", children: [
+                UIDeferredMenuElement.uncached { [weak self] done in done(self?.desktopActions() ?? []) }
+            ])
+            item = UIBarButtonItem(image: image, menu: menu)
+            item.accessibilityLabel = "远程桌面"
+        }
+        item.tintColor = mine.contains(where: \.online) ? Theme.ink : Theme.inkMuted
+        return item
+    }
+
+    /// 打开菜单时按最新的状态列。
+    private func desktopActions() -> [UIMenuElement] {
+        myComputers.map { computer in
+            let action = UIAction(
+                title: computer.name,
+                subtitle: computer.online ? nil : computer.label,
+                image: UIImage(systemName: "display")
+            ) { [weak self] _ in
+                self?.openDesktop(computer.id)
+            }
+            if !computer.online { action.attributes = .disabled }
+            return action
+        }
+    }
+
+    private func openDesktop(_ id: String) {
+        guard let computer = Store.shared.computer(id: id), computer.online, let endpoint = Connection.shared.endpoint else { return }
+        RemoteDesktopViewController.open(computer, endpoint: endpoint, from: self)
     }
 
     /// 「项目」直接打开上次的项目；没记住就打开最近活动的那个。
