@@ -118,7 +118,7 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 .top__cta {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
   border-radius: 999px;
   font-size: 15px;
@@ -194,8 +194,17 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 }
 .hero .lede { max-width: 34em; margin-top: 16px; }
 .hero .waitlist { margin-top: 32px; max-width: 440px; }
-.waitlist__have { margin: 12px 0 0; font-size: 14px; line-height: 20px; }
-.waitlist__have a { color: inherit; font-weight: 600; }
+/* 链接撑到 44px 高，手指好点；行高跟着变高，所以上面不再留边距 */
+.waitlist__have { font-size: 14px; line-height: 20px; }
+.waitlist__have a { display: inline-flex; align-items: center; min-height: 44px; color: inherit; font-weight: 600; }
+.nowrap { white-space: nowrap; }
+.for-touch { display: none; }
+@media (pointer: coarse) {
+  .for-mac { display: none; }
+  .for-touch { display: block; }
+}
+.no-dmg .for-mac { display: none; }
+.no-dmg .for-touch { display: block; }
 .hero__demo { position: relative; z-index: 1; }
 
 /* 申请内测：长得就是输入栏 */
@@ -204,7 +213,7 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
   align-items: center;
   gap: 8px;
   min-height: 52px;
-  padding: 6px 6px 6px 20px;
+  padding: 4px 4px 4px 20px;
   border-radius: var(--radius-composer);
   background: var(--surface-strong);
   -webkit-backdrop-filter: blur(28px);
@@ -217,7 +226,7 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 .composer input[type="email"] {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: 44px;
   padding: 0;
   border: 0;
   outline: 0;
@@ -227,7 +236,7 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 .composer input::placeholder { color: var(--ink-muted); opacity: 1; }
 .composer button {
   flex: none;
-  height: 40px;
+  height: 44px;
   padding: 0 16px;
   border: 0;
   border-radius: 999px;
@@ -256,7 +265,7 @@ h3 { font-size: 17px; line-height: 22px; font-weight: 600; }
 
 .segments {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 4px;
   padding: 4px;
   border-radius: 999px;
@@ -501,7 +510,8 @@ mark.is-lit { background: color-mix(in srgb, var(--warning) 42%, transparent); }
 .join__panel { padding: clamp(24px, 5vw, 48px); text-align: center; }
 .join__panel .lede { margin-top: 12px; }
 .join__panel .waitlist { margin-top: 24px; text-align: left; }
-.join__panel .fine { margin-top: 12px; color: var(--ink); opacity: .72; }
+.join__panel .fine { color: var(--ink); opacity: .72; }
+.join__panel .fine a { display: inline-flex; align-items: center; min-height: 44px; }
 .peek--join { right: auto; left: 50%; margin-left: -48px; width: 96px; }
 
 /* 页脚 */
@@ -528,6 +538,7 @@ mark.is-lit { background: color-mix(in srgb, var(--warning) 42%, transparent); }
 .prose p { margin-top: 8px; font-size: 15px; line-height: 24px; }
 .prose-wrap--center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
 .prose-wrap--center h1 { font-size: 28px; line-height: 34px; letter-spacing: 0; }
+.prose-wrap--center a { display: inline-flex; align-items: center; min-height: 44px; }
 .lost { width: 120px; }
 
 /* 入场 */

@@ -10,6 +10,9 @@ interface Props {
 }
 
 const { title, description, page = "plain" } = Astro.props;
+// 构建出的是 privacy.html，线上地址是 /privacy
+const pageUrl = new URL(Astro.url.pathname.replace(/(index)?\.html$/, ""), Astro.site).href;
+const shareImage = new URL("/og.jpg", Astro.site).href;
 ---
 
 <!doctype html>
@@ -22,12 +25,24 @@ const { title, description, page = "plain" } = Astro.props;
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={pageUrl} />
+    <meta property="og:image" content={shareImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="周屿问北辰的折扣，Pupu 回答：年付，折扣上限 12%，林夏上午定的。" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#34557f" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0c1420" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script is:inline>document.documentElement.classList.add("js");</script>
+    <script is:inline>
+      document.documentElement.classList.add("js");
+      // 手机和平板下不了 Mac 版。iPad 的 UA 装成 Mac，靠触点数认出来。没有 JS 时靠 CSS 的 pointer: coarse。
+      if (/Android|iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) {
+        document.documentElement.classList.add("no-dmg");
+      }
+    </script>
   </head>
   <body class={`page-${page}`}>
     <div class="edge-blur" aria-hidden="true"></div>

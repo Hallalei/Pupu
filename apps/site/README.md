@@ -27,11 +27,12 @@ npm test
 - `src/styles/tokens.css`：取自「Pupu 设计规范」的颜色和圆角，名字不改。
 - `src/scripts/site.ts`：入场、演示播放、审批卡、表单。没有 JS 时内容照常显示，减弱动效时不播放。
 - `src/components/Cat.astro`：像素小猫，网格抄自 `design/icon/pixels.py`。
-- `worker/`：`/api/waitlist`，其余请求交给静态资源。
+- `worker/`：所有请求先过 Worker（`run_worker_first: true`）。http 和 `www` 301 到 `https://getpupu.com`，`/api/waitlist` 收申请，其余交给静态资源。
+- `public/og.jpg`：分享卡片，1200×630，从短片封面裁的。
 
 ## 线上
 
-官网在 https://getpupu.com ，`www.getpupu.com` 也指向同一个 Worker，`workers.dev` 地址已关。发布跑 `npm run deploy`。
+官网在 https://getpupu.com ，`www.getpupu.com` 也指向同一个 Worker，由 Worker 转到不带 www 的地址。`workers.dev` 地址已关。Cloudflare 会自动插入 Web Analytics 统计脚本，隐私说明里写了。发布跑 `npm run deploy`。
 
 还差一个公开的联系邮箱：配上 `PUBLIC_CONTACT_EMAIL` 后，隐私说明里才会出现删除邮箱的办法。
 

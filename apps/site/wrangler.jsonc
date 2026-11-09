@@ -13,7 +13,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": true
   },
   "d1_databases": [
     {
@@ -25,5 +25,7 @@
   "ratelimits": [
     { "name": "LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // wrangler dev 把请求改写成 getpupu.com 交给 Worker，默认是 http。改成 https，本地预览才不会被转去线上。
+  "dev": { "upstream_protocol": "https" }
 }
