@@ -53,16 +53,19 @@ export async function pairComputer(origin: string, desktopToken: string, name: s
   return credentialOf(await call<PairBody>(origin, "/api/pair", { kind: "computer", name, code }));
 }
 
-/** 这个 Pupu 开没开 Google 登录。连不上或者等太久都当没开，配对窗口不能空等，还能用配对码。 */
+/**
+ * 这个 Pupu 开没开 Google 登录。只有云端明说没开才不给按钮。连不上或者等太久照样给，和网页登录页一样：
+ * 刚开 App 时第一个请求常常超时，新用户手里没有配对码，没了 Google 按钮就卡住了。真没开的话，点了云端会说明。
+ */
 export async function googleEnabled(origin: string): Promise<boolean> {
   try {
     const response = await net.fetch(new URL("/api/auth/google", origin).toString(), {
       signal: AbortSignal.timeout(5000)
     });
     const body = (await response.json().catch(() => null)) as { enabled?: unknown } | null;
-    return response.ok && body?.enabled === true;
+    return !(response.ok && body?.enabled === false);
   } catch {
-    return false;
+    return true;
   }
 }
 

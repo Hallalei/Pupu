@@ -113,6 +113,9 @@ async function verify() {
     // 线上每一位是字符 "1"（49）或 "0"（48）。
     .map(([key, value]) => `${FuseV1Options[Number(key)] ?? `第 ${key} 位`}=${value === 49 ? "开" : value === 48 ? "关" : value}`);
   console.log(`Fuses：${fuses.join(" ")}`);
+  if (wire[FuseV1Options.GrantFileProtocolExtraPrivileges] !== 49) {
+    throw new Error("GrantFileProtocolExtraPrivileges 关着：配对、没连上、截屏窗口读不到 app.asar 里的页面，会一片空白。");
+  }
   if (local) return;
   await run("spctl", ["--assess", "--type", "execute", "-vv", app]);
   await run("xcrun", ["stapler", "validate", app]);

@@ -21,7 +21,9 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: true
   enableCookieEncryption: true
-  grantFileProtocolExtraPrivileges: false
+  # 配对、没连上、截屏几个窗口用 loadFile 读 app.asar 里的页面。这一位关了，file:// 读不进 asar，
+  # 窗口只剩底色（0.2.0 到 0.2.2 都这样）。Cindy 也开着。package.mjs 会查这一位。
+  grantFileProtocolExtraPrivileges: true
 mac:
   target:
     - target: dmg
