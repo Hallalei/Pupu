@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pupu 远程桌面验证</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f4f2; --fg: #1c1c1e; --muted: #6b6b70; --panel: rgb(255 255 255 / 0.86); --accent: #1f6feb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111214; --fg: #f2f2f4; --muted: #9a9aa0; --panel: rgb(30 31 34 / 0.9); --accent: #4c8dff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "PingFang SC", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 10px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select, button, input { font: inherit; color: inherit; background: var(--panel); border: 1px solid rgb(127 127 127 / 0.3); border-radius: 10px; padding: 6px 10px; }
+  button.primary { background: var(--accent); color: white; border-color: transparent; }
+  .stage { position: relative; background: #000; border-radius: 14px; overflow: hidden; }
+  video { display: block; width: 100%; height: auto; max-height: 78dvh; object-fit: contain; background: #000;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+  .stat { background: var(--panel); border-radius: 10px; padding: 6px 10px; }
+  .stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  #log { color: var(--muted); font-size: 12px; white-space: pre-wrap; max-height: 9em; overflow: auto; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <strong>Pupu 远程桌面验证</strong>
+    <select id="source"><option value="screen">真实屏幕</option><option value="pattern">测试画面</option></select>
+    <select id="fps"><option>30</option><option>60</option></select>
+    <select id="w"><option value="1280">1280 宽</option><option value="1920" selected>1920 宽</option><option value="2560">2560 宽</option></select>
+    <select id="codec"><option>H264</option><option>VP9</option><option>AV1</option></select>
+    <select id="kbps"><option value="3000">3 Mbps</option><option value="8000" selected>8 Mbps</option><option value="15000">15 Mbps</option></select>
+    <select id="hint"><option value="detail">清晰优先</option><option value="text">文字优先</option><option value="motion">流畅优先</option></select>
+    <button id="connect" class="primary">连接</button>
+    <label><input type="checkbox" id="control" /> 控制鼠标键盘</label>
+  </div>
+  <div class="stage"><video id="video" autoplay muted playsinline></video></div>
+  <div class="bar">
+    <input id="text" placeholder="输入文字，回车发到电脑" style="flex:1; min-width: 160px" />
+    <button data-key="Enter">回车</button><button data-key="Backspace">删除</button><button data-key="Escape">Esc</button>
+    <button data-key="Tab">Tab</button><button data-key="ArrowUp">↑</button><button data-key="ArrowDown">↓</button>
+    <button data-key="ArrowLeft">←</button><button data-key="ArrowRight">→</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div id="log"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const video = $("video");
+const STAMP_BLOCK = 16;
+const key = new URLSearchParams(location.search).get("k") ?? "";
+// 时间戳在截屏画面里的位置，推流端会发来；原生 pupu-desktop 画在左上角，一格 16 像素、41 位。
+const DEFAULT_STAMP = { x: 0, y: 0, block: 16, bits: 41, width: 0 };
+let stamp = { ...DEFAULT_STAMP }, lastStamp = null;
+let ws = null, pc = null, dc = null, pendingIce = [];
+let offset = null, bestRtt = Infinity, lastRtt = null, captureWidth = 0, watching = false, lastInbound = null;
+const latencies = [];
+const stats = {
+  状态: "未连接", 编码: "-", 分辨率: "-", 帧率: "-", 码率: "-", 网络往返: "-",
+  截屏到显示: "-", "截屏到显示 p90": "-", "操作到看到（估）": "-", 解码前缓冲: "-", 连接路径: "-",
+  电脑编码器: "-", 电脑受限原因: "-", 电脑采集延迟: "-"
+};
+// 给自动化测试读数用。
+window.spike = { stats, latencies };
+
+// 信令服务连上后发来 ICE 服务器（含 TURN 短期凭证）；没收到就只用 STUN。
+let config = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478"] }], relay: false };
+
+function now() { return performance.timeOrigin + performance.now(); }
+function log(text) { const el = $("log"); el.textContent = `${new Date().toLocaleTimeString()} ${text}\n` + el.textContent; }
+function render() {
+  $("stats").innerHTML = Object.entries(stats).map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+}
+render();
+
+function connect() {
+  disconnect();
+  const params = new URLSearchParams({ k: key, relay: query.get("relay") ?? "", source: $("source").value, fps: $("fps").value, w: $("w").value, codec: $("codec").value, kbps: $("kbps").value, hint: $("hint").value });
+  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?${params}`);
+  ws = socket;
+  stats.状态 = "连信令…"; render();
+  socket.onmessage = (event) => onSignal(JSON.parse(event.data));
+  socket.onclose = (event) => { if (ws === socket) { stats.状态 = `断开 ${event.reason || ""}`; render(); } };
+}
+
+function disconnect() {
+  dc?.close(); pc?.close(); ws?.close();
+  dc = pc = ws = null; pendingIce = [];
+  offset = null; bestRtt = Infinity; lastRtt = null; captureWidth = 0; lastInbound = null; latencies.length = 0;
+  stamp = { ...DEFAULT_STAMP }; lastStamp = null;
+}
+
+async function onSignal(message) {
+  switch (message.type) {
+    case "offer": {
+      const peer = new RTCPeerConnection({ iceServers: config.iceServers, iceTransportPolicy: config.relay ? "relay" : "all" });
+      pc = peer;
+      peer.onicecandidate = (event) => {
+        if (event.candidate) ws?.send(JSON.stringify({ type: "ice", candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex }));
+      };
+      peer.ontrack = (event) => { video.srcObject = event.streams[0] ?? new MediaStream([event.track]); watchFrames(); };
+      peer.ondatachannel = (event) => {
+        const channel = event.channel;
+        dc = channel;
+        channel.onmessage = onChannel;
+        channel.onopen = () => { log("输入通道已打开"); ping(channel); };
+      };
+      peer.onconnectionstatechange = () => { stats.状态 = peer.connectionState; render(); };
+      await peer.setRemoteDescription({ type: "offer", sdp: message.sdp });
+      for (const candidate of pendingIce.splice(0)) await peer.addIceCandidate(candidate).catch(() => {});
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      ws?.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+      break;
+    }
+    case "ice": {
+      const candidate = { candidate: message.candidate, sdpMid: message.sdpMid || null, sdpMLineIndex: message.sdpMLineIndex };
+      if (pc?.remoteDescription) await pc.addIceCandidate(candidate).catch((error) => log(`加 ICE 候选失败：${error.message}`));
+      else pendingIce.push(candidate);
+      break;
+    }
+    case "config": config = message; log(config.relay ? "只走 TURN 中转" : "能直连就直连，不行再走 TURN"); break;
+    case "capture": captureWidth = message.width; log(`电脑开始截屏：${message.width}×${message.height}`); break;
+    case "stamp": stamp = message; lastStamp = null; log(`时间戳在电脑画面的 (${message.x}, ${message.y})，一格 ${message.block} 像素`); break;
+    case "senderStats":
+      stats.电脑编码器 = `${message.encoder}${message.powerEfficient ? "（硬件）" : message.powerEfficient === false ? "（软件）" : ""}`;
+      stats.电脑受限原因 = message.limitation;
+      stats.电脑采集延迟 = message.captureLatency ?? "-";
+      break;
+    case "permissions": log(`电脑上的权限：屏幕录制${message.screen ? "已允许" : "还没允许"}，辅助功能${message.accessibility ? "已允许" : "还没允许"}`); break;
+    case "state":
+      if (message.ice) log(`电脑端 ICE：${message.ice}`);
+      if (message.channel) log(`电脑端输入通道：${message.channel}`);
+      break;
+    case "error": log(`出错：${message.message}`); break;
+  }
+}
+
+// 量时钟差：电脑回它自己的时间，取往返最短的那几次。
+function ping(channel) {
+  if (channel.readyState !== "open") return;
+  channel.send(JSON.stringify({ t: "ping", c: now() }));
+  setTimeout(() => ping(channel), 2000);
+}
+function onChannel(event) {
+  const message = JSON.parse(event.data);
+  if (message.t !== "pong") return;
+  const rtt = now() - message.c;
+  lastRtt = rtt;
+  bestRtt = Math.min(bestRtt, rtt);
+  if (offset === null || rtt <= bestRtt * 1.5) offset = message.h - (message.c + rtt / 2);
+}
+
+// 每一帧读左上角的时间戳方块，换算成本机时间，就是截屏到显示的延迟。
+const canvas = document.createElement("canvas");
+canvas.height = STAMP_BLOCK;
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+function readStamp() {
+  const cells = stamp.bits + 2;
+  if (canvas.width !== cells * STAMP_BLOCK) canvas.width = cells * STAMP_BLOCK;
+  // 发送端降了分辨率时方块跟着缩小，按比例取。
+  const width = stamp.width || captureWidth;
+  const scale = width ? video.videoWidth / width : 1;
+  ctx.drawImage(video, stamp.x * scale, stamp.y * scale, cells * stamp.block * scale, stamp.block * scale, 0, 0, canvas.width, canvas.height);
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const bright = (cell) => pixels[((STAMP_BLOCK >> 1) * canvas.width + cell * STAMP_BLOCK + (STAMP_BLOCK >> 1)) * 4 + 1] > 128;
+  if (!bright(0) || bright(1)) return null;
+  let value = 0;
+  for (let bit = 0; bit < stamp.bits; bit += 1) value = value * 2 + (bright(bit + 2) ? 1 : 0);
+  return value;
+}
+function watchFrames() {
+  if (watching) return;
+  if (!("requestVideoFrameCallback" in HTMLVideoElement.prototype)) { log("这个浏览器量不了逐帧延迟"); return; }
+  watching = true;
+  const onFrame = (_, meta) => {
+    if (offset !== null && video.videoWidth) {
+      const value = readStamp();
+      // 只算时间戳刚变的那一帧：画面没变时同一个值会出现好几帧，后面的不算。
+      if (value !== null && value !== lastStamp) {
+        lastStamp = value;
+        const modulus = 2 ** stamp.bits;
+        const hostShown = performance.timeOrigin + (meta.expectedDisplayTime ?? meta.presentationTime) + offset;
+        let latency = (hostShown % modulus) - value;
+        if (latency > modulus / 2) latency -= modulus;
+        if (latency < -modulus / 2) latency += modulus;
+        if (latency > -50 && latency < 5000) { latencies.push(latency); if (latencies.length > 240) latencies.shift(); }
+      }
+    }
+    video.requestVideoFrameCallback(onFrame);
+  };
+  video.requestVideoFrameCallback(onFrame);
+}
+
+setInterval(async () => {
+  if (latencies.length) {
+    const sorted = [...latencies].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    stats.截屏到显示 = `${Math.round(median)} ms`;
+    stats["截屏到显示 p90"] = `${Math.round(sorted[Math.floor(sorted.length * 0.9)])} ms`;
+    // 手机发出操作到电脑收到约半个往返，再加上电脑画面传回来的时间。
+    if (lastRtt !== null) stats["操作到看到（估）"] = `${Math.round(median + lastRtt / 2)} ms`;
+  }
+  const peer = pc;
+  if (!peer) { render(); return; }
+  const report = await peer.getStats();
+  let inbound, pair, selectedId;
+  report.forEach((s) => {
+    if (s.type === "inbound-rtp" && s.kind === "video") inbound = s;
+    if (s.type === "transport" && s.selectedCandidatePairId) selectedId = s.selectedCandidatePairId;
+    if (s.type === "candidate-pair" && s.nominated && s.state === "succeeded") pair ??= s;
+  });
+  if (selectedId && report.get(selectedId)) pair = report.get(selectedId);
+  if (inbound) {
+    stats.编码 = report.get(inbound.codecId)?.mimeType?.replace("video/", "") ?? "-";
+    stats.分辨率 = inbound.frameWidth ? `${inbound.frameWidth}×${inbound.frameHeight}` : "-";
+    if (lastInbound) {
+      const seconds = (inbound.timestamp - lastInbound.timestamp) / 1000;
+      if (seconds > 0) {
+        stats.帧率 = `${((inbound.framesDecoded - lastInbound.framesDecoded) / seconds).toFixed(1)} fps`;
+        stats.码率 = `${(((inbound.bytesReceived - lastInbound.bytesReceived) * 8) / seconds / 1e6).toFixed(2)} Mbps`;
+      }
+    }
+    lastInbound = inbound;
+    if (inbound.jitterBufferEmittedCount) stats.解码前缓冲 = `${Math.round((inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000)} ms`;
+  }
+  if (pair) {
+    if (pair.currentRoundTripTime !== undefined) stats.网络往返 = `${Math.round(pair.currentRoundTripTime * 1000)} ms`;
+    const local = report.get(pair.localCandidateId), remote = report.get(pair.remoteCandidateId);
+    const via = (c) => c ? `${c.candidateType}${c.candidateType === "relay" ? `/${c.relayProtocol ?? "?"}` : ""}${c.networkType ? `(${c.networkType})` : ""}` : "?";
+    stats.连接路径 = `${via(local)} → ${via(remote)}`;
+  }
+  render();
+}, 1000);
+
+// 输入：手指或鼠标的位置换成画面里 0~1 的比例（画面可能上下或左右留黑边）。
+function toVideo(event) {
+  if (!video.videoWidth) return null;
+  const rect = video.getBoundingClientRect();
+  const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
+  const width = video.videoWidth * scale, height = video.videoHeight * scale;
+  const left = rect.left + (rect.width - width) / 2, top = rect.top + (rect.height - height) / 2;
+  return { x: (event.clientX - left) / width, y: (event.clientY - top) / height };
+}
+function send(message) { if ($("control").checked && dc?.readyState === "open") dc.send(JSON.stringify(message)); }
+let pendingMove = null, moveQueued = false;
+video.addEventListener("pointermove", (event) => {
+  const point = toVideo(event);
+  if (!point) return;
+  pendingMove = point;
+  if (moveQueued) return;
+  moveQueued = true;
+  requestAnimationFrame(() => {
+    moveQueued = false;
+    if (pendingMove) send({ t: "move", ...pendingMove });
+    pendingMove = null;
+  });
+});
+video.addEventListener("pointerdown", (event) => {
+  const point = toVideo(event);
+  if (!point) return;
+  video.setPointerCapture(event.pointerId);
+  pendingMove = null;
+  send({ t: "move", ...point });
+  send({ t: "down", b: event.button, ...point });
+  event.preventDefault();
+});
+video.addEventListener("pointerup", (event) => {
+  const point = toVideo(event);
+  pendingMove = null;
+  if (point) send({ t: "up", b: event.button, ...point });
+});
+video.addEventListener("pointercancel", () => send({ t: "release" }));
+video.addEventListener("wheel", (event) => { send({ t: "scroll", dx: event.deltaX, dy: event.deltaY }); event.preventDefault(); }, { passive: false });
+video.addEventListener("contextmenu", (event) => event.preventDefault());
+$("text").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  const text = event.target.value;
+  if (text) send({ t: "text", s: text });
+  event.target.value = "";
+});
+document.querySelectorAll("[data-key]").forEach((button) => button.addEventListener("click", () => send({ t: "key", k: button.dataset.key })));
+$("connect").addEventListener("click", connect);
+
+// 地址里可以带 ?source=pattern&fps=60&w=1280&auto=1，直接按这些参数连上。
+const query = new URLSearchParams(location.search);
+for (const id of ["source", "fps", "w", "codec", "kbps", "hint"]) if (query.has(id)) $(id).value = query.get(id);
+
+// 每 5 秒把读数交给信令服务记下来，方便事后汇总。
+setInterval(() => {
+  if (ws?.readyState !== WebSocket.OPEN || !pc) return;
+  const sorted = [...latencies].sort((a, b) => a - b);
+  ws.send(JSON.stringify({
+    type: "report", ua: navigator.userAgent,
+    settings: { fps: $("fps").value, w: $("w").value, codec: $("codec").value, kbps: $("kbps").value, hint: $("hint").value },
+    samples: sorted.length,
+    p50: sorted.length ? Math.round(sorted[Math.floor(sorted.length / 2)]) : null,
+    p90: sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.9)]) : null,
+    stats
+  }));
+}, 5000);
+if (query.get("auto") === "1") connect();
+</script>
+</body>
+</html>

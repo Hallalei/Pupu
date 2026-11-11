@@ -11,7 +11,10 @@
     "types": "wrangler types env.d.ts --include-runtime false",
     "bridge": "node bridge/main.ts",
     "bridge:check": "tsc -p bridge/tsconfig.json --noEmit",
-    "test:bridge": "node --test bridge/*.test.ts"
+    "test:bridge": "node --test bridge/*.test.ts",
+    "desktop:build": "swift build -c release --package-path bridge/desktop",
+    "desktop:helpers": "mkdir -p bridge/desktop/.build && swiftc -O -o bridge/desktop/.build/pupu-input bridge/desktop/Sources/PupuDesktop/Input.swift bridge/desktop/Sources/PupuDesktop/Wire.swift bridge/desktop/spike/input/main.swift && swiftc -O -o bridge/desktop/.build/pupu-stamp bridge/desktop/spike/stamp/main.swift",
+    "desktop:spike": "node bridge/desktop/spike/server.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "^1.3.0",

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pupu 推流页</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f4f2; --fg: #1c1c1e; --muted: #6b6b70; --panel: rgb(255 255 255 / 0.86); --accent: #1f6feb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111214; --fg: #f2f2f4; --muted: #9a9aa0; --panel: rgb(30 31 34 / 0.9); --accent: #4c8dff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "PingFang SC", sans-serif; }
+  main { padding: 16px 16px 24px; display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { font: inherit; color: white; background: var(--accent); border: 0; border-radius: 10px; padding: 6px 14px; }
+  .viewer { display: flex; gap: 12px; align-items: center; }
+  .viewer img { width: 132px; height: 132px; background: white; border-radius: 8px; }
+  .viewer code { word-break: break-all; color: var(--muted); font-size: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+  .stat { background: var(--panel); border-radius: 10px; padding: 6px 10px; }
+  .stat b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  #log { color: var(--muted); font-size: 12px; white-space: pre-wrap; max-height: 12em; overflow: auto; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <strong>Pupu 推流页</strong>
+    <button id="capture">开始截屏</button>
+    <label><input type="checkbox" id="control" /> 允许手机操作鼠标键盘</label>
+  </div>
+  <div class="viewer">
+    <img src="/qr.svg" alt="手机扫码观看" />
+    <div>手机和这台电脑连同一个 Wi-Fi，扫码或打开：<br /><code id="url"></code><br />
+      屏幕右下角那排绿块是时间戳小窗（信令服务拉起的 pupu-stamp），观看端靠它量延迟。这个窗口放在后台就行。</div>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div id="log"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const key = new URLSearchParams(location.search).get("k") ?? "";
+// 时间戳由 pupu-stamp 小窗画在屏幕上：一格起始绿块、一格黑块，再加 24 位毫秒数，四周留一格黑边。
+const STAMP_BITS = 24, STAMP_CELLS = STAMP_BITS + 2, MODULUS = 2 ** STAMP_BITS;
+let ws = null, pc = null, channel = null, stream = null, track = null, grabber = null;
+let pendingStart = null, pendingIce = [], stampGeo = null, frameSize = null, lastOut = null, warnedControl = false;
+const stats = {
+  状态: "没截屏", 观看: "没人看", 编码器: "-", 硬件编码: "-", 编码: "-", 发送分辨率: "-", 采集帧率: "-", 发送帧率: "-",
+  码率: "-", 单帧编码: "-", 受限原因: "-", 本机采集延迟: "-", 重传请求: "-"
+};
+// 给自动化读数用。
+window.spike = { stats };
+
+// 和 pupu-stamp 用同一个系统时钟。
+function now() { return Date.now(); }
+// 推流页多半放在后台，日志也交给信令服务打出来；连上之前的先攒着。
+const unsentLogs = [];
+function log(text) {
+  const el = $("log"); el.textContent = `${new Date().toLocaleTimeString()} ${text}\n` + el.textContent;
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "log", text })); else unsentLogs.push(text);
+}
+function render() { $("stats").innerHTML = Object.entries(stats).map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join(""); }
+function wsSend(message) { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message)); }
+render();
+fetch("/qr.svg").then((response) => { $("url").textContent = response.headers.get("x-viewer-url") ?? ""; });
+
+// ---- 时间戳 ----
+// 截到的画面里，绿块可能被色彩管理改过一点，按"明显偏绿"认。
+function isGreen(d, i) { return d[i + 1] > 160 && d[i + 1] - d[i] > 80 && d[i + 1] - d[i + 2] > 80; }
+function isBlack(d, i) { return d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60; }
+function decode(d, width, x, y, block) {
+  const at = (cell) => ((Math.floor(y + block / 2) * width) + Math.floor(x + (cell + 0.5) * block)) * 4;
+  if (!isGreen(d, at(0)) || !isBlack(d, at(1))) return null;
+  let value = 0;
+  for (let bit = 0; bit < STAMP_BITS; bit += 1) value = value * 2 + (isGreen(d, at(bit + 2)) ? 1 : 0);
+  return value;
+}
+function plausible(value) {
+  let diff = (Math.floor(now()) % MODULUS) - value;
+  if (diff > MODULUS / 2) diff -= MODULUS;
+  if (diff < -MODULUS / 2) diff += MODULUS;
+  return diff > -50 && diff < 3000 ? diff : null;
+}
+function pixels(bitmap) {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  return ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+}
+// 在整帧里找时间戳：左边和上边是黑边的绿块就是起始格，量出它的边长当一格的大小。
+function locate(d, width, height) {
+  for (let y = 3; y < height - 3; y += 2) {
+    for (let x = 3; x < width - 3; x += 1) {
+      const i = (y * width + x) * 4;
+      if (!isGreen(d, i) || !isBlack(d, i - 12) || !isBlack(d, i - width * 12)) continue;
+      let x0 = x, y0 = y;
+      while (y0 > 0 && isGreen(d, ((y0 - 1) * width + x0) * 4)) y0 -= 1;
+      while (x0 > 0 && isGreen(d, (y0 * width + x0 - 1) * 4)) x0 -= 1;
+      let w = 0, h = 0;
+      while (x0 + w < width && isGreen(d, (y0 * width + x0 + w) * 4)) w += 1;
+      while (y0 + h < height && isGreen(d, ((y0 + h) * width + x0) * 4)) h += 1;
+      if (w < 6 || Math.abs(w - h) > 3 || x0 + STAMP_CELLS * w > width) continue;
+      const value = decode(d, width, x0, y0, w);
+      if (value !== null && plausible(value) !== null) return { x: x0, y: y0, block: w };
+    }
+  }
+  return null;
+}
+async function checkStamp() {
+  if (!grabber || track?.readyState !== "live") return;
+  let bitmap;
+  try { bitmap = await grabber.grabFrame(); } catch { return; }
+  const d = pixels(bitmap);
+  frameSize = { width: bitmap.width, height: bitmap.height };
+  let value = stampGeo ? decode(d, bitmap.width, stampGeo.x, stampGeo.y, stampGeo.block) : null;
+  if (value === null || plausible(value) === null) {
+    const found = locate(d, bitmap.width, bitmap.height);
+    if (!found) {
+      if (stampGeo !== null || stats.本机采集延迟 !== "找不到时间戳") log("截屏画面里找不到时间戳小窗：看看信令服务有没有拉起 pupu-stamp，或者它是不是在别的屏幕上");
+      stampGeo = null;
+      stats.本机采集延迟 = "找不到时间戳";
+      return;
+    }
+    stampGeo = found;
+    log(`时间戳在截屏画面的 (${found.x}, ${found.y})，一格 ${found.block} 像素`);
+    sendStamp();
+    value = decode(d, bitmap.width, found.x, found.y, found.block);
+  }
+  // grabFrame 拿到的是最新一帧，和现在差多少就是本机从画到屏幕到截到的时间。
+  stats.本机采集延迟 = `${Math.round(plausible(value))} ms`;
+}
+function sendStamp() {
+  if (stampGeo && frameSize) wsSend({ type: "stamp", ...stampGeo, bits: STAMP_BITS, width: frameSize.width, height: frameSize.height });
+}
+
+// ---- 截屏 ----
+async function startCapture() {
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "monitor", frameRate: { ideal: 30, max: 60 } },
+      audio: false, selfBrowserSurface: "include", surfaceSwitching: "exclude", monitorTypeSurfaces: "include"
+    });
+  } catch (error) {
+    log(`没能截屏：${error.message}。第一次用要到系统设置 → 隐私与安全性 → 屏幕录制里允许 Chrome，再重开 Chrome`);
+    return;
+  }
+  track = stream.getVideoTracks()[0];
+  const settings = track.getSettings();
+  if (settings.displaySurface !== "monitor") log(`选的是 ${settings.displaySurface}，要量延迟请选"整个屏幕"`);
+  log(`开始截屏：${settings.width}×${settings.height}，${settings.frameRate} fps`);
+  stats.状态 = "截屏中"; render();
+  grabber = new ImageCapture(track);
+  track.addEventListener("ended", () => { stats.状态 = "截屏停了"; render(); closePeer(); grabber = null; });
+  $("capture").disabled = true;
+  await checkStamp();
+  if (pendingStart) { const start = pendingStart; pendingStart = null; startPeer(start); }
+}
+$("capture").addEventListener("click", startCapture);
+// 地址里带 auto=1 时打开就截屏：配合 Chrome 的 --auto-select-desktop-capture-source，不弹选屏窗口，放在后台跑。
+if (new URLSearchParams(location.search).get("auto") === "1") startCapture();
+setInterval(checkStamp, 2000);
+
+// ---- 信令 ----
+function connectSignal() {
+  const socket = new WebSocket(`ws://${location.host}/ws?role=sender&k=${encodeURIComponent(key)}`);
+  ws = socket;
+  socket.onopen = () => { for (const text of unsentLogs.splice(0)) socket.send(JSON.stringify({ type: "log", text })); };
+  socket.onmessage = (event) => onSignal(JSON.parse(event.data));
+  socket.onclose = (event) => {
+    if (ws !== socket) return;
+    log(`信令断开（${event.code} ${event.reason}），1 秒后重连`);
+    setTimeout(connectSignal, 1000);
+  };
+}
+connectSignal();
+
+async function onSignal(message) {
+  switch (message.type) {
+    case "start":
+      if (!track || track.readyState !== "live") { pendingStart = message; wsSend({ type: "error", message: "电脑上还没开始截屏：在推流页点「开始截屏」" }); return; }
+      startPeer(message);
+      break;
+    case "answer":
+      await pc?.setRemoteDescription({ type: "answer", sdp: message.sdp });
+      for (const candidate of pendingIce.splice(0)) await pc?.addIceCandidate(candidate).catch(() => {});
+      break;
+    case "ice": {
+      const candidate = { candidate: message.candidate, sdpMid: message.sdpMid || null, sdpMLineIndex: message.sdpMLineIndex };
+      if (pc?.remoteDescription) await pc.addIceCandidate(candidate).catch((error) => log(`加 ICE 候选失败：${error.message}`));
+      else pendingIce.push(candidate);
+      break;
+    }
+    case "stop":
+      closePeer();
+      break;
+  }
+}
+
+function closePeer() {
+  channel?.close(); pc?.close();
+  channel = pc = null; pendingIce = []; lastOut = null;
+  stats.观看 = "没人看"; render();
+}
+
+function rank(c) {
+  const fmtp = c.sdpFmtpLine ?? "";
+  return Number(/packetization-mode=1/.test(fmtp)) * 2 + Number(/profile-level-id=64/.test(fmtp));
+}
+
+function preferCodec(transceiver, codec) {
+  const codecs = RTCRtpSender.getCapabilities("video").codecs;
+  const mime = `video/${codec}`.toLowerCase();
+  const picked = codecs.filter((c) => c.mimeType.toLowerCase() === mime)
+    // packetization-mode=1 优先，其次 High（profile-level-id=64…）：iPhone 选了 Constrained Baseline 时这台 Mac 退回了软件编码。
+    .sort((a, b) => rank(b) - rank(a));
+  if (!picked.length) { log(`这个 Chrome 不支持 ${codec}，按默认编码`); return; }
+  const extras = codecs.filter((c) => /\/(rtx|red|ulpfec)$/i.test(c.mimeType));
+  transceiver.setCodecPreferences([...picked, ...extras]);
+}
+
+async function startPeer(options) {
+  closePeer();
+  warnedControl = false;
+  const peer = new RTCPeerConnection({ iceServers: options.iceServers, iceTransportPolicy: options.relay ? "relay" : "all" });
+  pc = peer;
+  track.contentHint = ["motion", "text", "detail"].includes(options.hint) ? options.hint : "detail";
+  await track.applyConstraints({ frameRate: { ideal: options.fps, max: options.fps } }).catch((error) => log(`改帧率失败：${error.message}`));
+  const width = frameSize?.width ?? track.getSettings().width ?? options.maxWidth;
+  const height = frameSize?.height ?? track.getSettings().height ?? 0;
+  // 缩完的宽高要是偶数：3024×1964 缩到 1920 宽是 1920×1247，VideoToolbox 不收奇数边，会退回软件编码。
+  let target = Math.min(width, options.maxWidth);
+  for (let w = target; w >= target / 2; w -= 2) {
+    const h = (height * w) / width;
+    if (Number.isInteger(h) && h % 2 === 0) { target = w; break; }
+  }
+  const transceiver = peer.addTransceiver(track, {
+    direction: "sendonly", streams: [stream],
+    sendEncodings: [{ maxBitrate: options.kbps * 1000, maxFramerate: options.fps, scaleResolutionDownBy: Math.max(1, width / target) }]
+  });
+  preferCodec(transceiver, options.codec);
+  channel = peer.createDataChannel("input-v1", { ordered: true });
+  channel.onmessage = onInput;
+  peer.onicecandidate = (event) => {
+    if (event.candidate) wsSend({ type: "ice", candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex });
+  };
+  peer.onconnectionstatechange = () => {
+    stats.观看 = peer.connectionState === "connected" ? "有人在看" : peer.connectionState;
+    wsSend({ type: "state", ice: peer.connectionState });
+    render();
+  };
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  try {
+    const params = transceiver.sender.getParameters();
+    params.degradationPreference = options.hint === "motion" ? "maintain-framerate" : "maintain-resolution";
+    await transceiver.sender.setParameters(params);
+  } catch (error) { log(`设不了画质优先：${error.message}`); }
+  wsSend({ type: "offer", sdp: offer.sdp });
+  if (frameSize) wsSend({ type: "capture", ...frameSize });
+  sendStamp();
+  log(`有人来看：${options.codec}，${options.fps} fps，最宽 ${options.maxWidth}，最高 ${options.kbps} kbps，${track.contentHint}`);
+}
+
+function onInput(event) {
+  const message = JSON.parse(event.data);
+  if (message.t === "ping") { channel?.send(JSON.stringify({ t: "pong", c: message.c, h: now() })); return; }
+  if ($("control").checked) wsSend({ type: "input", event: message });
+  else if (!warnedControl) { warnedControl = true; wsSend({ type: "error", message: "电脑上没勾「允许手机操作鼠标键盘」" }); }
+}
+
+// ---- 发送端统计 ----
+setInterval(async () => {
+  const peer = pc;
+  if (!peer) return;
+  const report = await peer.getStats();
+  let out, source;
+  report.forEach((s) => {
+    if (s.type === "outbound-rtp" && s.kind === "video") out = s;
+    if (s.type === "media-source" && s.kind === "video") source = s;
+  });
+  if (!out) return;
+  const summary = {
+    encoder: out.encoderImplementation ?? "-",
+    powerEfficient: out.powerEfficientEncoder ?? null,
+    codec: report.get(out.codecId)?.mimeType?.replace("video/", "") ?? "-",
+    fmtp: report.get(out.codecId)?.sdpFmtpLine ?? "-",
+    width: out.frameWidth ?? 0, height: out.frameHeight ?? 0,
+    captureFps: source?.framesPerSecond ?? null, sendFps: out.framesPerSecond ?? null,
+    limitation: out.qualityLimitationReason ?? "-", nack: out.nackCount ?? 0, pli: out.pliCount ?? 0
+  };
+  if (lastOut) {
+    const seconds = (out.timestamp - lastOut.timestamp) / 1000;
+    const frames = out.framesEncoded - lastOut.framesEncoded;
+    if (seconds > 0) summary.mbps = Number((((out.bytesSent - lastOut.bytesSent) * 8) / seconds / 1e6).toFixed(2));
+    if (frames > 0) summary.encodeMs = Number((((out.totalEncodeTime - lastOut.totalEncodeTime) / frames) * 1000).toFixed(1));
+  }
+  lastOut = out;
+  summary.captureLatency = stats.本机采集延迟;
+  stats.编码器 = summary.encoder;
+  stats.硬件编码 = summary.powerEfficient === null ? "-" : summary.powerEfficient ? "是" : "否";
+  stats.编码 = summary.codec;
+  stats.发送分辨率 = summary.width ? `${summary.width}×${summary.height}` : "-";
+  stats.采集帧率 = summary.captureFps ? `${summary.captureFps} fps` : "-";
+  stats.发送帧率 = summary.sendFps ? `${summary.sendFps} fps` : "-";
+  stats.码率 = summary.mbps !== undefined ? `${summary.mbps} Mbps` : "-";
+  stats.单帧编码 = summary.encodeMs !== undefined ? `${summary.encodeMs} ms` : "-";
+  stats.受限原因 = summary.limitation;
+  stats.重传请求 = `NACK ${summary.nack} · PLI ${summary.pli}`;
+  render();
+  wsSend({ type: "senderStats", ...summary });
+}, 2000);
+</script>
+</body>
+</html>
