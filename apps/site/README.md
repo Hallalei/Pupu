@@ -23,7 +23,7 @@ npm test
 ## 文件
 
 - `src/pages/index.astro`：首页九段，演示里的人名、电脑名和项目都是虚构的。
-- `public/film/relay.jpg`：短片封面。视频本身放在 R2 桶 `pupu-downloads` 的 `film/`，从 `dl.getpupu.com` 走，因为 Safari 播视频要分段请求。片子由 `media/promo` 渲染，换片子时换文件名，缓存是一年。
+- `public/film/zai.jpg`：短片封面。视频本身放在 R2 桶 `pupu-downloads` 的 `film/`，从 `dl.getpupu.com` 走，因为 Safari 播视频要分段请求。片子由 `media/promo` 渲染，换片子时换文件名，缓存是一年。
 - `src/styles/tokens.css`：取自「Pupu 设计规范」的颜色和圆角，名字不改。
 - `src/scripts/site.ts`：入场、演示播放、审批卡、表单。没有 JS 时内容照常显示，减弱动效时不播放。
 - `src/components/Cat.astro`：像素小猫，网格抄自 `design/icon/pixels.py`。
