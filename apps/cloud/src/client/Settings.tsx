@@ -4,20 +4,35 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
+import type { ConnectorService, ConnectorView } from "../connectors/store";
 import { mayChangePolicy, type DeviceView } from "../devices";
 import type { InviteList } from "../directory";
-import { mayInvite, mayManageInvites, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
+import type { PupuState } from "../server";
+import {
+  mayConnect,
+  mayInvite,
+  mayManageInvites,
+  mayRemoveMember,
+  mayRevoke,
+  type Actor,
+  type MemberView
+} from "../members";
 import { ago } from "./ago";
 import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
+  CalendarIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CodeIcon,
   ComputerIcon,
+  FolderIcon,
   InfoIcon,
   KeyIcon,
   LaptopIcon,
+  LinkIcon,
+  MailIcon,
   PeopleIcon,
   PhoneIcon,
   TicketIcon
@@ -36,6 +51,7 @@ type PairingCode = { readonly code: string; readonly expiresAt: number };
 /** 设置里的一页。和 iOS 的设置同一套：首页是一张自己的卡片和两组入口，点进去是各自的一页。 */
 export type SettingsPage =
   | "root"
+  | "accounts"
   | "this"
   | "computers"
   | "members"
@@ -47,6 +63,7 @@ export type SettingsPage =
 
 const TITLES: Record<Exclude<SettingsPage, object>, string> = {
   root: "设置",
+  accounts: "账户",
   this: "这台电脑",
   computers: "电脑",
   members: "成员",
@@ -81,12 +98,14 @@ function policyName(policy: ComputerPolicy): string {
 }
 
 /**
- * 设置：已经连上的电脑和它们的权限分级、成员、邀请码、手机浏览器和电脑 App、通行密钥、连的是哪个 Pupu。
+ * 设置：连给 Pupu 的账号、已经连上的电脑和它们的权限分级、成员、邀请码、手机浏览器和电脑 App、通行密钥、连的是哪个 Pupu。
  * 电脑上是居中的弹窗，窄窗口是从右边滑出的抽屉；里面都是一页一页往里点，左上角返回，Esc 退一层。
  */
 export function Settings({
   page,
   onPage,
+  connectors,
+  onRemoveConnector,
   computers,
   onRevoke,
   onSetPolicy,
@@ -104,6 +123,8 @@ export function Settings({
   /** 开着的那一页，关着是 null。 */
   page: SettingsPage | null;
   onPage: (page: SettingsPage | null) => void;
+  connectors: Connectors;
+  onRemoveConnector: (id: string) => Promise<void>;
   computers: readonly ComputerView[];
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
@@ -159,6 +180,18 @@ export function Settings({
             .join(" · ")}
         />
         <Group>
+          <LinkRow
+            icon={<LinkIcon />}
+            title="账户"
+            summary={
+              connectors.accounts.length > 0
+                ? `${connectors.accounts.length} 个`
+                : connectors.enabled
+                  ? "未连接"
+                  : "未开启"
+            }
+            onPress={() => onPage("accounts")}
+          />
           {thisComputer && (
             <LinkRow
               icon={<LaptopIcon />}
@@ -204,6 +237,8 @@ export function Settings({
         </Group>
       </>
     );
+  } else if (shown === "accounts") {
+    body = <Accounts connectors={connectors} members={members} actor={actor} onRemove={onRemoveConnector} />;
   } else if (shown === "this") {
     body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
   } else if (shown === "computers") {
@@ -523,6 +558,154 @@ function ConfirmPanel({
 
 function RowError({ error }: { error: string | null }) {
   return error ? <p className="m-0 text-subheadline text-danger-ink">{error}</p> : null;
+}
+
+/** 账户（连接器）：`enabled` 是这个 Pupu 配没配 open-connector。 */
+type Connectors = PupuState["connectors"];
+
+const SERVICE_ICONS: Record<string, typeof LinkIcon> = {
+  gmail: MailIcon,
+  googlecalendar: CalendarIcon,
+  googledrive: FolderIcon,
+  github: CodeIcon
+};
+
+function ServiceIcon({ service }: { service: string }) {
+  const Icon = SERVICE_ICONS[service] ?? LinkIcon;
+  return (
+    <span className="grid size-5 shrink-0 place-items-center text-[18px]">
+      <Icon />
+    </span>
+  );
+}
+
+/**
+ * 账户一页，和 iOS 的一样：上面是连上的账号，下面是能连的服务。连账号只在手机 App 上做（`mayConnect`），
+ * 这里一般只能看和断开；本机开发不带凭据时也能连，授权页开在新标签页里。
+ */
+function Accounts({
+  connectors,
+  members,
+  actor,
+  onRemove
+}: {
+  connectors: Connectors;
+  members: readonly MemberView[];
+  actor: Actor | null | undefined;
+  onRemove: (id: string) => Promise<void>;
+}) {
+  const me = members.find((member) => member.current)?.id;
+  const connectable = mayConnect(actor);
+  const note =
+    "Pupu 读邮件、看日程直接用；发信、建日程、改 issue 这类写操作，会先推到连这个账号的人的手机上批准。凭据存在这个 Pupu 自己的 open-connector 里。";
+  return (
+    <>
+      {connectors.accounts.length > 0 && (
+        <Group title="已连接">
+          {connectors.accounts.map((account) => (
+            <AccountRow
+              key={account.id}
+              account={account}
+              // 别人连的写上是谁的；自己的不写。
+              owner={account.memberId === me ? null : account.ownerEmail}
+              onRemove={() => onRemove(account.id)}
+            />
+          ))}
+        </Group>
+      )}
+      {connectors.enabled ? (
+        <Group note={connectable ? note : `连账号要在手机 App 上做。${note}`}>
+          {connectors.services.map((service) => (
+            <ServiceRow key={service.id} service={service} connectable={connectable} />
+          ))}
+        </Group>
+      ) : (
+        <Note>这个 Pupu 还没配连接器。配好 open-connector 之后，这里就能连 Gmail、Google 日历、云端硬盘和 GitHub。</Note>
+      )}
+    </>
+  );
+}
+
+function AccountRow({
+  account,
+  owner,
+  onRemove
+}: {
+  account: ConnectorView;
+  /** 别人连的才有：连它的人的邮箱。 */
+  owner: string | null;
+  onRemove: () => Promise<void>;
+}) {
+  const row = useRowAction();
+  const detail = [account.account, owner && `${owner} 连的`].filter(Boolean).join(" · ");
+  const label = account.account ? `${account.name}（${account.account}）` : account.name;
+  return (
+    <div className="flex flex-col gap-2 px-4 py-2.5">
+      <div className="flex items-center gap-3">
+        <ServiceIcon service={account.service} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-body">{account.name}</div>
+          {detail && <div className="truncate text-subheadline text-muted">{detail}</div>}
+        </div>
+        {!row.confirming && account.removable && (
+          <button
+            type="button"
+            aria-label={`断开${label}`}
+            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+            onClick={row.confirm}
+          >
+            断开
+          </button>
+        )}
+      </div>
+      {row.confirming && (
+        <ConfirmPanel
+          text={`断开后 Pupu 不能再用${label}，授权在那边一起撤销。要再用就重新连。`}
+          label="断开"
+          sending={row.sending}
+          onCancel={row.cancel}
+          onConfirm={() => void row.run(onRemove)}
+        />
+      )}
+      <RowError error={row.error} />
+    </div>
+  );
+}
+
+function ServiceRow({ service, connectable }: { service: ConnectorService; connectable: boolean }) {
+  const row = useRowAction();
+  function connect() {
+    // 授权页开在新标签页：要在点的这一下里先开，等拿到地址再打开会被浏览器当成弹窗拦掉。
+    // 授权完那一页说「可以关掉了」，回到这里时 Pupu 的状态会重新拉一次。
+    const tab = window.open("about:blank", "_blank");
+    void row.run(async () => {
+      try {
+        if (!tab) throw new Error("浏览器拦住了授权页，允许这个网站打开新窗口再点一次。");
+        tab.opener = null;
+        tab.location.href = (await api.connect(service.id)).url;
+      } catch (cause) {
+        tab?.close();
+        throw cause;
+      }
+    });
+  }
+  return (
+    <div className="flex flex-col gap-2 px-4 py-2.5">
+      <div className="flex items-center gap-3">
+        <ServiceIcon service={service.id} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-body">{service.name}</div>
+          <div className="text-subheadline text-muted">{service.detail}</div>
+        </div>
+        {connectable && (
+          <Button size="sm" variant="secondary" isPending={row.sending} onPress={connect}>
+            连接
+          </Button>
+        )}
+      </div>
+      <RowError error={row.error} />
+    </div>
+  );
 }
 
 /** 一台电脑的那一页：在不在线、什么时候先问你、能做什么，最下面是吊销。 */

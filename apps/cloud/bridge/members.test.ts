@@ -8,6 +8,7 @@ import {
   cleanName,
   emailKey,
   isEmail,
+  mayConnect,
   mayInvite,
   mayRemoveMember,
   mayRevoke,
@@ -48,6 +49,18 @@ describe("创建者和成员", () => {
     assert.equal(mayInvite(undefined), false);
     assert.equal(mayInvite(null), true, "本机开发不带凭据");
     assert.equal(mayInvite({ kind: "phone", memberId: null, role: "creator" }), false, "还没有创建者时邀请不了");
+  });
+
+  test("连账号只在属于成员的手机上做", () => {
+    assert.equal(mayConnect(member), true);
+    assert.equal(mayConnect(creator), true);
+    assert.equal(mayConnect({ ...member, kind: "browser" }), false);
+    assert.equal(mayConnect({ ...creator, kind: "desktop" }), false);
+    assert.equal(mayConnect(undefined), false);
+    assert.equal(mayConnect(null), true, "本机开发不带凭据");
+    const phone = { kind: "phone", memberId: null } as const;
+    assert.equal(mayConnect(actorOf(phone, [])), true, "还没有创建者，手机算创建者");
+    assert.equal(mayConnect(actorOf(phone, [{ id: "c", role: "creator" }])), false, "有创建者了，这台手机不属于谁");
   });
 
   test("移除成员只有创建者能做，哪个设备都行；创建者移除不了", () => {

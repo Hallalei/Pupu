@@ -94,6 +94,7 @@ export function App() {
     devices,
     activity,
     members,
+    connectors,
     applyActivity,
     reports,
     chats,
@@ -340,6 +341,11 @@ export function App() {
       <Settings
         page={settings}
         onPage={setSettings}
+        connectors={connectors}
+        onRemoveConnector={async (id) => {
+          await api.removeConnector(id);
+          await refresh();
+        }}
         computers={computers}
         onRevoke={async (id) => {
           await api.revokeComputer(id);

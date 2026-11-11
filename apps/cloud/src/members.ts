@@ -91,6 +91,16 @@ export function mayInvite(actor: Actor | null | undefined, proven: string | null
   return actor.kind === "phone" || proven === actor.memberId;
 }
 
+/**
+ * 连账号（连接器）只在手机 App 上做：连上一个账号是放宽 Pupu 能做的事，理由和 `mayChangePolicy` 一样。
+ * 手机还得属于一个成员，账号才有主人；还没有创建者时没有成员，`actorOf` 把这台手机算成创建者。
+ * `actor` 是 null 是本机开发没带凭据。
+ */
+export function mayConnect(actor: Actor | null | undefined): boolean {
+  if (actor === null) return true;
+  return actor?.kind === "phone" && (actor.memberId !== null || actor.role === "creator");
+}
+
 /** 邀请码开的是别人自己的 Pupu，看不到这边的数据，所以不用像邀请成员那样限手机。 */
 export function mayManageInvites(actor: Actor | null | undefined): boolean {
   return actor === null || actor?.role === "creator";
