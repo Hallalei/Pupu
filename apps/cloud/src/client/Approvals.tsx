@@ -3,15 +3,24 @@ import { useEffect, useState } from "react";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/browser";
 import type { ApprovalView } from "../bridge/approvals";
 import { ago } from "./ago";
-import { PhoneIcon } from "./icons";
+import { HandIcon, PhoneIcon } from "./icons";
 import { Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 
 export function WaitingChip() {
   return (
-    <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+    <span className="flex shrink-0 items-center gap-1 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+      <HandIcon className="text-[1.1em]" />
       等你批准
     </span>
   );
+}
+
+/** 卡片上说明的那一句：Pupu 给的理由，加上多久不回就当拒绝。 */
+function whyText(reason: string | null | undefined, expiresAt: number, now: number): string {
+  const minutes = Math.max(1, Math.floor((expiresAt - now) / 60_000));
+  const timeout = `${minutes} 分钟内没回应就按拒绝处理。`;
+  const why = reason?.trim().replace(/[。.]$/, "");
+  return why ? `${why}。${timeout}` : timeout;
 }
 
 /** 卡片上点了允许或拒绝：在发，或者没成。跟着那张卡走，卡从列表里没了，没成的原因也就不显示了。 */
@@ -90,9 +99,7 @@ export function Approvals({
         <div className="flex items-center gap-2">
           <WaitingChip />
           <span className="min-w-0 flex-1 truncate text-caption text-muted">
-            {approval.title.includes(approval.computerName)
-              ? ago(approval.createdAt)
-              : `${approval.computerName} · ${ago(approval.createdAt)}`}
+            {[approval.computerName, ago(approval.createdAt)].filter(Boolean).join(" · ")}
           </span>
           {visible.length > 1 && (
             <span className="shrink-0 text-caption text-muted">还有 {visible.length - 1} 条</span>
@@ -107,7 +114,7 @@ export function Approvals({
             {approval.detail}
           </pre>
         )}
-        {approval.reason && <p className="m-0 text-subheadline text-muted">{approval.reason}</p>}
+        <p className="m-0 text-subheadline text-muted">{whyText(approval.reason, approval.expiresAt, now)}</p>
         {how === "phone" && !phonePaired && (
           <p className="m-0 text-subheadline text-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
         )}
@@ -117,7 +124,7 @@ export function Approvals({
             isPending={pending === "deny"}
             isDisabled={pending !== null}
             onPress={() => void decide(approval.id, "deny")}
-            className="glass lift tap h-control w-full rounded-full text-body font-semibold text-foreground"
+            className="glass lift tap h-bar w-full rounded-full text-body font-semibold text-foreground"
           >
             拒绝
           </Button>
@@ -126,19 +133,19 @@ export function Approvals({
               isPending={pending === "allow"}
               isDisabled={pending !== null}
               onPress={() => void decide(approval.id, "allow")}
-              className="tap h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
+              className="tap h-bar w-full rounded-full bg-foreground text-body font-semibold text-background"
             >
               允许
             </Button>
           ) : how === "browser" ? (
             <Button
               onPress={openInBrowser}
-              className="tap h-control w-full rounded-full bg-foreground text-body font-semibold text-background"
+              className="tap h-bar w-full rounded-full bg-foreground text-body font-semibold text-background"
             >
               在浏览器里允许
             </Button>
           ) : (
-            <div className="flex h-control items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-muted">
+            <div className="flex h-bar items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-muted">
               <PhoneIcon />
               去手机上批准
             </div>
