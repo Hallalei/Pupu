@@ -4,6 +4,8 @@ Context, Not Control。组织大脑，让智能在组织间流动。
 
 Pupu 是一个团体共用的云端 Agent。大家在手机、电脑和网页上和同一个 Pupu 聊天、开项目；它能在你授权的电脑上跑命令、读写文件、操作窗口，高风险的动作先推到主人的手机上等批准。
 
+https://github.com/user-attachments/assets/15098287-b833-4787-a8b7-b26b98ae730a
+
 官网：https://getpupu.com
 
 ## 仓库里有什么
