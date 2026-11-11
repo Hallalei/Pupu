@@ -1,6 +1,6 @@
 import { Button, Drawer, Modal } from "@heroui/react";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/browser";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
@@ -9,8 +9,19 @@ import type { InviteList } from "../directory";
 import { mayInvite, mayManageInvites, mayRemoveMember, mayRevoke, type Actor, type MemberView } from "../members";
 import { ago } from "./ago";
 import { api } from "./api";
-import { CheckIcon } from "./icons";
-import { useDesktopComputer } from "./desktop";
+import { useDesktopComputer, type DesktopComputer } from "./desktop";
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ComputerIcon,
+  InfoIcon,
+  KeyIcon,
+  LaptopIcon,
+  PeopleIcon,
+  PhoneIcon,
+  TicketIcon
+} from "./icons";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ThisComputer } from "./ThisComputer";
 
@@ -22,6 +33,42 @@ const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
 
 type PairingCode = { readonly code: string; readonly expiresAt: number };
 
+/** 设置里的一页。和 iOS 的设置同一套：首页是一张自己的卡片和两组入口，点进去是各自的一页。 */
+export type SettingsPage =
+  | "root"
+  | "this"
+  | "computers"
+  | "members"
+  | "invites"
+  | "devices"
+  | "passkeys"
+  | "about"
+  | { readonly computer: string };
+
+const TITLES: Record<Exclude<SettingsPage, object>, string> = {
+  root: "设置",
+  this: "这台电脑",
+  computers: "电脑",
+  members: "成员",
+  invites: "邀请码",
+  devices: "设备",
+  passkeys: "通行密钥",
+  about: "关于"
+};
+
+/** 返回到哪一页：电脑详情回到电脑列表，别的回首页。 */
+function parentOf(page: SettingsPage): SettingsPage {
+  return typeof page === "object" ? "computers" : "root";
+}
+
+const THIS_COMPUTER: Record<DesktopComputer["status"], string> = {
+  offline: "没连上",
+  idle: "在线",
+  busy: "在做事",
+  screen: "在用屏幕",
+  waiting: "等你批准"
+};
+
 function computerLabel(computer: ComputerView): string {
   if (computer.online) return computer.inUse ? "在线 · 有人在用" : "在线";
   if (computer.stale) return "心跳中断";
@@ -29,13 +76,17 @@ function computerLabel(computer: ComputerView): string {
   return "离线";
 }
 
+function policyName(policy: ComputerPolicy): string {
+  return POLICIES.find(([key]) => key === policy)?.[1] ?? "";
+}
+
 /**
- * 这一版的设置：管已经连上的电脑、手机和浏览器，每台电脑上 Pupu 什么时候要先问你，
- * 成员名单，以及给新设备生成配对码。
+ * 设置：已经连上的电脑和它们的权限分级、成员、邀请码、手机浏览器和电脑 App、通行密钥、连的是哪个 Pupu。
+ * 电脑上是居中的弹窗，窄窗口是从右边滑出的抽屉；里面都是一页一页往里点，左上角返回，Esc 退一层。
  */
 export function Settings({
-  isOpen,
-  onOpenChange,
+  page,
+  onPage,
   computers,
   onRevoke,
   onSetPolicy,
@@ -50,8 +101,9 @@ export function Settings({
   passkeys,
   onPasskeysChanged
 }: {
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
+  /** 开着的那一页，关着是 null。 */
+  page: SettingsPage | null;
+  onPage: (page: SettingsPage | null) => void;
   computers: readonly ComputerView[];
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
@@ -68,35 +120,135 @@ export function Settings({
   passkeys: Passkeys | null;
   onPasskeysChanged: () => Promise<void>;
 }) {
-  const origin = window.location.origin;
+  const isOpen = page !== null;
   const thisComputer = useDesktopComputer();
   const wide = useWide();
+  const invites = useInvites(isOpen && mayManageInvites(actor));
+  // 关的时候弹窗还要淡出一会儿，这期间留着原来那页，不闪回首页。
+  const lastPage = useRef<SettingsPage>("root");
+  if (page) lastPage.current = page;
+  const shown = page ?? lastPage.current;
+  const back = shown === "root" ? null : () => onPage(parentOf(shown));
+  useEscapeBack(isOpen ? back : null);
+  // 换页时点的那一行没了，焦点会掉到弹窗外面，Esc 和 Tab 就都不灵了：放回新的这一页上。
+  const pageKey = typeof shown === "object" ? `computer:${shown.computer}` : shown;
+  const pageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = pageRef.current;
+    if (isOpen && node && !node.closest("[role=dialog]")?.contains(document.activeElement)) node.focus({ preventScroll: true });
+  }, [isOpen, pageKey]);
+
   const emails = new Map(members.map((member) => [member.id, member.email]));
+  const showPasskeys = passkeys !== null && (confirmBy === "passkey" || confirmBy === "browser");
+  const pairNew = <PairNew origin={window.location.origin} connected={[...devices, ...computers]} onCreate={onCreatePairingCode} />;
+  const computer = typeof shown === "object" ? computers.find((item) => item.id === shown.computer) : undefined;
+  const title = typeof shown === "object" ? (computer?.name ?? "电脑") : TITLES[shown];
 
-  const body = (
-    <>
-      {thisComputer && <ThisComputer computer={thisComputer} />}
-      <section className="flex flex-col gap-2">
-        <h3 className="m-0 px-1 text-footnote text-muted">电脑</h3>
-        {computers.length === 0 ? (
-          <p className="m-0 text-subheadline text-muted">还没有授权的电脑。</p>
-        ) : (
-          computers.map((computer) => (
-            <ComputerRow
-              key={computer.id}
-              computer={computer}
-              here={computer.id === thisComputer?.computerId}
-              owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
-              actor={actor}
-              confirmBy={confirmBy}
-              passkeys={passkeys}
-              onRevoke={() => onRevoke(computer.id)}
-              onSetPolicy={(policy, proof) => onSetPolicy(computer.id, policy, proof)}
+  let body: ReactNode;
+  if (shown === "root") {
+    const me = members.find((member) => member.current);
+    const here = devices.find((device) => device.current);
+    const host = window.location.host;
+    const online = computers.filter((item) => item.online).length;
+    body = (
+      <>
+        <Profile
+          name={me?.email ?? here?.name ?? host}
+          detail={[me ? (me.role === "creator" ? "创建者" : "成员") : here ? null : "本机开发", host]
+            .filter((part) => part && part !== (me?.email ?? here?.name ?? host))
+            .join(" · ")}
+        />
+        <Group>
+          {thisComputer && (
+            <LinkRow
+              icon={<LaptopIcon />}
+              title="这台电脑"
+              summary={thisComputer.paired ? THIS_COMPUTER[thisComputer.status] : "授权被吊销"}
+              onPress={() => onPage("this")}
             />
-          ))
+          )}
+          <LinkRow
+            icon={<ComputerIcon />}
+            title="电脑"
+            summary={online > 0 ? `${online} 台在线` : computers.length > 0 ? `${computers.length} 台` : "还没有"}
+            onPress={() => onPage("computers")}
+          />
+          {members.length > 0 && (
+            <LinkRow icon={<PeopleIcon />} title="成员" summary={`${members.length} 人`} onPress={() => onPage("members")} />
+          )}
+          {invites.list && (
+            <LinkRow
+              icon={<TicketIcon />}
+              title="邀请码"
+              summary={`还能生成 ${invites.list.left} 个`}
+              onPress={() => onPage("invites")}
+            />
+          )}
+        </Group>
+        <Group>
+          <LinkRow
+            icon={<PhoneIcon />}
+            title="设备"
+            summary={devices.length > 0 ? `${devices.length} 台` : undefined}
+            onPress={() => onPage("devices")}
+          />
+          {showPasskeys && (
+            <LinkRow
+              icon={<KeyIcon />}
+              title="通行密钥"
+              summary={passkeys.keys.length > 0 ? `${passkeys.keys.length} 把` : "还没加"}
+              onPress={() => onPage("passkeys")}
+            />
+          )}
+          <LinkRow icon={<InfoIcon />} title="关于" onPress={() => onPage("about")} />
+        </Group>
+      </>
+    );
+  } else if (shown === "this") {
+    body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
+  } else if (shown === "computers") {
+    body = (
+      <>
+        {computers.length === 0 ? (
+          <Note>还没有授权的电脑。</Note>
+        ) : (
+          <Group>
+            {computers.map((item) => (
+              <LinkRow
+                key={item.id}
+                icon={<Dot online={item.online} />}
+                title={item.id === thisComputer?.computerId ? `${item.name} · 这台电脑` : item.name}
+                detail={[computerLabel(item), policyName(item.policy), item.ownerId ? emails.get(item.ownerId) : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+                onPress={() => onPage({ computer: item.id })}
+              />
+            ))}
+          </Group>
         )}
-      </section>
-
+        <Group title="连接新设备">{pairNew}</Group>
+      </>
+    );
+  } else if (typeof shown === "object") {
+    body = computer ? (
+      <ComputerDetail
+        key={computer.id}
+        computer={computer}
+        owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
+        actor={actor}
+        confirmBy={confirmBy}
+        passkeys={passkeys}
+        onRevoke={async () => {
+          await onRevoke(computer.id);
+          onPage("computers");
+        }}
+        onSetPolicy={(policy, proof) => onSetPolicy(computer.id, policy, proof)}
+      />
+    ) : (
+      <Note>这台电脑已经吊销了。</Note>
+    );
+  } else if (shown === "members") {
+    body = (
       <Members
         members={members}
         actor={actor}
@@ -105,44 +257,72 @@ export function Settings({
         onRemove={onRemoveMember}
         onInvite={onInviteMember}
       />
-
-      {mayManageInvites(actor) && <Invites isOpen={isOpen} />}
-
-      <section className="flex flex-col gap-2">
-        <h3 className="m-0 px-1 text-footnote text-muted">手机、浏览器和电脑 App</h3>
+    );
+  } else if (shown === "invites") {
+    body = invites.list ? <Invites list={invites.list} onChanged={invites.load} /> : <Note>这个 Pupu 不发邀请码。</Note>;
+  } else if (shown === "devices") {
+    body = (
+      <>
         {devices.length === 0 ? (
-          <p className="m-0 text-subheadline text-muted">还没有配对的手机、浏览器或电脑 App。</p>
+          <Note>还没有配对的手机、浏览器或电脑 App。</Note>
         ) : (
-          devices.map((device) => (
-            <DeviceRow key={device.id} device={device} actor={actor} onRevoke={() => onRevokeDevice(device.id)} />
-          ))
+          <Group title="手机、浏览器和电脑 App">
+            {devices.map((device) => (
+              <DeviceRow key={device.id} device={device} actor={actor} onRevoke={() => onRevokeDevice(device.id)} />
+            ))}
+          </Group>
         )}
-      </section>
-
-      {passkeys && (confirmBy === "passkey" || confirmBy === "browser") && (
+        <Group title="连接新设备">{pairNew}</Group>
+      </>
+    );
+  } else if (shown === "passkeys") {
+    body =
+      passkeys && (confirmBy === "passkey" || confirmBy === "browser") ? (
         <PasskeyList passkeys={passkeys} confirmBy={confirmBy} onChanged={onPasskeysChanged} />
-      )}
+      ) : (
+        <Note>这台设备不用通行密钥。</Note>
+      );
+  } else {
+    body = (
+      <Group title="连接的 Pupu">
+        <div className="flex min-h-control items-center px-4 py-2.5 text-body break-all">{window.location.origin}</div>
+      </Group>
+    );
+  }
 
-      <PairNew
-        origin={origin}
-        connected={[...devices, ...computers]}
-        onCreate={onCreatePairingCode}
-      />
-    </>
+  const backButton = back && (
+    <button
+      type="button"
+      aria-label={`返回${TITLES[typeof shown === "object" ? "computers" : "root"]}`}
+      onClick={back}
+      className="grid size-control-sm shrink-0 place-items-center rounded-full bg-surface text-[16px] hover:bg-surface-secondary"
+    >
+      <ChevronLeftIcon />
+    </button>
   );
+  // 首页不写标题，和 iOS 一样第一眼是自己的卡片；读屏照样念「设置」。
+  const heading = shown === "root" ? "sr-only" : "text-greeting";
+  const content = (
+    <div key={pageKey} ref={pageRef} tabIndex={-1} className="fade-in flex flex-col gap-6 outline-none">
+      {body}
+    </div>
+  );
+  const onOpenChange = (open: boolean) => {
+    if (!open) onPage(null);
+  };
 
-  // 电脑上是居中的弹窗，宽 520；手机上是从右边滑出的抽屉。
   if (wide) {
     return (
       <Modal>
         <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
           <Modal.Container placement="center" scroll="inside">
-            <Modal.Dialog className="max-h-[85dvh] w-[min(92vw,520px)] rounded-panel">
+            <Modal.Dialog className="h-[min(85dvh,640px)] w-[min(92vw,520px)] rounded-panel bg-background">
               <Modal.CloseTrigger aria-label="关闭" />
-              <Modal.Header>
-                <Modal.Heading className="text-title">设置</Modal.Heading>
+              <Modal.Header className="flex min-h-control-sm flex-col items-start gap-3">
+                {backButton}
+                <Modal.Heading className={heading}>{title}</Modal.Heading>
               </Modal.Header>
-              <Modal.Body className="flex flex-col gap-6 pt-3">{body}</Modal.Body>
+              <Modal.Body className="pt-3 pb-2 text-body text-foreground">{content}</Modal.Body>
             </Modal.Dialog>
           </Modal.Container>
         </Modal.Backdrop>
@@ -153,15 +333,111 @@ export function Settings({
     <Drawer>
       <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Drawer.Content placement="right">
-          <Drawer.Dialog className="w-[min(88vw,380px)]">
-            <Drawer.Header>
-              <Drawer.Heading className="text-title">设置</Drawer.Heading>
+          <Drawer.Dialog className="w-[min(88vw,380px)] bg-background">
+            <Drawer.Header className="flex flex-col items-start gap-3">
+              {backButton}
+              <Drawer.Heading className={heading}>{title}</Drawer.Heading>
             </Drawer.Header>
-            <Drawer.Body className="flex flex-col gap-6">{body}</Drawer.Body>
+            <Drawer.Body className="text-body text-foreground">{content}</Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
     </Drawer>
+  );
+}
+
+/**
+ * 在里面那几页按 Esc 退一层，不关掉设置。监听挂在 window 的捕获阶段，比弹窗自己关窗的处理先拿到。
+ */
+function useEscapeBack(back: (() => void) | null) {
+  useEffect(() => {
+    if (!back) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      back();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [back]);
+}
+
+/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，list 一直是 null，首页就没有这一行。 */
+function useInvites(enabled: boolean) {
+  const [list, setList] = useState<InviteList | null>(null);
+  const load = useCallback(() => api.invites().then(setList), []);
+  useEffect(() => {
+    if (enabled) load().catch(() => setList(null));
+  }, [enabled, load]);
+  return { list, load };
+}
+
+/** 首页最上面：自己是谁，连的是哪个 Pupu。 */
+function Profile({ name, detail }: { name: string; detail: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-row bg-surface px-4 py-3">
+      <span
+        aria-hidden="true"
+        className="grid size-10 shrink-0 place-items-center rounded-full bg-foreground text-headline text-background uppercase"
+      >
+        {Array.from(name)[0] ?? "我"}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-title">{name}</span>
+        {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
+      </span>
+    </div>
+  );
+}
+
+/** 一组行，白底圆角，行和行之间一条细线；上面可以有个小标题，下面可以有一句说明。 */
+function Group({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      {title && <h3 className="m-0 px-4 text-footnote text-muted">{title}</h3>}
+      <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">{children}</div>
+      {note && <p className="m-0 px-4 text-footnote font-normal text-muted">{note}</p>}
+    </section>
+  );
+}
+
+function Note({ children }: { children: ReactNode }) {
+  return <p className="m-0 px-4 text-subheadline text-muted">{children}</p>;
+}
+
+function Dot({ online }: { online: boolean }) {
+  return <span className={`size-2 rounded-full ${online ? "bg-online" : "bg-offline"}`} aria-hidden="true" />;
+}
+
+/** 点进下一页的一行：图标、名字、右边一句摘要和 ›。 */
+function LinkRow({
+  icon,
+  title,
+  detail,
+  summary,
+  onPress
+}: {
+  icon?: ReactNode;
+  title: string;
+  detail?: string;
+  summary?: string;
+  onPress: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-foreground/4"
+    >
+      {icon && <span className="grid size-5 shrink-0 place-items-center text-[18px]">{icon}</span>}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body">{title}</span>
+        {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
+      </span>
+      {summary && <span className="shrink-0 text-body text-muted">{summary}</span>}
+      <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
+    </button>
   );
 }
 
@@ -249,9 +525,9 @@ function RowError({ error }: { error: string | null }) {
   return error ? <p className="m-0 text-subheadline text-danger-ink">{error}</p> : null;
 }
 
-function ComputerRow({
+/** 一台电脑的那一页：在不在线、什么时候先问你、能做什么，最下面是吊销。 */
+function ComputerDetail({
   computer,
-  here,
   owner,
   actor,
   confirmBy,
@@ -260,8 +536,6 @@ function ComputerRow({
   onSetPolicy
 }: {
   computer: ComputerView;
-  /** 就是打开设置的这台电脑 App。 */
-  here: boolean;
   /** 主人的邮箱。 */
   owner: string | null;
   actor: Actor | null | undefined;
@@ -279,82 +553,83 @@ function ComputerRow({
     return confirmBy === "passkey" || confirmBy === "browser" ? confirmBy : "phone";
   }
   return (
-    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
-      <div className="flex items-center gap-3">
-        <span
-          className={`size-2 shrink-0 rounded-full ${computer.online ? "bg-online" : "bg-offline"}`}
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-body font-medium">
-            {computer.name}
-            {here && <span className="font-normal text-muted"> · 这台电脑</span>}
-          </div>
-          <div className="truncate text-subheadline text-muted">
-            {computerLabel(computer)}
-            {owner ? ` · ${owner}` : ""}
-            {computer.screen ? " · 屏幕已授权" : ""}
-          </div>
+    <>
+      <Group>
+        <div className="flex min-h-control items-center gap-3 px-4 py-2.5">
+          <Dot online={computer.online} />
+          <span className="min-w-0 flex-1 truncate text-body">
+            {[computerLabel(computer), owner, computer.screen ? "屏幕已授权" : null].filter(Boolean).join(" · ")}
+          </span>
         </div>
-        {!row.confirming && mayRevoke(actor, computer.ownerId) && (
-          <button
-            type="button"
-            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
-            onClick={row.confirm}
-          >
-            吊销
-          </button>
-        )}
-      </div>
-      <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="flex flex-col">
-        {POLICIES.map(([policy, label, hint]) => {
-          const selected = computer.policy === policy;
-          const how = howTo(policy);
-          const locked = how === "phone";
-          return (
-            <button
-              key={policy}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              disabled={row.sending || locked}
-              onClick={() => {
-                if (selected) return;
-                if (how === "browser") openInBrowser();
-                else if (how === "passkey" && passkeys)
-                  void row.run(async () =>
-                    onSetPolicy(policy, await confirm({ kind: "policy", computerId: computer.id, policy }, passkeys))
-                  );
-                else void row.run(() => onSetPolicy(policy));
-              }}
-              className={`flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 ${
-                locked ? "opacity-60" : ""
-              }`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-subheadline font-medium">
-                  {label}
-                  {locked && <span className="font-normal text-muted"> · 去主人的手机上改</span>}
-                  {how === "browser" && <span className="font-normal text-muted"> · 在浏览器里改</span>}
+      </Group>
+      <Group
+        title="权限分级"
+        note="Pupu 在这台电脑上能跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。"
+      >
+        <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="contents">
+          {POLICIES.map(([policy, label, hint]) => {
+            const selected = computer.policy === policy;
+            const how = howTo(policy);
+            const locked = how === "phone";
+            return (
+              <button
+                key={policy}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={row.sending || locked}
+                onClick={() => {
+                  if (selected) return;
+                  if (how === "browser") openInBrowser();
+                  else if (how === "passkey" && passkeys)
+                    void row.run(async () =>
+                      onSetPolicy(policy, await confirm({ kind: "policy", computerId: computer.id, policy }, passkeys))
+                    );
+                  else void row.run(() => onSetPolicy(policy));
+                }}
+                className={`flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4 ${
+                  locked ? "opacity-60" : ""
+                }`}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-body">
+                    {label}
+                    {locked && <span className="text-muted"> · 去主人的手机上改</span>}
+                    {how === "browser" && <span className="text-muted"> · 在浏览器里改</span>}
+                  </span>
+                  <span className="block text-subheadline text-muted">{hint}</span>
                 </span>
-                {selected && <span className="block text-caption text-muted">{hint}</span>}
-              </span>
-              {selected && <CheckIcon className="shrink-0 text-[14px]" />}
+                {selected && <CheckIcon className="shrink-0 text-[16px]" />}
+              </button>
+            );
+          })}
+        </div>
+      </Group>
+      {mayRevoke(actor, computer.ownerId) && (
+        <Group>
+          {row.confirming ? (
+            <div className="px-4 py-3">
+              <ConfirmPanel
+                text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
+                label="吊销"
+                sending={row.sending}
+                onCancel={row.cancel}
+                onConfirm={() => void row.run(onRevoke)}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={row.confirm}
+              className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body text-danger-ink hover:bg-foreground/4"
+            >
+              吊销这台电脑
             </button>
-          );
-        })}
-      </div>
-      {row.confirming && (
-        <ConfirmPanel
-          text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
-          label="吊销"
-          sending={row.sending}
-          onCancel={row.cancel}
-          onConfirm={() => void row.run(onRevoke)}
-        />
+          )}
+        </Group>
       )}
       <RowError error={row.error} />
-    </div>
+    </>
   );
 }
 
@@ -369,13 +644,13 @@ function DeviceRow({
 }) {
   const row = useRowAction();
   return (
-    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
+    <div className="flex flex-col gap-2 px-4 py-2.5">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-body font-medium">
+          <div className="truncate text-body">
             {device.name}
             {device.current && (
-              <span className="font-normal text-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
+              <span className="text-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
             )}
           </div>
           <div className="truncate text-subheadline text-muted">{deviceLabel(device)}</div>
@@ -421,12 +696,12 @@ function MemberRow({
 }) {
   const row = useRowAction();
   return (
-    <div className="flex flex-col gap-2 rounded-row bg-default px-3 py-3">
+    <div className="flex flex-col gap-2 px-4 py-2.5">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-body font-medium">
+          <div className="truncate text-body">
             {member.email}
-            {member.current && <span className="font-normal text-muted"> · 你</span>}
+            {member.current && <span className="text-muted"> · 你</span>}
           </div>
           <div className="text-subheadline text-muted">
             {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
@@ -476,7 +751,6 @@ function Members({
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (members.length === 0) return null;
   const how: "now" | ConfirmWhere = mayInvite(actor)
     ? "now"
     : passkeys && mayInvite(actor, actor?.memberId ?? null)
@@ -499,11 +773,12 @@ function Members({
   }
 
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 px-1 text-footnote text-muted">成员</h3>
-      {members.map((member) => (
-        <MemberRow key={member.id} member={member} actor={actor} onRemove={() => onRemove(member.id)} />
-      ))}
+    <>
+      <Group>
+        {members.map((member) => (
+          <MemberRow key={member.id} member={member} actor={actor} onRemove={() => onRemove(member.id)} />
+        ))}
+      </Group>
       {how === "now" || how === "passkey" ? (
         <form
           className="flex gap-2"
@@ -518,45 +793,35 @@ function Members({
             placeholder="要邀请的 Google 邮箱"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="min-w-0 flex-1 rounded-tag bg-default px-3 py-1.5 text-subheadline"
+            className="min-w-0 flex-1 rounded-full bg-surface px-4 py-1.5 text-body"
           />
-          <Button size="sm" type="submit" isPending={inviting} isDisabled={!email.trim()}>
+          <Button type="submit" isPending={inviting} isDisabled={!email.trim()}>
             邀请
           </Button>
         </form>
       ) : how === "browser" ? (
-        <Button size="sm" variant="secondary" className="self-start" onPress={openInBrowser}>
+        <Button variant="secondary" className="self-start" onPress={openInBrowser}>
           在浏览器里邀请
         </Button>
       ) : (
-        actor?.role === "creator" && (
-          <p className="m-0 text-subheadline text-muted">邀请成员要在手机 App 的设置里做。</p>
-        )
+        actor?.role === "creator" && <Note>邀请成员要在手机 App 的设置里做。</Note>
       )}
-      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
-    </section>
+      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
+    </>
   );
 }
 
-/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，这里什么都不显示。 */
-function Invites({ isOpen }: { isOpen: boolean }) {
-  const [list, setList] = useState<InviteList | null>(null);
+/** 邀请码一页：没用过的能复制、作废，用过的写是谁用的。 */
+function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promise<void> }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => api.invites().then(setList), []);
-
-  useEffect(() => {
-    if (isOpen) load().catch(() => setList(null));
-  }, [isOpen, load]);
-
-  if (!list) return null;
 
   async function change(action: () => Promise<unknown>) {
     setError(null);
     try {
       await action();
-      await load();
+      await onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -569,49 +834,55 @@ function Invites({ isOpen }: { isOpen: boolean }) {
   }
 
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 flex justify-between px-1 text-footnote text-muted">
-        <span>邀请码</span>
-        <span>还能生成 {list.left} 个</span>
-      </h3>
-      {list.invites.map((invite) => (
-        <div key={invite.code} className="flex items-center gap-3 rounded-row bg-default px-3 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="font-mono text-body font-medium">{invite.code}</div>
-            {invite.usedBy && <div className="truncate text-subheadline text-muted">{invite.usedBy}</div>}
-          </div>
-          {!invite.usedBy && (
-            <>
-              <button
-                type="button"
-                className="shrink-0 text-subheadline hover:opacity-75"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(invite.code);
-                  setCopied(invite.code);
-                }}
-              >
-                {copied === invite.code ? "已复制" : "复制"}
-              </button>
-              <button
-                type="button"
-                className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
-                onClick={() => void change(() => api.revokeInvite(invite.code))}
-              >
-                作废
-              </button>
-            </>
-          )}
-        </div>
-      ))}
-      <Button size="sm" isPending={creating} isDisabled={list.left === 0} onPress={() => void create()}>
-        生成邀请码
-      </Button>
-      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
-    </section>
+    <>
+      {list.invites.length > 0 && (
+        <Group>
+          {list.invites.map((invite) => (
+            <div key={invite.code} className="flex min-h-control items-center gap-3 px-4 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-body">{invite.code}</div>
+                {invite.usedBy && <div className="truncate text-subheadline text-muted">{invite.usedBy}</div>}
+              </div>
+              {!invite.usedBy && (
+                <>
+                  <button
+                    type="button"
+                    className="shrink-0 text-subheadline hover:opacity-75"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(invite.code);
+                      setCopied(invite.code);
+                    }}
+                  >
+                    {copied === invite.code ? "已复制" : "复制"}
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+                    onClick={() => void change(() => api.revokeInvite(invite.code))}
+                  >
+                    作废
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </Group>
+      )}
+      <Group note={`还能生成 ${list.left} 个。新用户填码就能开自己的 Pupu。`}>
+        <button
+          type="button"
+          disabled={creating || list.left === 0}
+          onClick={() => void create()}
+          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-foreground/4 disabled:text-muted"
+        >
+          {creating ? "正在生成…" : "生成邀请码"}
+        </button>
+      </Group>
+      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
+    </>
   );
 }
 
-/** 比如「手机 · a@gmail.com · 3 分钟前用过」。邮箱是这台设备属于的成员。 */
 /**
  * 这个人的通行密钥。没有手机时，允许、放宽权限、邀请靠它确认：系统弹窗里按指纹或输电脑密码。
  * 电脑 App 的窗口里加不了（见 passkey.ts），交给浏览器。
@@ -626,48 +897,44 @@ function PasskeyList({
   onChanged: () => Promise<void>;
 }) {
   const row = useRowAction();
+  const add =
+    confirmBy === "browser"
+      ? openInBrowser
+      : () =>
+          void row.run(async () => {
+            await addPasskey(passkeys);
+            await onChanged();
+          });
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 px-1 text-footnote text-muted">通行密钥</h3>
-      {passkeys.keys.length === 0 ? (
-        <p className="m-0 text-subheadline text-muted">
-          没有手机时，允许 Pupu 的请示、放宽电脑权限、邀请成员，都用通行密钥确认：按指纹或输电脑密码。
-        </p>
-      ) : (
-        passkeys.keys.map((key) => (
-          <div key={key.id} className="flex flex-col rounded-row bg-default px-3 py-3">
-            <div className="truncate text-body font-medium">{key.name}</div>
-            <div className="truncate text-subheadline text-muted">
-              {key.lastUsedAt ? `${ago(key.lastUsedAt)}用过` : `${ago(key.createdAt)}加的`}
+    <>
+      {passkeys.keys.length > 0 && (
+        <Group>
+          {passkeys.keys.map((key) => (
+            <div key={key.id} className="flex flex-col px-4 py-2.5">
+              <div className="truncate text-body">{key.name}</div>
+              <div className="truncate text-subheadline text-muted">
+                {key.lastUsedAt ? `${ago(key.lastUsedAt)}用过` : `${ago(key.createdAt)}加的`}
+              </div>
             </div>
-          </div>
-        ))
+          ))}
+        </Group>
       )}
-      {confirmBy === "browser" ? (
-        <Button size="sm" variant="secondary" className="self-start" onPress={openInBrowser}>
-          在浏览器里加
-        </Button>
-      ) : (
-        <Button
-          size="sm"
-          variant="secondary"
-          className="self-start"
-          isPending={row.sending}
-          onPress={() =>
-            void row.run(async () => {
-              await addPasskey(passkeys);
-              await onChanged();
-            })
-          }
+      <Group note="没有手机时，允许 Pupu 的请示、放宽电脑权限、邀请成员，都用通行密钥确认：按指纹或输电脑密码。">
+        <button
+          type="button"
+          disabled={row.sending}
+          onClick={add}
+          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-foreground/4 disabled:text-muted"
         >
-          加一把通行密钥
-        </Button>
-      )}
+          {confirmBy === "browser" ? "在浏览器里加" : row.sending ? "正在加…" : "加一把通行密钥"}
+        </button>
+      </Group>
       <RowError error={row.error} />
-    </section>
+    </>
   );
 }
 
+/** 比如「手机 · a@gmail.com · 3 分钟前用过」。邮箱是这台设备属于的成员。 */
 function deviceLabel(device: DeviceView): string {
   const seen = device.lastSeenAt ? `${ago(device.lastSeenAt)}用过` : null;
   return [DEVICE_KINDS[device.kind], device.member, seen].filter(Boolean).join(" · ");
@@ -676,7 +943,7 @@ function deviceLabel(device: DeviceView): string {
 /**
  * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑 App 填码。
  * 连过手机以后，网页生成的码配不了新手机（见 `mayPair`），要在旧手机上生成。
- * 用这个码的设备连上了，或者码过期了，就收起来。
+ * 用这个码的设备连上了，或者码过期了，就收起来。放在一组里，和 iOS 一样是一行「生成配对码」。
  */
 function PairNew({
   origin,
@@ -729,43 +996,50 @@ function PairNew({
     ? `pupu://pair?server=${encodeURIComponent(origin)}&code=${encodeURIComponent(pairing.code)}`
     : "";
 
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 px-1 text-footnote text-muted">连接新设备</h3>
-      {pairing && left > 0 ? (
-        <div className="flex flex-col gap-3 rounded-row bg-default px-3 py-3">
-          <div className="flex items-center gap-3">
-            <QrCode text={link} label="配对二维码，用 iPhone 相机扫" />
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
-                {pairing.code}
-              </div>
-              <div className="text-subheadline text-muted" aria-live="polite">
-                {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 后过期
-              </div>
+  if (pairing && left > 0) {
+    return (
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <QrCode text={link} label="配对二维码，用 iPhone 相机扫" />
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
+              {pairing.code}
+            </div>
+            <div className="text-subheadline text-muted" aria-live="polite">
+              {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 后过期
             </div>
           </div>
-          <p className="m-0 text-subheadline text-muted">
-            手机扫码或在 App 里填码，浏览器和电脑 App 填码。连过手机的，新手机要用旧手机设置里生成的码。
-          </p>
-          <div className="flex justify-end">
-            <Button size="sm" variant="tertiary" onPress={() => setPairing(null)}>
-              不用了
-            </Button>
-          </div>
         </div>
-      ) : (
-        <div className="flex flex-col items-start gap-2 px-1">
-          {(joined || pairing) && (
-            <p className="m-0 text-subheadline text-muted">{joined ? `「${joined}」连上了。` : "配对码过期了，再生成一个。"}</p>
-          )}
-          <Button size="sm" variant="secondary" isPending={busy} onPress={() => void create()}>
-            {joined || pairing ? "再生成一个" : "生成配对码"}
+        <p className="m-0 text-subheadline text-muted">
+          手机扫码或在 App 里填码，浏览器和电脑 App 填码。连过手机的，新手机要用旧手机设置里生成的码。
+        </p>
+        <div className="flex justify-end">
+          <Button size="sm" variant="tertiary" onPress={() => setPairing(null)}>
+            不用了
           </Button>
         </div>
-      )}
-      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
-    </section>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void create()}
+      className="flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left enabled:hover:bg-foreground/4"
+    >
+      <span className="text-body font-semibold">
+        {busy ? "正在生成…" : joined || pairing ? "再生成一个配对码" : "生成配对码"}
+      </span>
+      <span className={`text-subheadline ${error ? "text-danger-ink" : "text-muted"}`}>
+        {error ??
+          (joined
+            ? `「${joined}」连上了。`
+            : pairing
+              ? "配对码过期了。"
+              : "新手机、浏览器和电脑都用配对码连上。码 10 分钟内有效，用一次就作废。")}
+      </span>
+    </button>
   );
 }
 

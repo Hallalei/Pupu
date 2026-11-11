@@ -2,16 +2,20 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'" />
     <title>Pupu</title>
     <link rel="stylesheet" href="page.css" />
   </head>
-  <body>
-    <div class="card">
-      <h1>没连上 Pupu</h1>
-      <p id="lead">网络通了会自动再试。</p>
-      <button id="retry" type="button">再试一次</button>
+  <body class="pair">
+    <div class="art" aria-hidden="true"><canvas id="art"></canvas></div>
+    <div class="side">
+      <div class="stack">
+        <h1>没连上 Pupu</h1>
+        <p id="lead">网络通了会自动再试。</p>
+        <button id="retry" type="button">再试一次</button>
+      </div>
     </div>
+    <script src="pair-art.js"></script>
     <script src="offline.js"></script>
   </body>
 </html>
