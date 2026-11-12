@@ -437,7 +437,14 @@ function browserTask(
   } else if (latest?.step.status === "failed") {
     state = "failed";
     status = "没做完，最后一步出错了";
-  } else if (!latest || latest.step.status === "unfinished" || latest.step.status === "denied" || latest.step.status === "expired") {
+  } else if (
+    !latest ||
+    latest.step.status === "unfinished" ||
+    latest.step.status === "denied" ||
+    latest.step.status === "expired" ||
+    // 停在两步之间（比如点了「取消任务」）：最后一步本身做完了，但计划还没勾完、也没给结果，不能说做完了。
+    planSteps.some((step) => !step.done)
+  ) {
     state = "stopped";
     status = "已停下";
   } else {

@@ -101,6 +101,22 @@ describe("浏览器任务卡片", () => {
     assert.equal(list.at(-1)!.kind, "assistant");
   });
 
+  test("取消任务后：最后一步做完了，但计划没勾完、没给结果，算停下，不算做完", () => {
+    const list = rows(
+      [
+        user("做 12 轮"),
+        assistant([{ type: "tool-call", id: "p1", name: "browser_plan", arguments: { steps: [{ text: "第 1 轮", done: true }, { text: "第 2 轮" }] } }]),
+        done("p1", "browser_plan"),
+        assistant([tool("l1", "browser_look", {})]),
+        done("l1", "browser_look")
+      ],
+      false
+    );
+    const [task] = tasks(list);
+    assert.equal(task!.state, "stopped");
+    assert.equal(task!.status, "已停下");
+  });
+
   test("用户发了新消息，下一段浏览器操作另起一张卡", () => {
     const list = rows(
       [

@@ -423,7 +423,8 @@ nonisolated enum ChatRows {
             (state, status) = (.live, latest.map { browserDoing($0.1) } ?? "正在想怎么做")
         } else if latest?.0.status == .failed {
             (state, status) = (.failed, "没做完，最后一步出错了")
-        } else if latest == nil || [.unfinished, .denied, .expired].contains(latest!.0.status) {
+        } else if latest == nil || [.unfinished, .denied, .expired].contains(latest!.0.status) || planSteps.contains(where: { !$0.done }) {
+            // 停在两步之间（比如点了「取消任务」）：计划还没勾完、也没给结果，不能说做完了。
             (state, status) = (.stopped, "已停下")
         } else {
             (state, status) = (.done, "做完了")
