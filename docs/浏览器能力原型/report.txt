@@ -1,5 +1,6 @@
 [主进程] 收到桥的请求 b1：{"op":"open","url":"http://127.0.0.1:<端口>/"}
 [主进程] Pupu 浏览器窗口已创建。
+[测试页] 浏览器的 User-Agent：Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.8078.75 Safari/537.36
 [主进程] 回给桥 b1：ok=true
 [主进程] 收到桥的请求 b2：{"op":"click","ref":10,"label":"加一"}
 [主进程] 回给桥 b2：ok=true

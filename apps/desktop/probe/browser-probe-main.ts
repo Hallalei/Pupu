@@ -1,8 +1,9 @@
 /**
  * 原型的取证脚本，不进正式包（build.mjs 不打它）。跑法见 probe/run.mjs。
  *
- * 和电脑 App 走同一条路：桥那一侧在 utilityProcess 里调 bridge/browser.ts 的 browse()，
- * 主进程收到请求交给 BrowserHost，结果按 id 回到桥。测试页由本机 127.0.0.1 的小服务给。
+ * 用的是电脑 App 里的同一份 BrowserHost 和 bridge/browser.ts：桥那一侧在 utilityProcess 里调 browse()，
+ * 主进程收到请求交给 BrowserHost，结果按 id 回到桥。消息路由是这里自己写的，没经过 BridgeSupervisor。
+ * 测试页由本机 127.0.0.1 的小服务给，顺便记下浏览器发来的 User-Agent。
  */
 import { app, utilityProcess } from "electron";
 import { createServer } from "node:http";
@@ -34,7 +35,12 @@ function log(line: string): void {
 
 async function main(): Promise<void> {
   await mkdir(out, { recursive: true });
+  let agent = "";
   const server = createServer((request, response) => {
+    if (!agent && request.headers["user-agent"]) {
+      agent = request.headers["user-agent"];
+      log(`[测试页] 浏览器的 User-Agent：${agent}`);
+    }
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(request.url === "/two" ? "<title>第二页</title><h1>第二页</h1><p>到了。</p>" : PAGE);
   });
