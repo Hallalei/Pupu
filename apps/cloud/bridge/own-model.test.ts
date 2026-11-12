@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import type { Context, Tool } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Type } from "typebox";
@@ -277,6 +278,71 @@ describe("按设置路由", () => {
     );
     const answered = await own.streamSimple(describeRouter(deps(PUPU_CHOICE)), context).result();
     assert.equal(answered.stopReason, "toolUse", answered.errorMessage);
+  });
+});
+
+describe("中途换模型：历史里混着两种模型的消息", () => {
+  /** 记下发出去的请求体，回一段只有文字的 SSE。 */
+  function capture() {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      const text = `data: ${JSON.stringify({ id: "c", choices: [{ index: 0, delta: { content: "好" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+      return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    return { bodies, fetchImpl };
+  }
+
+  const toolTurn = (provider: string, model: string, api = "openai-completions", thinking = false) => [
+    { role: "user" as const, content: "看看桌面", timestamp: 1 },
+    {
+      role: "assistant" as const,
+      api,
+      provider,
+      model,
+      content: [
+        ...(thinking ? [{ type: "thinking" as const, thinking: "先列目录" }] : []),
+        { type: "toolCall" as const, id: "call_1", name: "list_files", arguments: { path: "~/Desktop" } }
+      ],
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "toolUse" as const,
+      timestamp: 2
+    },
+    { role: "toolResult" as const, toolCallId: "call_1", toolName: "list_files", content: [{ type: "text" as const, text: "a.txt" }], isError: false, timestamp: 3 },
+    { role: "user" as const, content: "接着说", timestamp: 4 }
+  ];
+
+  test("DeepSeek 的历史（带思考）发给自己的模型：思考去掉，工具调用和结果对得上", async () => {
+    const { bodies, fetchImpl } = capture();
+    const provider = routerProvider(deps({ source: "computer", computerId: "pc1", fallback: false }, { relayFetch: () => fetchImpl }));
+    const context = normalizeContext({ messages: toolTurn("deepseek", "deepseek-flash", "openai-completions", true), tools: [listFiles] });
+    const message = await provider.streamSimple(describeRouter(deps(PUPU_CHOICE)), context).result();
+    assert.equal(message.stopReason, "stop", message.errorMessage);
+    const sent = bodies[0]!.messages as { role: string; tool_calls?: { id: string }[]; tool_call_id?: string; reasoning_content?: unknown }[];
+    const assistant = sent.find((each) => each.role === "assistant")!;
+    assert.equal(assistant.tool_calls?.[0]?.id, "call_1");
+    assert.equal(assistant.reasoning_content, undefined);
+    assert.equal(sent.find((each) => each.role === "tool")?.tool_call_id, "call_1");
+  });
+
+  test("自己模型的历史发给 DeepSeek（回落）：照 DeepSeek 的要求带上 reasoning_content", async () => {
+    const { bodies, fetchImpl } = capture();
+    const deepseek = deepseekProvider();
+    const pupuModel = deepseek.getModels().find((model) => model.id === "deepseek-flash")!;
+    const provider = routerProvider(
+      deps(
+        { source: "computer", computerId: "pc1", fallback: true },
+        { computerModel: () => "offline", pupu: { provider: deepseek, model: pupuModel, apiKey: () => "test-key" } }
+      )
+    );
+    const context = normalizeContext({ messages: toolTurn("own-relay", "qwen-local"), tools: [listFiles] });
+    const message = await provider.streamSimple(describeRouter(deps(PUPU_CHOICE)), context, { fetch: fetchImpl }).result();
+    assert.equal(message.stopReason, "stop", message.errorMessage);
+    const sent = bodies[0]!.messages as { role: string; tool_calls?: { id: string }[]; reasoning_content?: unknown }[];
+    const assistant = sent.find((each) => each.role === "assistant")!;
+    assert.equal(assistant.tool_calls?.[0]?.id, "call_1");
+    assert.ok("reasoning_content" in assistant);
+    assert.equal(bodies[0]!.model, "deepseek-flash");
   });
 });
 

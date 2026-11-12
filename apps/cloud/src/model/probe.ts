@@ -1,6 +1,6 @@
 /**
  * 保存自带模型前试一次：能不能连上、会不会调用工具。Pupu 的活几乎都靠工具，不会调工具的模型不让用。
- * Cline 把能力当声明、没声明就放行，不支持时悄悄去掉工具（references/NOTES.md）；Pupu 改成先探测，
+ * Cline 把能力当声明、没声明就放行，不支持时悄悄去掉工具（docs/调研/自带模型先例.md）；Pupu 改成先探测，
  * 不过就说清楚为什么，不保存。云端（自带 key）和电脑（转发）共用这一份，只依赖 fetch。
  */
 
@@ -28,7 +28,8 @@ export async function probeModel(input: ProbeInput, fetchImpl: typeof fetch = fe
       body: JSON.stringify({
         model: input.model,
         stream: false,
-        max_tokens: 200,
+        // 带思考的模型先想一阵才调工具，给小了会被误判成不会调。
+        max_tokens: 2048,
         messages: [{ role: "user", content: "Call the ping tool with word set to \"pupu\". Do not reply with text." }],
         tools: [
           {

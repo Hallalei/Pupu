@@ -113,7 +113,9 @@ export function ModelSection({
   );
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setPicked(sourceOf(current)), [current]);
+  // 每 5 秒拉一次 state，对象会换；按来源比，不然填到一半的表单会被收起来。
+  const currentSource = sourceOf(current);
+  useEffect(() => setPicked(currentSource), [currentSource]);
 
   const relays = computers.filter(
     (computer) => computer.model || (current.source === "computer" && current.computerId === computer.id)

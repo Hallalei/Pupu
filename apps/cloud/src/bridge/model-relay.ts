@@ -34,8 +34,11 @@ export type ModelUp =
   /** 响应读完了。`error` 是读到一半断了。 */
   | { readonly kind: "end"; readonly id: string; readonly error?: string };
 
-/** 一片请求体最多这么多字符。截图多的上下文有好几 MB，一条 WebSocket 消息放不下也不该放。 */
-export const MODEL_PIECE_CHARS = 256 * 1024;
+/**
+ * 一片请求体最多这么多字符。截图多的上下文有好几 MB，一条 WebSocket 消息放不下也不该放。
+ * 按字符切：最坏是全是 \uXXXX 转义或中文，一片也不过几百 KB。
+ */
+export const MODEL_PIECE_CHARS = 64 * 1024;
 /** 一片响应最多这么多字符，电脑那边按这个切。 */
 export const MODEL_CHUNK_CHARS = 64 * 1024;
 /** 请求体发完以后，电脑这么久还没说收到，就当它没回应。 */
