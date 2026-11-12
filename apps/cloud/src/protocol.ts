@@ -51,6 +51,21 @@ export type ServerMessage =
    * `activity`，不用重新拉。只在内容变了的时候发。
    */
   | { readonly type: "activity"; readonly activity: readonly ComputerActivity[] }
+  /**
+   * Pupu 浏览器的一帧实时画面，浏览器任务卡片用。只转不存，断线重连后等下一帧。
+   * 敏感的输入框电脑 App 已经涂掉了。`session` 是这件事所在的会话。
+   */
+  | {
+      readonly type: "browser_frame";
+      readonly computerId: string;
+      readonly session: string;
+      readonly jpeg: string;
+      readonly width: number;
+      readonly height: number;
+      readonly url: string;
+      readonly title: string;
+      readonly at: number;
+    }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };
 

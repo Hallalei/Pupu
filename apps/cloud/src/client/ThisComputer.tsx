@@ -1,6 +1,6 @@
 import { Button, Label, Switch } from "@heroui/react";
 import { useState } from "react";
-import { desktop, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
+import { desktop, type ChromeProfile, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
 
 const SWITCHES: readonly (readonly [DesktopSwitch, string, string])[] = [
   ["allowCommands", "允许跑命令和写文件", "关掉后，批准了也不做。"],
@@ -123,8 +123,70 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             <p className="m-0 text-caption text-muted">在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。</p>
           )}
         </div>
+        {app.importChrome && app.chromeProfiles && computer.paired && <ChromeImportRow />}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </div>
     </section>
+  );
+}
+
+/**
+ * Pupu 浏览器的登录状态从这台电脑的 Chrome 导进来：挑一个 Chrome 用户资料，macOS 会问能不能用钥匙串，人自己点允许。
+ * 导进来的只在这台电脑上。
+ */
+function ChromeImportRow() {
+  const app = desktop();
+  const [profiles, setProfiles] = useState<readonly ChromeProfile[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  if (!app?.importChrome || !app.chromeProfiles) return null;
+  const { importChrome, chromeProfiles } = app;
+
+  async function start(profile: string) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const result = await importChrome(profile);
+      setNote(result.ok ? `导进了 ${result.imported} 个登录状态${result.skipped ? `，跳过 ${result.skipped} 个过期或解不开的` : ""}。` : result.error);
+      if (result.ok) setProfiles(null);
+    } catch (cause) {
+      setNote(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pick() {
+    setNote(null);
+    const found = await chromeProfiles();
+    if (found.length === 0) setNote("这台电脑上没找到 Chrome。");
+    else if (found.length === 1) await start(found[0]!.dir);
+    else setProfiles(found);
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-foreground/10 pt-3" data-chrome-import>
+      <div className="flex items-center gap-2 text-subheadline">
+        <span className="flex-1">Pupu 浏览器的登录状态</span>
+        <button
+          type="button"
+          disabled={busy}
+          className="shrink-0 text-subheadline font-semibold hover:opacity-75 disabled:opacity-50"
+          onClick={() => void pick()}
+        >
+          {busy ? "正在导入…" : "从 Chrome 导入"}
+        </button>
+      </div>
+      {profiles && (
+        <div className="flex flex-wrap gap-2">
+          {profiles.map((profile) => (
+            <Button key={profile.dir} size="sm" variant="secondary" isDisabled={busy} onPress={() => void start(profile.dir)}>
+              {profile.name}
+            </Button>
+          ))}
+        </div>
+      )}
+      <p className="m-0 text-caption text-muted">{note ?? "只存在这台电脑上，不上传。"}</p>
+    </div>
   );
 }

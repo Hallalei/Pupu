@@ -375,6 +375,35 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     })
   ];
 
+  // 浏览器任务卡片上的「计划」和做完后收起来的那句结果，学的是 Hark：模型自己列步骤、勾掉、最后一句话交代。
+  // 只记在对话里，不碰电脑；网页和手机都从对话记录里读，重连、换设备都对得上。
+  const browserPlan = defineTool({
+    name: "browser_plan",
+    description:
+      "在 Pupu 浏览器里做一件要好几步的事时，先用它列出计划（三到六步，每步一句短话），然后每做完一步再调一次，把做完的步骤标成 done。全部做完时再调一次，带上 result：一句话结果，比如「账户余额 $30，订单正常」。用户在卡片上看到的就是这些，别写技术细节。只看一个网页、一步就完的事不用列。",
+    parameters: Type.Object({
+      steps: Type.Array(
+        Type.Object({
+          text: Type.String({ description: "这一步做什么，一句短话" }),
+          done: Type.Optional(Type.Boolean({ description: "做完了" }))
+        }),
+        { description: "完整的计划，每次都给全部步骤" }
+      ),
+      result: Type.Optional(Type.String({ description: "全部做完时的一句话结果。还没做完就省略" }))
+    }),
+    replay: "safe",
+    async execute(args) {
+      const done = args.steps.filter((step) => step.done).length;
+      return {
+        output: text(
+          args.result?.trim()
+            ? "记下了。卡片已经收起，显示这句结果。接着用两三句话把细节告诉用户。"
+            : `记下了：${done}/${args.steps.length} 步做完。`
+        )
+      };
+    }
+  });
+
   return [
     listComputers,
     runCommand,
@@ -383,7 +412,8 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     writeFile,
     listDirectory,
     ...screenTools,
-    ...browserTools
+    ...browserTools,
+    browserPlan
   ];
 }
 

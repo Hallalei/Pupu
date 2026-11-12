@@ -37,7 +37,21 @@ export type PupuDesktop = {
   openPrivacySettings(pane: PrivacyPane): Promise<void>;
   /** 窗口的凭据失效了：打开 App 自己的配对窗口。 */
   repair(): Promise<void>;
+  /** 把 Pupu 浏览器窗口放到屏幕上，人来接手。0.2.4 以前的 App 没有。 */
+  showBrowser?(): Promise<void>;
+  /** 列出这台电脑上 Chrome 的用户资料，导入前让人挑。0.2.4 以前的 App 没有。 */
+  chromeProfiles?(): Promise<readonly ChromeProfile[]>;
+  /**
+   * 把这台电脑上 Chrome 某个用户资料的登录状态（cookie）导进 Pupu 浏览器。读 Chrome 的钥匙串项时 macOS 会弹窗，要人自己点允许。
+   * 导进来的只存在这台电脑的 Pupu 浏览器里，不上传。0.2.4 以前的 App 没有。
+   */
+  importChrome?(profile: string): Promise<ChromeImport>;
 };
+
+export type ChromeProfile = { readonly dir: string; readonly name: string };
+export type ChromeImport =
+  | { readonly ok: true; readonly imported: number; readonly skipped: number }
+  | { readonly ok: false; readonly error: string };
 
 declare global {
   interface Window {

@@ -623,4 +623,32 @@ test("报了 browser 能力：浏览器动作发下去，慢页面超过 10 秒�
     mock.timers.reset();
   }
 });
+
+test("浏览器画面：报了 browser 能力的桥发来才转，旧桥发来不认", async () => {
+  const frame = { type: "browser-frame", jpeg: "QUJD", width: 960, height: 600, url: "https://a.test/", title: "A", at: 1 };
+  const env = await harness();
+  const seen: string[] = [];
+  env.hub.onBrowserFrame = (computerId, got) => seen.push(`${computerId}:${got.url}`);
+  const old = await env.connect();
+  await env.hello(old);
+  await env.hub.onMessage(old, JSON.stringify(frame));
+  assert.deepEqual(seen, []);
+  const fresh = await harness();
+  fresh.hub.onBrowserFrame = env.hub.onBrowserFrame;
+  const socket = await fresh.connect();
+  await fresh.hub.onMessage(
+    socket,
+    JSON.stringify({
+      type: "hello",
+      protocol: 1,
+      computerId: fresh.row.id,
+      name: "书房",
+      localRoot: "/Users/me",
+      terminalsFolder: "/Users/me/.pupu/terminals",
+      capabilities: ["browser"]
+    })
+  );
+  await fresh.hub.onMessage(socket, JSON.stringify(frame));
+  assert.deepEqual(seen, [`${fresh.row.id}:https://a.test/`]);
+});
 });

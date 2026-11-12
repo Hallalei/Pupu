@@ -1,9 +1,10 @@
-import { app, BrowserWindow, session, type Session, type WebContents } from "electron";
+import { app, BrowserWindow, nativeImage, session, type Session, type WebContents } from "electron";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { BrowserOp, BrowserResult } from "../../cloud/bridge/browser.ts";
 import { isPrivateHost, urlRisk } from "../../cloud/src/bridge/policy.ts";
+import { isRects, paintRects, quadRect, scaleRects, SENSITIVE_RECTS_SCRIPT, type Rect } from "./browser-frames.ts";
 import { renderSnapshot, type AXNode } from "./browser-snapshot.ts";
 
 /** 和主窗口、推流窗口都分开，登录态只在这里。 */
@@ -35,8 +36,29 @@ const KEYS: Readonly<Record<string, { code: string; keyCode: number; text?: stri
   Space: { code: "Space", keyCode: 32, text: " " }
 };
 
+/** 一帧画面，JPEG 的 base64。 */
+export type BrowserFrameOut = {
+  readonly jpeg: string;
+  readonly width: number;
+  readonly height: number;
+  readonly url: string;
+  readonly title: string;
+  readonly at: number;
+};
+
+/** 每这么久截一帧（约 1.4 帧每秒）。 */
+const FRAME_EVERY_MS = 700;
+/** 最后一步做完之后再推这么久的画面：模型在想下一步时，卡片上还看得到页面。 */
+const STREAM_AFTER_MS = 20_000;
+/** 画面没变就不重发，但至少隔这么久发一次，刚打开卡片的人也能拿到画面。 */
+const REPEAT_MS = 3_000;
+const FRAME_WIDTH = 960;
+const FRAME_QUALITY = 60;
+
 export type BrowserHostOptions = {
   readonly log: (line: string) => void;
+  /** 有新的一帧画面。没有就不截。 */
+  readonly onFrame?: (frame: BrowserFrameOut) => void;
   /** 后台测试时 `show` 也只 showInactive，不抢前台。 */
   readonly background: boolean;
   /** 下载落在哪。默认是 ~/Downloads/Pupu，探针换成临时目录。 */
@@ -58,6 +80,12 @@ export class BrowserHost {
   readonly #allowedHosts = new Set<string>();
   /** 正在等的那一个下载：只有批过的 download 才有，别的下载一律取消。 */
   #download: { readonly url: string; readonly folder: string; resolve(result: BrowserResult): void } | null = null;
+  /** 带 sensitive 填过的控件，画面上一直涂掉。换页后编号失效，取不到位置的自然跳过。 */
+  readonly #sensitiveRefs = new Set<number>();
+  #streamUntil = 0;
+  #frameTimer: ReturnType<typeof setInterval> | null = null;
+  #capturing = false;
+  #lastFrame: { jpeg: string; at: number } | null = null;
 
   constructor(options: BrowserHostOptions) {
     this.#options = options;
@@ -84,11 +112,92 @@ export class BrowserHost {
     });
   }
 
-  /** 一次只做一步，按到达顺序。 */
+  /** 一次只做一步，按到达顺序。做的时候和做完之后一阵子推画面。 */
   run(op: BrowserOp): Promise<BrowserResult> {
+    if (op.op === "type" && op.sensitive && typeof op.ref === "number") this.#sensitiveRefs.add(op.ref);
+    this.#stream(Number.POSITIVE_INFINITY);
     const result = this.#queue.then(() => this.#perform(op));
     this.#queue = result.catch(() => undefined);
+    void result.finally(() => this.#stream(Date.now() + STREAM_AFTER_MS)).catch(() => undefined);
     return result.catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+  }
+
+  /** 把 Pupu 浏览器窗口放到屏幕上，人来接手。主窗口里点「在电脑上接手」走这里。 */
+  show(): void {
+    const window = this.#ensure();
+    if (this.#options.background) window.showInactive();
+    else {
+      window.show();
+      window.focus();
+    }
+    this.#stream(Date.now() + STREAM_AFTER_MS);
+  }
+
+  /** 画面推到什么时候。到点了定时器自己停。 */
+  #stream(until: number): void {
+    if (!this.#options.onFrame) return;
+    this.#streamUntil = until;
+    if (this.#frameTimer) return;
+    this.#frameTimer = setInterval(() => {
+      if (Date.now() > this.#streamUntil) {
+        if (this.#frameTimer) clearInterval(this.#frameTimer);
+        this.#frameTimer = null;
+        return;
+      }
+      if (this.#capturing || !this.#window || this.#window.isDestroyed()) return;
+      this.#capturing = true;
+      void this.#frame()
+        .catch((error: unknown) => this.#options.log(`截画面失败：${error instanceof Error ? error.message : String(error)}`))
+        .finally(() => {
+          this.#capturing = false;
+        });
+    }, FRAME_EVERY_MS);
+  }
+
+  /** 截一帧、涂掉敏感格子、发出去。敏感格子的位置算不出来，这一帧就不发。 */
+  async #frame(): Promise<void> {
+    const contents = this.#window?.webContents;
+    if (!contents || contents.isDestroyed() || !contents.getURL()) return;
+    const rects = await this.#sensitiveRects();
+    if (!rects) return;
+    const { data } = (await this.#cdp("Page.captureScreenshot", { format: "jpeg", quality: 85 })) as { data: string };
+    let image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+    if (image.isEmpty()) return;
+    if (image.getSize().width > FRAME_WIDTH) image = image.resize({ width: FRAME_WIDTH, quality: "good" });
+    const { width, height } = image.getSize();
+    const bitmap = Buffer.from(image.toBitmap());
+    paintRects(bitmap, width, height, scaleRects(rects.rects, rects.width, width));
+    const jpeg = nativeImage.createFromBitmap(bitmap, { width, height }).toJPEG(FRAME_QUALITY).toString("base64");
+    const now = Date.now();
+    if (this.#lastFrame && this.#lastFrame.jpeg === jpeg && now - this.#lastFrame.at < REPEAT_MS) return;
+    this.#lastFrame = { jpeg, at: now };
+    this.#options.onFrame?.({ jpeg, width, height, url: contents.getURL(), title: contents.getTitle(), at: now });
+  }
+
+  async #sensitiveRects(): Promise<{ width: number; rects: Rect[] } | null> {
+    try {
+      const { result, exceptionDetails } = (await this.#cdp("Runtime.evaluate", {
+        expression: SENSITIVE_RECTS_SCRIPT,
+        returnByValue: true
+      })) as { result: { value?: unknown }; exceptionDetails?: unknown };
+      if (exceptionDetails || !isRects(result.value)) return null;
+      const rects = [...result.value.rects];
+      for (const ref of this.#sensitiveRefs) {
+        try {
+          const { quads } = (await this.#cdp("DOM.getContentQuads", { backendNodeId: ref })) as { quads: number[][] };
+          for (const quad of quads) {
+            const rect = quadRect(quad);
+            if (rect) rects.push(rect);
+          }
+        } catch {
+          // 节点已经不在了（换页了）。
+          this.#sensitiveRefs.delete(ref);
+        }
+      }
+      return { width: result.value.width, rects };
+    } catch {
+      return null;
+    }
   }
 
   /** 调试和取证用：当前页面的截图，PNG 的 base64。 */
@@ -98,6 +207,8 @@ export class BrowserHost {
   }
 
   stop(): void {
+    if (this.#frameTimer) clearInterval(this.#frameTimer);
+    this.#frameTimer = null;
     const window = this.#window;
     this.#window = null;
     if (window && !window.isDestroyed()) window.destroy();
@@ -192,13 +303,8 @@ export class BrowserHost {
         return this.#look();
       }
       case "show": {
-        const window = this.#ensure();
-        if (this.#options.background) window.showInactive();
-        else {
-          window.show();
-          window.focus();
-        }
-        return { ok: true, url: window.webContents.getURL(), text: "已经把 Pupu 浏览器放到这台电脑的屏幕上了。" };
+        this.show();
+        return { ok: true, url: this.#contents().getURL(), text: "已经把 Pupu 浏览器放到这台电脑的屏幕上了。" };
       }
     }
   }

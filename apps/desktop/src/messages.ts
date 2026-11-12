@@ -1,4 +1,5 @@
 import type { BrowserReply, BrowserRequest } from "../../cloud/bridge/browser.ts";
+import type { BrowserFrame } from "../../cloud/src/bridge/protocol.ts";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import type { CaptureCommand, CaptureEvent } from "../../cloud/bridge/remote.ts";
@@ -21,6 +22,8 @@ export type ToBridge =
   | { readonly type: "capture"; readonly event: CaptureEvent }
   /** Pupu 浏览器做完一步。 */
   | BrowserReply
+  /** Pupu 浏览器的一帧画面（敏感格子已经涂掉），桥转给云端。 */
+  | { readonly type: "browser-frame"; readonly frame: Omit<BrowserFrame, "type"> }
   | { readonly type: "stop" };
 
 export type FromBridge =

@@ -28,6 +28,40 @@ export const FOREGROUND_DEFAULT_MS = 30_000;
  * 浏览器的一步要等页面加载或下载，桥做完才回一帧，没有「开始了」的帧。云端按这一步最长要多久等，
  * 不用 FIRST_BYTE_MS：慢网页超过 10 秒会被当成电脑没回应，其实页面已经开了。桥那边比这个短一截。
  */
+/**
+ * 浏览器任务卡片上的实时画面：电脑 App 在 Pupu 浏览器做事时每秒一两帧，经云端转给网页和手机。
+ * 只转不存：不进对话记录、不进数据库。密码框、银行卡号、验证码这些格子电脑 App 发出来之前已经涂掉了。
+ */
+export type BrowserFrame = {
+  readonly type: "browser-frame";
+  /** JPEG，base64。 */
+  readonly jpeg: string;
+  readonly width: number;
+  readonly height: number;
+  readonly url: string;
+  readonly title: string;
+  readonly at: number;
+};
+/** 一帧最大这么多字符（base64）。电脑 App 发的是 960 宽的 JPEG，一般几十 KB。 */
+export const BROWSER_FRAME_MAX_CHARS = 600_000;
+
+export function parseBrowserFrame(value: Record<string, unknown>): BrowserFrame | null {
+  const { jpeg, width, height, url, title, at } = value;
+  if (typeof jpeg !== "string" || jpeg.length === 0 || jpeg.length > BROWSER_FRAME_MAX_CHARS) return null;
+  if (!/^[A-Za-z0-9+/=]+$/.test(jpeg)) return null;
+  const size = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n > 0 && n <= 4096;
+  if (!size(width) || !size(height) || typeof at !== "number") return null;
+  return {
+    type: "browser-frame",
+    jpeg,
+    width: width as number,
+    height: height as number,
+    url: typeof url === "string" ? url.slice(0, 2000) : "",
+    title: typeof title === "string" ? title.slice(0, 300) : "",
+    at
+  };
+}
+
 export function browserReplyMs(op: string): number {
   return op === "download" ? 150_000 : 45_000;
 }
@@ -199,6 +233,8 @@ export type UpFrame =
       readonly stopped?: "user" | "cloud";
     }
   | { readonly type: "desktop"; readonly session: string; readonly message: DesktopUp }
+  /** Pupu 浏览器正在做事时的一帧画面，见 `BrowserFrame`。 */
+  | BrowserFrame
   | {
       readonly type: "started";
       readonly requestId: string;
@@ -383,6 +419,8 @@ export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
         : null;
     case "cancelled":
       return requestId ? { type: "cancelled", requestId } : null;
+    case "browser-frame":
+      return parseBrowserFrame(value);
     case "error":
       return requestId && typeof value.message === "string"
         ? { type: "error", requestId, message: value.message }

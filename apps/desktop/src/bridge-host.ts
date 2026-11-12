@@ -85,6 +85,8 @@ port.on("message", (event) => {
     bridge?.fromCapture(message.event);
   } else if (message.type === "browser-result") {
     receiveBrowserReply(message);
+  } else if (message.type === "browser-frame") {
+    bridge?.browserFrame(message.frame);
   } else if (message.type === "stop") {
     void stop();
   }

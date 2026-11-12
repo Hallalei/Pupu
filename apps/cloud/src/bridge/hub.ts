@@ -13,6 +13,7 @@ import {
   tokenFromRequest,
   tokenHash,
   type Action,
+  type BrowserFrame,
   type ComputerView,
   type DownFrame,
   type UpFrame
@@ -109,6 +110,8 @@ export class ComputerBridge {
   onDesktop: (computerId: string, session: string, message: DesktopUp) => void = () => {};
   /** 这台电脑的桥断了。 */
   onGone: (computerId: string) => void = () => {};
+  /** Pupu 浏览器的一帧画面，只转给能看到这台电脑上的活的人。 */
+  onBrowserFrame: (computerId: string, frame: BrowserFrame) => void = () => {};
   /** 调用找不到能用的电脑：`computerId` 是离线的那台，没指定、一台都不在线是 null。 */
   onUnavailable: (requestId: string, computerId: string | null) => void = () => {};
   /** 命令交出去了：后台命令，或者前台到时间转到后台。退出时桥发 finished。 */
@@ -178,6 +181,11 @@ export class ComputerBridge {
     if (frame.type === "takeback") {
       const link = readLink(socket);
       if (link?.ready) this.onTakeback(link.computerId);
+      return;
+    }
+    if (frame.type === "browser-frame") {
+      const link = readLink(socket);
+      if (link?.ready && link.browser) this.onBrowserFrame(link.computerId, frame);
       return;
     }
     if (frame.type === "desktop") {

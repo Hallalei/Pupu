@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import type { ComputerActivity } from "../bridge/activity";
 import { REVOKED_CLOSE_CODE, type ClientMessage, type ServerMessage, type SessionView } from "../protocol";
 import { EMPTY_VIEW, reduceEvents } from "../view";
+import type { BrowserFrameView } from "./BrowserCard";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -36,6 +37,8 @@ export function usePiSession(
   const activity = useRef(onActivity);
   activity.current = onActivity;
   const replies = useRef(new Map<string, Reply>());
+  /** 每台电脑上 Pupu 浏览器最新的一帧，只收这个会话里的。 */
+  const [frames, setFrames] = useState<ReadonlyMap<string, BrowserFrameView>>(new Map());
   const takeReply = (id: string | undefined) => {
     const reply = id === undefined ? undefined : replies.current.get(id);
     if (id !== undefined) replies.current.delete(id);
@@ -79,6 +82,12 @@ export function usePiSession(
         case "activity":
           activity.current?.(message.activity);
           return;
+        case "browser_frame": {
+          if (message.session !== session) return;
+          const { computerId, jpeg, width, height, url, title } = message;
+          setFrames((current) => new Map(current).set(computerId, { computerId, jpeg, width, height, url, title }));
+          return;
+        }
         case "result":
           takeReply(message.id)?.resolve();
           return;
@@ -126,5 +135,5 @@ export function usePiSession(
     [send]
   );
 
-  return { ...state, submit, abort };
+  return { ...state, frames, submit, abort };
 }

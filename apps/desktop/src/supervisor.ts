@@ -1,5 +1,6 @@
 import { utilityProcess, type UtilityProcess } from "electron";
 import type { BrowserReply, BrowserRequest } from "../../cloud/bridge/browser.ts";
+import type { BrowserFrame } from "../../cloud/src/bridge/protocol.ts";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import { bridgeEnv } from "./env.ts";
@@ -63,6 +64,10 @@ export class BridgeSupervisor {
 
   browserReply(reply: BrowserReply): void {
     this.#send(reply);
+  }
+
+  browserFrame(frame: Omit<BrowserFrame, "type">): void {
+    this.#send({ type: "browser-frame", frame });
   }
 
   /** 让桥停掉命令、断开连接再退出；等不到就直接杀。 */

@@ -6,7 +6,7 @@
  * 接口就整个没挂上）。build.mjs 把它打成单个文件，下面只有类型引用。
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopComputer, PupuDesktop } from "../../cloud/src/client/desktop.ts";
+import type { ChromeImport, ChromeProfile, DesktopComputer, PupuDesktop } from "../../cloud/src/client/desktop.ts";
 
 const ORIGIN_ARG = "--pupu-origin=";
 const origin = process.argv.find((arg) => arg.startsWith(ORIGIN_ARG))?.slice(ORIGIN_ARG.length);
@@ -28,7 +28,10 @@ if (origin && window.location.origin === origin) {
     takeback: () => ipcRenderer.invoke("pupu:takeback") as Promise<void>,
     stopJobs: () => ipcRenderer.invoke("pupu:stop-jobs") as Promise<void>,
     openPrivacySettings: (pane) => ipcRenderer.invoke("pupu:open-privacy", pane) as Promise<void>,
-    repair: () => ipcRenderer.invoke("pupu:repair") as Promise<void>
+    repair: () => ipcRenderer.invoke("pupu:repair") as Promise<void>,
+    showBrowser: () => ipcRenderer.invoke("pupu:show-browser") as Promise<void>,
+    chromeProfiles: () => ipcRenderer.invoke("pupu:chrome-profiles") as Promise<ChromeProfile[]>,
+    importChrome: (profile) => ipcRenderer.invoke("pupu:import-chrome", profile) as Promise<ChromeImport>
   };
   contextBridge.exposeInMainWorld("pupuDesktop", api);
 }

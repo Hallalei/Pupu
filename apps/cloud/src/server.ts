@@ -45,7 +45,8 @@ import {
   isBridgeRequest,
   newDeviceToken,
   tokenFromRequest,
-  tokenHash
+  tokenHash,
+  type BrowserFrame
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
@@ -121,7 +122,7 @@ import {
   type RelyingParty
 } from "./passkeys";
 import { handoffMessage, noticeMessage, type Sender } from "./messages";
-import { REVOKED_CLOSE_CODE } from "./protocol";
+import { REVOKED_CLOSE_CODE, type ServerMessage } from "./protocol";
 import type { Project } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
@@ -275,6 +276,8 @@ export class Pupu extends DurableObject<Env> {
   readonly #callSessions = new CallSessions();
   /** 上一次发出去的 activity，没变就不再发。 */
   #sentActivity = "";
+  /** 每台电脑最近一次浏览器调用在哪个会话里，浏览器画面按它决定发给谁。只在内存里。 */
+  readonly #browserSessions = new Map<string, string>();
   /**
    * 每个项目会话正在答的那条用户消息是什么时候的。这之前转交的事归这一轮报，之后的还排在队里。
    * 只在内存里：DO 重启后 pi 重发请求，会再经过 beforeRequest。
@@ -450,7 +453,11 @@ export class Pupu extends DurableObject<Env> {
     };
     this.bridge.onTakeback = (computerId) => this.gate.takeback(computerId);
     this.bridge.onDesktop = (computerId, session, message) => this.desktop.fromBridge(computerId, session, message);
-    this.bridge.onGone = (computerId) => this.desktop.bridgeGone(computerId);
+    this.bridge.onGone = (computerId) => {
+      this.desktop.bridgeGone(computerId);
+      this.#browserSessions.delete(computerId);
+    };
+    this.bridge.onBrowserFrame = (computerId, frame) => this.#browserFrame(computerId, frame);
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
       this.sockets.broadcast({ type: "computers_changed" });
@@ -563,6 +570,30 @@ export class Pupu extends DurableObject<Env> {
         return project ? { id: project.id, name: project.name } : null;
       }
     });
+  }
+
+  /**
+   * 浏览器画面只发给看得到这件事的人：帧上不带调用 id，按这台电脑上最近一次浏览器调用所在的会话算。
+   * 一次也没见过的电脑不发（比如云端刚重启、Pupu 还没再动浏览器），等下一步浏览器调用。
+   */
+  #browserFrame(computerId: string, frame: BrowserFrame): void {
+    const call = this.bridge.running().find((item) => item.computerId === computerId && item.action.kind === "browser");
+    const current = call ? this.#sessionOfCall(call.callId) : null;
+    if (current) this.#browserSessions.set(computerId, current);
+    const session = this.#browserSessions.get(computerId);
+    if (!session) return;
+    const message: ServerMessage = {
+      type: "browser_frame",
+      computerId,
+      session,
+      jpeg: frame.jpeg,
+      width: frame.width,
+      height: frame.height,
+      url: frame.url,
+      title: frame.title,
+      at: frame.at
+    };
+    this.sockets.broadcastBy((device) => (this.#seenBy(this.#viewer(device))(session, computerId) ? message : null));
   }
 
   #activityChanged(): void {
