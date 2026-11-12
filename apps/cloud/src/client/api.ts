@@ -108,6 +108,8 @@ export const api = {
     request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email, proof }) }),
   removeMember: (id: string) =>
     request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" }),
+  /** 换模型。自带 key 会先试一次，不过就报错。 */
+  setModel: (choice: unknown) => request<{ ok: true }>("/api/model", { method: "POST", body: JSON.stringify(choice) }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>
@@ -130,6 +132,7 @@ export function usePupuState() {
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
   const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
+  const [model, setModel] = useState<PupuState["model"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -153,6 +156,7 @@ export function usePupuState() {
         setReports(state.reports ?? []);
         setChats(state.chats ?? NO_CHATS);
         setPasskeys(state.passkeys ?? null);
+        setModel(state.model ?? null);
         setLoaded(true);
       }
       if (use.activity) setActivity(state.activity);
@@ -207,6 +211,7 @@ export function usePupuState() {
     reports,
     chats,
     passkeys,
+    model,
     error,
     unauthorized,
     loaded,

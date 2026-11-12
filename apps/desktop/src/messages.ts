@@ -1,5 +1,6 @@
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
+import type { LocalModel } from "../../cloud/bridge/model.ts";
 import type { CaptureCommand, CaptureEvent } from "../../cloud/bridge/remote.ts";
 
 /**
@@ -14,7 +15,11 @@ export type ToBridge =
       readonly blocked: readonly string[];
       /** 正式包里放屏幕助手和输入助手的目录，都预先编好、签好名。开发版是 null，桥自己编。 */
       readonly helpers: string | null;
+      /** 这台电脑上设的模型，解密后的。没设是 null。 */
+      readonly model: LocalModel | null;
     }
+  /** 本机的模型设置改了。 */
+  | { readonly type: "model"; readonly model: LocalModel | null }
   | { readonly type: "action"; readonly action: MenubarAction }
   /** 推流窗口发来的 offer、候选、输入。 */
   | { readonly type: "capture"; readonly event: CaptureEvent }

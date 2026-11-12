@@ -1,4 +1,5 @@
 import { parseDesktopDown, parseDesktopUp, type DesktopDown, type DesktopUp } from "./desktop.ts";
+import { parseModelDown, parseModelUp, type LocalModelInfo, type ModelDown, type ModelUp } from "./model-relay.ts";
 import type { ComputerPolicy } from "./policy.ts";
 
 /**
@@ -118,7 +119,9 @@ export type DownFrame =
   /** 菜单栏上要显示的：这台电脑在等批准的动作、屏幕授权还在不在。 */
   | { readonly type: "status"; readonly pending: readonly string[]; readonly screen: boolean }
   /** 远程桌面的信令和控制，见 desktop.ts。 */
-  | { readonly type: "desktop"; readonly session: string; readonly message: DesktopDown };
+  | { readonly type: "desktop"; readonly session: string; readonly message: DesktopDown }
+  /** 经电脑转发的模型请求，见 model-relay.ts。 */
+  | { readonly type: "model"; readonly message: ModelDown };
 
 export type ListEntry = {
   readonly name: string;
@@ -155,6 +158,8 @@ export type UpFrame =
       readonly stopped?: "user" | "cloud";
     }
   | { readonly type: "desktop"; readonly session: string; readonly message: DesktopUp }
+  /** 本地模型的信息和转发的响应，见 model-relay.ts。 */
+  | { readonly type: "model"; readonly message: ModelUp }
   | {
       readonly type: "started";
       readonly requestId: string;
@@ -207,6 +212,8 @@ export type ComputerView = {
   readonly screen: boolean;
   /** 在线时，有没有人正在用它（键盘鼠标 1 分钟内动过）。老的桥不报，没有这一项。 */
   readonly inUse?: boolean;
+  /** 在线、桥报过本地模型时才有：这台电脑上设的模型，null 是没设。老的桥不报，没有这一项。 */
+  readonly model?: LocalModelInfo | null;
 };
 
 export function isBridgeRequest(request: Request): boolean {
@@ -294,6 +301,10 @@ export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
       const session = stringField(value, "session");
       const message = parseDesktopUp(value.message);
       return session && message ? { type: "desktop", session, message } : null;
+    }
+    case "model": {
+      const message = parseModelUp(value.message);
+      return message ? { type: "model", message } : null;
     }
     case "hello": {
       if (value.protocol !== PROTOCOL_VERSION) return { type: "outdated" };
@@ -403,6 +414,10 @@ export function parseDownFrame(raw: string): DownFrame | null {
       const session = stringField(value, "session");
       const message = parseDesktopDown(value.message);
       return session && message ? { type: "desktop", session, message } : null;
+    }
+    case "model": {
+      const message = parseModelDown(value.message);
+      return message ? { type: "model", message } : null;
     }
     case "cancel":
       return requestId ? { type: "cancel", requestId } : null;

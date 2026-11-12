@@ -9,6 +9,7 @@ import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import { useDriverFrom } from "../../cloud/bridge/computer.ts";
 import { usePrebuiltInput } from "../../cloud/bridge/input.ts";
 import type { MenubarAction } from "../../cloud/bridge/menubar.ts";
+import type { LocalModel } from "../../cloud/bridge/model.ts";
 import { runBridge, type RunningBridge } from "../../cloud/bridge/run.ts";
 import type { FromBridge, ToBridge } from "./messages.ts";
 
@@ -17,6 +18,7 @@ let config: BridgeConfig | null = null;
 const waiting: ((config: BridgeConfig) => void)[] = [];
 let onAction: ((action: MenubarAction) => void) | null = null;
 let bridge: RunningBridge | null = null;
+let model: LocalModel | null = null;
 
 function post(message: FromBridge): void {
   port.postMessage(message);
@@ -47,6 +49,7 @@ function start(blocked: readonly string[]): void {
       };
     },
     blocked,
+    model: async () => model,
     capture(command) {
       post({ type: "capture", command });
     },
@@ -70,11 +73,16 @@ port.on("message", (event) => {
   const message = event.data as ToBridge;
   if (message.type === "config") {
     config = message.config;
+    model = message.model;
+    bridge?.setModel(model);
     // 开发版没有打包，驱动还在 apps/cloud 的依赖里。
     useDriverFrom(message.helpers ? path.join(message.helpers, "cua-driver") : fileURLToPath(new URL("../../cloud", import.meta.url)));
     if (message.helpers) usePrebuiltInput(path.join(message.helpers, "pupu-input"));
     for (const resolve of waiting.splice(0)) resolve(message.config);
     if (!bridge) start(message.blocked);
+  } else if (message.type === "model") {
+    model = message.model;
+    bridge?.setModel(model);
   } else if (message.type === "action") {
     onAction?.(message.action);
   } else if (message.type === "capture") {

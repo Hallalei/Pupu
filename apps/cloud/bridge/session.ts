@@ -34,6 +34,8 @@ export type BridgeHooks = {
   onReady?(): void;
   onStatus?(status: Extract<DownFrame, { type: "status" }>): void;
   onDesktop?(frame: Extract<DownFrame, { type: "desktop" }>): void;
+  /** 经这台电脑转发的模型请求。 */
+  onModel?(frame: Extract<DownFrame, { type: "model" }>): void;
   onClosed?(): void;
 };
 
@@ -116,6 +118,10 @@ export function openBridge(
       }
       if (frame.type === "desktop") {
         hooks.onDesktop?.(frame);
+        return;
+      }
+      if (frame.type === "model") {
+        hooks.onModel?.(frame);
         return;
       }
       if (frame.type === "cancel") cancelCall(frame.requestId);

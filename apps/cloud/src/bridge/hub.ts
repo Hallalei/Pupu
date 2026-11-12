@@ -17,6 +17,7 @@ import {
   type UpFrame
 } from "./protocol.ts";
 import type { DesktopDown, DesktopUp } from "./desktop.ts";
+import { parseLocalModelInfo, type LocalModelInfo, type ModelDown, type ModelUp } from "./model-relay.ts";
 import { screenOn } from "./gate.ts";
 import {
   appendTail,
@@ -47,6 +48,8 @@ export type BridgeLink = {
   readonly terminalsFolder: string;
   /** 桥报的有没有人在用这台电脑。老的桥不报。 */
   readonly present?: boolean;
+  /** 桥报的本地模型，null 是没设。老的桥不报，不能转发。 */
+  readonly model?: LocalModelInfo | null;
 };
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -106,6 +109,10 @@ export class ComputerBridge {
   onDesktop: (computerId: string, session: string, message: DesktopUp) => void = () => {};
   /** 这台电脑的桥断了。 */
   onGone: (computerId: string) => void = () => {};
+  /** 桥发来的模型转发响应（不含 info，info 记在连接上）。 */
+  onModel: (computerId: string, message: Exclude<ModelUp, { kind: "info" }>) => void = () => {};
+  /** 一条桥连接关了，上面在途的模型转发都断。被新连接替换的旧连接也算。 */
+  onModelGone: (computerId: string) => void = () => {};
   /** 调用找不到能用的电脑：`computerId` 是离线的那台，没指定、一台都不在线是 null。 */
   onUnavailable: (requestId: string, computerId: string | null) => void = () => {};
   /** 命令交出去了：后台命令，或者前台到时间转到后台。退出时桥发 finished。 */
@@ -182,6 +189,15 @@ export class ComputerBridge {
       if (link?.ready) this.onDesktop(link.computerId, frame.session, frame.message);
       return;
     }
+    if (frame.type === "model") {
+      const link = readLink(socket);
+      if (!link?.ready) return;
+      if (frame.message.kind === "info") {
+        this.#writeLink(socket, { ...link, model: frame.message.model });
+        this.onChange();
+      } else this.onModel(link.computerId, frame.message);
+      return;
+    }
     if (frame.type === "presence") {
       const link = readLink(socket);
       if (!link?.ready || link.present === frame.active) return;
@@ -203,6 +219,7 @@ export class ComputerBridge {
   onClose(socket: BridgeSocket): void {
     let changed = this.#drop(socket);
     const link = readLink(socket);
+    if (link?.ready) this.onModelGone(link.computerId);
     // 被新连接替换掉的旧连接晚些才关：这台电脑还连着新的，不算断，新连接上的远程桌面也不能停。
     if (link?.ready && !this.#socketFor(link.computerId, socket)) {
       changed = true;
@@ -366,6 +383,22 @@ export class ComputerBridge {
     this.#send(socket, { type: "status", pending: status.pending, screen: status.screen } satisfies DownFrame);
   }
 
+  /** 把模型转发的帧发给这台电脑的桥。没连着返回 false。 */
+  sendModel(computerId: string, message: ModelDown): boolean {
+    const socket = this.#socketFor(computerId);
+    return socket ? this.#send(socket, { type: "model", message } satisfies DownFrame) : false;
+  }
+
+  /**
+   * 这台电脑现在能不能转发、转发给哪个模型。没连着或心跳停了是 "offline"，
+   * 老的桥是 "outdated"，连着但没设模型是 null。
+   */
+  modelOf(computerId: string): LocalModelInfo | null | "offline" | "outdated" {
+    const view = this.list().find((computer) => computer.id === computerId);
+    if (!view?.online) return "offline";
+    return view.model === undefined ? "outdated" : view.model;
+  }
+
   /** 把远程桌面的消息发给这台电脑的桥。没连着返回 false。 */
   sendDesktop(computerId: string, session: string, message: DesktopDown): boolean {
     const socket = this.#socketFor(computerId);
@@ -449,7 +482,8 @@ export class ComputerBridge {
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
       screen: screenOn(row.screen, now),
-      ...(alive && link?.present !== undefined ? { inUse: link.present } : {})
+      ...(alive && link?.present !== undefined ? { inUse: link.present } : {}),
+      ...(alive && link?.model !== undefined ? { model: link.model } : {})
     };
   }
 
@@ -689,6 +723,7 @@ export function readLink(socket: { deserializeAttachment(): unknown }): BridgeLi
     ...(typeof link.seenPingAt === "number" ? { seenPingAt: link.seenPingAt } : {}),
     localRoot: typeof link.localRoot === "string" ? link.localRoot : "",
     terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : "",
-    ...(typeof link.present === "boolean" ? { present: link.present } : {})
+    ...(typeof link.present === "boolean" ? { present: link.present } : {}),
+    ...(link.model === null ? { model: null } : link.model ? { model: parseLocalModelInfo(link.model) } : {})
   };
 }

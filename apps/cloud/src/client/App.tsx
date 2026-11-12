@@ -98,6 +98,7 @@ export function App() {
     reports,
     chats,
     passkeys,
+    model,
     loaded,
     error,
     unauthorized,
@@ -346,6 +347,8 @@ export function App() {
         isOpen={settingsOpen}
         onOpenChange={setSettingsOpen}
         computers={computers}
+        model={model}
+        onModelSaved={refresh}
         onRevoke={async (id) => {
           await api.revokeComputer(id);
           await refresh();

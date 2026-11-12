@@ -3,6 +3,8 @@ import os from "node:os";
 import { readConfig, writeConfig, configPath, type BridgeConfig } from "./config.ts";
 import { installLaunchAgent, plistPath, uninstallLaunchAgent } from "./launchd.ts";
 import { localPath, readLocal } from "./local.ts";
+import { modelPath, parseLocalModel, readModelFile, writeModelFile } from "./model.ts";
+import { probeModel } from "../src/model/probe.ts";
 import { startMenubar } from "./menubar.ts";
 import { runBridge } from "./run.ts";
 
@@ -30,6 +32,9 @@ async function main(): Promise<void> {
     case "status":
       await status();
       return;
+    case "model":
+      await model(flags);
+      return;
     default:
       console.log(`用法：
   node bridge/main.ts pair --url https://你的 Pupu --code 配对码 [--name 名字] [--force]
@@ -38,6 +43,8 @@ async function main(): Promise<void> {
   node bridge/main.ts uninstall
   node bridge/main.ts status
   node bridge/main.ts revoke
+  node bridge/main.ts model --base-url http://localhost:11434/v1 --model qwen3 [--context 32000] [--vision]
+  node bridge/main.ts model --clear
 
 配对码在网页或 App 的设置里生成，10 分钟内有效，用一次就作废。
 连本机的开发服务器可以不带；手边没有登录的设备时，可以用 --token 访问口令 代替。`);
@@ -88,11 +95,37 @@ async function start(): Promise<void> {
       await sleep(30_000);
     },
     ui: startMenubar,
-    blocked: [configPath()]
+    blocked: [configPath(), modelPath()],
+    model: readModelFile
   });
   process.on("SIGINT", bridge.stop);
   process.on("SIGTERM", bridge.stop);
   await bridge.done;
+}
+
+/**
+ * 设这台电脑上的模型，Pupu 可以经这台电脑转发模型请求。key 从环境变量 PUPU_MODEL_KEY 读，不走命令行参数，
+ * 免得留在 shell 历史里。存之前试一次能不能调工具。桥要重启才用上新的。
+ */
+async function model(flags: Map<string, string>): Promise<void> {
+  if (flags.get("clear") === "true") {
+    await writeModelFile(null);
+    console.log("已清掉这台电脑上的模型。重启桥后生效。");
+    return;
+  }
+  const parsed = parseLocalModel({
+    baseUrl: flags.get("base-url"),
+    model: flags.get("model"),
+    apiKey: process.env.PUPU_MODEL_KEY ?? "",
+    contextWindow: flags.get("context"),
+    vision: flags.get("vision") === "true"
+  });
+  if (typeof parsed === "string") throw new Error(parsed);
+  const probe = await probeModel(parsed);
+  if (!probe.ok) throw new Error(probe.error);
+  await writeModelFile(parsed);
+  console.log(`已存好：${parsed.model}，上下文 ${parsed.contextWindow}${parsed.vision ? "，能看图" : ""}。写在 ${modelPath()}。`);
+  console.log("重启桥后生效，然后在网页的设置里把模型换成这台电脑。");
 }
 
 async function install(): Promise<void> {

@@ -1,6 +1,7 @@
 import { Button, Label, Switch } from "@heroui/react";
 import { useState } from "react";
 import { desktop, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
+import { LocalModelForm } from "./ModelSettings";
 
 const SWITCHES: readonly (readonly [DesktopSwitch, string, string])[] = [
   ["allowCommands", "允许跑命令和写文件", "关掉后，批准了也不做。"],
@@ -123,6 +124,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             <p className="m-0 text-caption text-muted">在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。</p>
           )}
         </div>
+        {computer.paired && <LocalModelForm />}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </div>
     </section>

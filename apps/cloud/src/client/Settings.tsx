@@ -13,6 +13,8 @@ import { CheckIcon } from "./icons";
 import { useDesktopComputer } from "./desktop";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ThisComputer } from "./ThisComputer";
+import { ModelSection } from "./ModelSettings";
+import type { PupuState } from "../server";
 
 const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
   ["ask_risky", "高风险的才问", "删除、推送、发布这类先问你；屏幕先批一次，15 分钟不用就失效。"],
@@ -37,6 +39,8 @@ export function Settings({
   isOpen,
   onOpenChange,
   computers,
+  model,
+  onModelSaved,
   onRevoke,
   onSetPolicy,
   devices,
@@ -53,6 +57,9 @@ export function Settings({
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   computers: readonly ComputerView[];
+  /** 老的云端没有这一项。 */
+  model: PupuState["model"] | null;
+  onModelSaved: () => Promise<void>;
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
   devices: readonly DeviceView[];
@@ -76,6 +83,7 @@ export function Settings({
   const body = (
     <>
       {thisComputer && <ThisComputer computer={thisComputer} />}
+      {model && <ModelSection model={model} computers={computers} onSaved={onModelSaved} />}
       <section className="flex flex-col gap-2">
         <h3 className="m-0 px-1 text-footnote text-muted">电脑</h3>
         {computers.length === 0 ? (

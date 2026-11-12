@@ -13,6 +13,7 @@ import { requestsDir, type BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
 import { menubarState, type Menubar, type MenubarAction, type MenubarProblem } from "./menubar.ts";
 import { InputHelper } from "./input.ts";
+import { infoOf, ModelRelayClient, type LocalModel } from "./model.ts";
 import { RemoteAgent, type CaptureCommand, type CaptureEvent } from "./remote.ts";
 import { openBridge, type BridgeConnection } from "./session.ts";
 
@@ -33,12 +34,16 @@ export type RunOptions = {
   readonly capture?: (command: CaptureCommand) => void;
   /** 开发测试时换掉输入助手，不动真鼠标。 */
   readonly inputSink?: { send(event: DesktopInput): void; stop(): void };
+  /** 这台电脑上设的模型，每次连之前读一次。没有就不转发。 */
+  readonly model?: () => Promise<LocalModel | null>;
 };
 
 export type RunningBridge = {
   readonly done: Promise<void>;
   /** 推流窗口发来的。 */
   fromCapture(event: CaptureEvent): void;
+  /** 本机的模型设置改了：换掉，连着就告诉云端。 */
+  setModel(model: LocalModel | null): void;
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
@@ -60,6 +65,12 @@ export function runBridge(options: RunOptions): RunningBridge {
   // 没连上时点了收回，连上后补发。
   let takebackQueued = false;
   let wake: (() => void) | null = null;
+  let localModel: LocalModel | null = null;
+  const relay = new ModelRelayClient({
+    send: (message) => current?.send({ type: "model", message }) ?? false,
+    current: () => localModel
+  });
+  const reportModel = () => current?.send({ type: "model", message: { kind: "info", model: infoOf(localModel) } });
 
   const input = options.inputSink ?? new InputHelper((message) => remote.inputFailed(message));
   const remote: RemoteAgent = new RemoteAgent({
@@ -140,6 +151,7 @@ export function runBridge(options: RunOptions): RunningBridge {
     while (!stopped) {
       config = await options.config();
       if (stopped) break;
+      if (options.model) localModel = await options.model();
       refresh();
       // 有没有人在用：连上时报一次，之后变了才报。
       let present: boolean | null = null;
@@ -156,6 +168,7 @@ export function runBridge(options: RunOptions): RunningBridge {
             connected = true;
             problem = null;
             if (takebackQueued) takebackQueued = !session.send({ type: "takeback" });
+            session.send({ type: "model", message: { kind: "info", model: infoOf(localModel) } });
             reportFinishedTo((frame) => session.send(frame));
             present = null;
             void checkPresence();
@@ -170,6 +183,9 @@ export function runBridge(options: RunOptions): RunningBridge {
           onDesktop(frame) {
             remote.handle(frame.session, frame.message);
           },
+          onModel(frame) {
+            relay.receive(frame.message);
+          },
           onClosed() {
             reportFinishedTo(null);
             clearInterval(presenceTimer);
@@ -178,6 +194,7 @@ export function runBridge(options: RunOptions): RunningBridge {
             cloud = { pending: [], screen: false };
             // 云端的租约跟着这条连接结束了，点对点的画面和输入不能还开着。
             remote.stop("offline");
+            relay.stopAll();
             refresh();
           }
         },
@@ -222,6 +239,10 @@ export function runBridge(options: RunOptions): RunningBridge {
   return {
     done,
     fromCapture: (event) => remote.fromCapture(event),
+    setModel(model) {
+      localModel = model;
+      reportModel();
+    },
     stop() {
       if (stopped) return;
       stopped = true;
