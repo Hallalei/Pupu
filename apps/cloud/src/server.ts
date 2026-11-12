@@ -463,7 +463,10 @@ export class Pupu extends DurableObject<Env> {
       this.sockets.broadcast({ type: "computers_changed" });
       this.#activityChanged();
     };
-    this.bridge.onActivity = () => this.#activityChanged();
+    this.bridge.onActivity = () => {
+      this.#noteBrowserCalls();
+      this.#activityChanged();
+    };
   }
 
   /** 宿主启动，harness 已经打开 pi 之后。 */
@@ -577,9 +580,7 @@ export class Pupu extends DurableObject<Env> {
    * 一次也没见过的电脑不发（比如云端刚重启、Pupu 还没再动浏览器），等下一步浏览器调用。
    */
   #browserFrame(computerId: string, frame: BrowserFrame): void {
-    const call = this.bridge.running().find((item) => item.computerId === computerId && item.action.kind === "browser");
-    const current = call ? this.#sessionOfCall(call.callId) : null;
-    if (current) this.#browserSessions.set(computerId, current);
+    this.#noteBrowserCalls();
     const session = this.#browserSessions.get(computerId);
     if (!session) return;
     const message: ServerMessage = {
@@ -594,6 +595,15 @@ export class Pupu extends DurableObject<Env> {
       at: frame.at
     };
     this.sockets.broadcastBy((device) => (this.#seenBy(this.#viewer(device))(session, computerId) ? message : null));
+  }
+
+  /** 浏览器调用一开始就记下它在哪个会话：一步做得快，第一帧到的时候调用可能已经结束了。 */
+  #noteBrowserCalls(): void {
+    for (const call of this.bridge.running()) {
+      if (call.action.kind !== "browser") continue;
+      const session = this.#sessionOfCall(call.callId);
+      if (session) this.#browserSessions.set(call.computerId, session);
+    }
   }
 
   #activityChanged(): void {

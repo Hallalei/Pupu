@@ -1,8 +1,8 @@
 /**
  * 浏览器任务卡片的实时画面：在电脑上截 Pupu 浏览器的图、涂掉敏感的格子、压成小 JPEG，经桥发到云端。
  *
- * 用的是定时截图（Page.captureScreenshot），不是 Page.startScreencast：窗口平时是隐藏的，screencast
- * 只在合成器出新帧时推，隐藏窗口可能一帧也不推；截图在隐藏窗口上探针里验证过能用。Playwright 的录屏
+ * 用的是定时截图（Electron 的 capturePage，带 stayHidden），不是 Page.startScreencast：窗口平时是隐藏的，
+ * screencast 只在合成器出新帧时推，隐藏窗口一帧也不推；CDP 的 Page.captureScreenshot 在隐藏窗口上也会一直等。Playwright 的录屏
  * （packages/playwright-core/src/server/chromium/crPage.ts，Apache-2.0）用的是 screencast + ack，
  * 我们借了它「JPEG、限宽、按帧确认」的思路：这里一次只截一张，上一张没发完不截下一张。
  *

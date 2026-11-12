@@ -73,7 +73,7 @@ export function BrowserCard({
           type="button"
           aria-expanded={plan}
           onClick={() => setPlan(!plan)}
-          className="tap flex h-8 items-center gap-1 rounded-full bg-black/70 px-3 text-footnote font-medium text-white backdrop-blur"
+          className="tap flex h-8 shrink-0 items-center gap-1 rounded-full bg-black/70 px-3 text-footnote font-medium whitespace-nowrap text-white backdrop-blur"
         >
           <SparkleIcon className="text-[13px]" />
           计划

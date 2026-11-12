@@ -88,8 +88,10 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   const here = useDesktopComputer();
   /** 每张浏览器卡片最后看到的画面：做完了还留着，刷新页面就没了。 */
   const cardFrames = useRef(new Map<string, BrowserFrameView>());
+  const lastCard = [...rows].reverse().find((row) => row.kind === "browser")?.id;
   function frameFor(task: BrowserTask): BrowserFrameView | null {
-    if (task.state === "live" || task.state === "waiting") {
+    // 最后一张卡做完得快，第一帧可能晚到：做完后到的画面也收下，收起的卡片上留着最后的样子。
+    if (task.state === "live" || task.state === "waiting" || (task.id === lastCard && !cardFrames.current.has(task.id))) {
       const live = task.computerId
         ? pi.frames.get(task.computerId)
         : pi.frames.size === 1

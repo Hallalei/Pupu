@@ -54,6 +54,7 @@ const STREAM_AFTER_MS = 20_000;
 const REPEAT_MS = 3_000;
 const FRAME_WIDTH = 960;
 const FRAME_QUALITY = 60;
+const CAPTURE_TIMEOUT_MS = 3_000;
 
 export type BrowserHostOptions = {
   readonly log: (line: string) => void;
@@ -86,6 +87,7 @@ export class BrowserHost {
   #frameTimer: ReturnType<typeof setInterval> | null = null;
   #capturing = false;
   #lastFrame: { jpeg: string; at: number } | null = null;
+  readonly #noted = new Set<string>();
 
   constructor(options: BrowserHostOptions) {
     this.#options = options;
@@ -125,7 +127,8 @@ export class BrowserHost {
   /** 把 Pupu 浏览器窗口放到屏幕上，人来接手。主窗口里点「在电脑上接手」走这里。 */
   show(): void {
     const window = this.#ensure();
-    if (this.#options.background) window.showInactive();
+    // 后台测试时一律不显示：用户可能正远程用着这台电脑。
+    if (this.#options.background) this.#options.log("后台测试：不把 Pupu 浏览器窗口放到屏幕上。");
     else {
       window.show();
       window.focus();
@@ -159,10 +162,19 @@ export class BrowserHost {
     const contents = this.#window?.webContents;
     if (!contents || contents.isDestroyed() || !contents.getURL()) return;
     const rects = await this.#sensitiveRects();
-    if (!rects) return;
-    const { data } = (await this.#cdp("Page.captureScreenshot", { format: "jpeg", quality: 85 })) as { data: string };
-    let image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
-    if (image.isEmpty()) return;
+    if (!rects) {
+      this.#note("这一帧没发：算不出敏感输入框的位置。");
+      return;
+    }
+    // 隐藏窗口上 CDP 的截图会一直等新帧；capturePage 的 stayHidden 让页面照常出帧又不显示窗口。
+    let image = await Promise.race([
+      contents.capturePage(undefined, { stayHidden: true }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), CAPTURE_TIMEOUT_MS))
+    ]);
+    if (!image || image.isEmpty()) {
+      this.#note("这一帧没截到。");
+      return;
+    }
     if (image.getSize().width > FRAME_WIDTH) image = image.resize({ width: FRAME_WIDTH, quality: "good" });
     const { width, height } = image.getSize();
     const bitmap = Buffer.from(image.toBitmap());
@@ -170,8 +182,16 @@ export class BrowserHost {
     const jpeg = nativeImage.createFromBitmap(bitmap, { width, height }).toJPEG(FRAME_QUALITY).toString("base64");
     const now = Date.now();
     if (this.#lastFrame && this.#lastFrame.jpeg === jpeg && now - this.#lastFrame.at < REPEAT_MS) return;
+    if (!this.#lastFrame) this.#options.log(`开始推 Pupu 浏览器的画面（${width}×${height}）。`);
     this.#lastFrame = { jpeg, at: now };
     this.#options.onFrame?.({ jpeg, width, height, url: contents.getURL(), title: contents.getTitle(), at: now });
+  }
+
+  /** 同一句只记一次，免得每帧刷屏。 */
+  #note(line: string): void {
+    if (this.#noted.has(line)) return;
+    this.#noted.add(line);
+    this.#options.log(line);
   }
 
   async #sensitiveRects(): Promise<{ width: number; rects: Rect[] } | null> {
