@@ -6,14 +6,10 @@
  * 命令行桥（node bridge/main.ts）没有主进程，用不了浏览器。
  */
 
-/** 一步浏览器操作。`ref` 是快照里方括号中的编号。 */
-export type BrowserOp =
-  | { readonly op: "open"; readonly url: string }
-  | { readonly op: "look"; readonly query?: string }
-  | { readonly op: "read" }
-  | { readonly op: "click"; readonly ref: number; readonly label?: string }
-  | { readonly op: "type"; readonly ref: number; readonly text: string; readonly submit?: boolean }
-  | { readonly op: "show" };
+import type { BrowserAction } from "../src/bridge/protocol.ts";
+
+/** 主进程要做的一步：动作本身，加上云端批过没有。批过的才放行内网地址、file:、下载、提交表单。 */
+export type BrowserOp = Omit<BrowserAction, "kind"> & { readonly approved?: boolean };
 
 export type BrowserResult =
   | { readonly ok: true; readonly text: string; readonly url: string }

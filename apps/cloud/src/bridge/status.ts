@@ -127,7 +127,7 @@ export function describeComputers(computers: readonly ComputerView[]): string {
     ? computers
         .map((computer) => {
           const state = computer.online ? "在线" : computer.stale ? "心跳中断" : "离线";
-          return `- ${computer.name}（id: ${computer.id}）：${state}`;
+          return `- ${computer.name}（id: ${computer.id}）：${state}${computer.browser ? "，能用浏览器" : ""}`;
         })
         .join("\n")
     : "- 还没有授权的电脑";

@@ -57,7 +57,8 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
       const lines = computers.map((computer) => {
         const state = computer.online ? "在线" : computer.stale ? "心跳中断" : "离线";
         const presence = computer.online && computer.inUse !== undefined ? (computer.inUse ? "，有人正在用" : "，没人在用") : "";
-        return `- ${computer.name}（id: ${computer.id}）：${state}${presence}`;
+        const browser = computer.browser ? "，能用浏览器" : "";
+        return `- ${computer.name}（id: ${computer.id}）：${state}${presence}${browser}`;
       });
       return { output: text(lines.join("\n")), details: { count: computers.length } };
     }
@@ -321,6 +322,59 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     })
   ];
 
+  // 浏览器工具的写法改写自 citrolabs/ego-lite 的 ego-browser skill（MIT）：先看后动、编号优先、每步只看下一步要的。
+  const ref = Type.Number({ description: "browser_look 或上一步结果里方括号中的控件编号，比如 [13] 就写 13。页面变了编号会换，用最新一次给的" });
+  const browserLabel = Type.Optional(Type.String({ description: "这个控件叫什么，比如「登录」按钮。显示给用户看" }));
+  const browserSensitive = Type.Optional(
+    Type.Boolean({ description: "这一步会提交表单、付款、发消息或删除东西时设为 true。会先请用户在手机或网页上批准" })
+  );
+  const browserTools = [
+    computerTool(
+      "browser_open",
+      "在这台电脑的 Pupu 浏览器里打开网址，回一份带编号的页面快照。Pupu 浏览器是电脑 App 里单独的窗口，不碰用户自己的浏览器和标签页，平时在后台。一个任务一直用它，不用每个网址开新的。要搜索就直接打开带查询词的搜索网址。打开本机或内网地址、file: 地址要先批准。",
+      { url: Type.String({ description: "完整网址，带 https://" }) }
+    ),
+    computerTool(
+      "browser_look",
+      "看 Pupu 浏览器当前页的快照：标题、正文和带编号的控件。动作的结果里已经带了最新快照，不用再看一遍确认；只在页面自己变了（等加载、别人操作过）时用。页面很长时用 query 只看相关的几行。",
+      { query: Type.Optional(Type.String({ description: "只看包含这段文字的行" })) },
+      "safe"
+    ),
+    computerTool("browser_read", "读 Pupu 浏览器当前页的正文全文。要总结、摘抄长文时用；要找控件用 browser_look。", {}, "safe"),
+    computerTool(
+      "browser_click",
+      "按编号点 Pupu 浏览器里的一个控件，回点完后的快照。点完没达到预期，先看结果里的页面再决定，不要盲目重点。点到表单的提交按钮会被拦下，要设 sensitive 走批准。",
+      { ref, label: browserLabel, sensitive: browserSensitive }
+    ),
+    computerTool(
+      "browser_type",
+      "往 Pupu 浏览器里编号对应的输入框填文字，先清空再填。submit 为 true 时填完按回车提交，提交要先批准。不要替用户输密码，遇到登录用 browser_show 交给用户。",
+      {
+        ref,
+        text: Type.String({ description: "要填的完整内容" }),
+        submit: Type.Optional(Type.Boolean({ description: "填完按回车提交。会先请用户批准" })),
+        label: browserLabel,
+        sensitive: browserSensitive
+      }
+    ),
+    computerTool("browser_key", "在 Pupu 浏览器当前焦点上按一个键，比如 Escape、Tab、ArrowDown。按 Enter 可能提交表单，要先批准。", {
+      key: Type.String({ description: "键名" }),
+      sensitive: browserSensitive
+    }),
+    computerTool("browser_scroll", "把 Pupu 浏览器的页面往下或往上滚一屏，回滚完的快照。", {
+      direction: Type.Optional(Type.String({ description: "down 或 up，默认 down" }))
+    }),
+    computerTool("browser_back", "Pupu 浏览器后退到上一页。", {}),
+    computerTool(
+      "browser_show",
+      "把 Pupu 浏览器窗口放到这台电脑屏幕上给人看。遇到登录、验证码、确认付款时用它交给用户，在对话里说清要他做什么，等他回话再继续。",
+      {}
+    ),
+    computerTool("browser_download", "用 Pupu 浏览器下载一个文件，存到这台电脑的 下载/Pupu 文件夹，回文件路径。要先批准。", {
+      url: Type.String({ description: "文件的完整网址" })
+    })
+  ];
+
   return [
     listComputers,
     runCommand,
@@ -328,7 +382,8 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     readFile,
     writeFile,
     listDirectory,
-    ...screenTools
+    ...screenTools,
+    ...browserTools
   ];
 }
 

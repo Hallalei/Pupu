@@ -1,6 +1,7 @@
 import os from "node:os";
 import WebSocket from "ws";
 import { cancelCall, detachCall, perform, type ActionHost } from "./actions.ts";
+import { browserAvailable } from "./browser.ts";
 import { configPath, requestsDir, terminalsDir, type BridgeConfig } from "./config.ts";
 import {
   ALREADY_CONNECTED_CODE,
@@ -96,7 +97,8 @@ export function openBridge(
             computerId: config.computerId,
             name: config.name,
             localRoot: root,
-            terminalsFolder: terminalsDir()
+            terminalsFolder: terminalsDir(),
+            ...(browserAvailable() ? { capabilities: ["browser"] } : {})
           })
         );
         return;

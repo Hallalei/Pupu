@@ -94,13 +94,48 @@ export type ComputerAction = {
   readonly sensitive?: boolean;
 };
 
+export const BROWSER_OPS = ["open", "look", "read", "click", "type", "key", "scroll", "back", "show", "download"] as const;
+
+export type BrowserOpName = (typeof BROWSER_OPS)[number];
+
+/**
+ * 在这台电脑的 Pupu 浏览器里做一步（docs/浏览器能力方案.md）。Pupu 浏览器是电脑 App 里单独的窗口，
+ * 登录态只在它自己的 partition 里，不碰用户的 Chrome。只有在 hello 里报了 browser 能力的桥收得到。
+ */
+export type BrowserAction = {
+  readonly kind: "browser";
+  readonly op: BrowserOpName;
+  /** `open`、`download` 的网址。 */
+  readonly url?: string;
+  /** `look` 只看包含这段文字的行。 */
+  readonly query?: string;
+  /** 快照里方括号中的控件编号。 */
+  readonly ref?: number;
+  /** `type` 要输入的文字。 */
+  readonly text?: string;
+  /** `type` 输完按回车提交。 */
+  readonly submit?: boolean;
+  /** `key` 的键名，比如 Enter、Escape、Tab。 */
+  readonly key?: string;
+  readonly direction?: "up" | "down";
+  /** 点的是什么，审批和聊天记录里给人看。 */
+  readonly label?: string;
+  /** 这一步会提交、付款、发消息或删除。分级里算高风险，单独审批。 */
+  readonly sensitive?: boolean;
+};
+
 export type Action =
   | RunAction
   | { readonly kind: "stdin"; readonly commandId: string; readonly data: string; readonly eof: boolean }
   | { readonly kind: "read"; readonly path: string; readonly maxBytes: number }
   | { readonly kind: "write"; readonly path: string; readonly content: string }
   | { readonly kind: "list"; readonly path: string }
-  | ComputerAction;
+  | ComputerAction
+  | BrowserAction;
+
+/** 桥在 hello 里报的能力。老的桥不报。 */
+export const BRIDGE_CAPABILITIES = ["browser"] as const;
+export type BridgeCapability = (typeof BRIDGE_CAPABILITIES)[number];
 
 /** 云端 → 桥。 */
 export type DownFrame =
@@ -134,6 +169,8 @@ export type UpFrame =
       readonly name: string;
       readonly localRoot: string;
       readonly terminalsFolder: string;
+      /** 这个桥能做的额外的事。电脑 App 里的桥有 Pupu 浏览器，报 browser；命令行桥没有。 */
+      readonly capabilities?: readonly BridgeCapability[];
     }
   | { readonly type: "output"; readonly requestId: string; readonly text: string }
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
@@ -207,6 +244,8 @@ export type ComputerView = {
   readonly screen: boolean;
   /** 在线时，有没有人正在用它（键盘鼠标 1 分钟内动过）。老的桥不报，没有这一项。 */
   readonly inUse?: boolean;
+  /** 在线且桥带 Pupu 浏览器。 */
+  readonly browser?: boolean;
 };
 
 export function isBridgeRequest(request: Request): boolean {
@@ -302,7 +341,18 @@ export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
       const localRoot = stringField(value, "localRoot");
       const terminalsFolder = stringField(value, "terminalsFolder");
       if (!computerId || name === null || !localRoot || !terminalsFolder) return null;
-      return { type: "hello", protocol: PROTOCOL_VERSION, computerId, name, localRoot, terminalsFolder };
+      const capabilities = Array.isArray(value.capabilities)
+        ? BRIDGE_CAPABILITIES.filter((item) => (value.capabilities as unknown[]).includes(item))
+        : [];
+      return {
+        type: "hello",
+        protocol: PROTOCOL_VERSION,
+        computerId,
+        name,
+        localRoot,
+        terminalsFolder,
+        ...(capabilities.length > 0 ? { capabilities } : {})
+      };
     }
     case "output":
       return requestId && typeof value.text === "string"
@@ -440,6 +490,8 @@ function isAction(value: unknown): value is Action {
       return typeof value.path === "string";
     case "computer":
       return (COMPUTER_OPS as readonly unknown[]).includes(value.op);
+    case "browser":
+      return (BROWSER_OPS as readonly unknown[]).includes(value.op);
     default:
       return false;
   }

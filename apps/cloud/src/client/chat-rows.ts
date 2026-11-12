@@ -430,6 +430,26 @@ function describe(
       return { icon: "keyboard", verb: "按", object: ` ${text("key")}` };
     case "computer_menu":
       return { icon: "cursor", verb: "点菜单", object: ` ${Array.isArray(args.menu) ? args.menu.join(" → ") : ""}` };
+    case "browser_open":
+      return { icon: "cursor", verb: "在浏览器里打开", object: ` ${clip(text("url"))}` };
+    case "browser_look":
+      return { icon: "screenshot", verb: "看", object: "网页" };
+    case "browser_read":
+      return { icon: "file", verb: "读", object: "网页" };
+    case "browser_click":
+      return { icon: "cursor", verb: "在网页上点", object: named() ?? ` 编号 ${number(args.ref)}` };
+    case "browser_type":
+      return { icon: "keyboard", verb: "在网页上输入", object: `「${clip(text("text"))}」` };
+    case "browser_key":
+      return { icon: "keyboard", verb: "在网页上按", object: ` ${text("key")}` };
+    case "browser_scroll":
+      return { icon: "cursor", verb: "滚动", object: "网页" };
+    case "browser_back":
+      return { icon: "cursor", verb: "后退到", object: "上一页" };
+    case "browser_show":
+      return { icon: "screenshot", verb: "把浏览器给人看", object: "" };
+    case "browser_download":
+      return { icon: "file", verb: "下载", object: ` ${clip(text("url"))}` };
     default:
       return null;
   }

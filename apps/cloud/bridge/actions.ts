@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { open, mkdir, readdir, readFile, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { isScreenInput, usesScreen } from "../src/bridge/policy.ts";
+import { browse, type BrowserResult } from "./browser.ts";
 import { performComputer } from "./computer.ts";
 import { containPath } from "./contain.ts";
 import { localRefusal, readLocal } from "./local.ts";
@@ -236,7 +237,7 @@ export async function perform(
   try {
     const refusal = localRefusal(action, approved, await readLocal(), host.root);
     if (refusal) reply.send({ type: "error", requestId, message: refusal });
-    else await performAction(call, reply);
+    else await performAction(call, reply, approved);
   } finally {
     if (!call.process) forget(call);
   }
@@ -246,8 +247,12 @@ function alreadyRunning(outputPath: string | undefined): string {
   return `这个请求已经在这台电脑上执行，没有重复跑。${outputPath ? `输出文件：${outputPath}` : ""}`.trim();
 }
 
-async function performAction(call: Call, host: ActionHost): Promise<void> {
+async function performAction(call: Call, host: ActionHost, approved: boolean): Promise<void> {
   const { requestId, action } = call;
+  if (action.kind === "browser") {
+    await performBrowser(call, action, host, approved);
+    return;
+  }
   if (action.kind === "read" || action.kind === "list" || (action.kind === "computer" && !isScreenInput(action))) {
     // 只是看，没有要等的副作用；取消了也不碍事，回的帧会被挡掉。
     if (!begin(call)) return;
@@ -535,7 +540,56 @@ function replay(requestId: string, record: DedupeRecord, host: ActionHost): void
     host.send({ type: "exit", requestId, code: record.exitCode ?? null });
     return;
   }
+  if (record.kind === "browser" && record.output !== undefined) {
+    host.send({ type: "data", requestId, bytes: Buffer.byteLength(record.output), text: record.output });
+    return;
+  }
   host.send({ type: "done", requestId, ...(record.path ? { path: record.path } : {}) });
+}
+
+/** 只看不动的几步，不用去重。 */
+const BROWSER_LOOKS: ReadonlySet<string> = new Set(["look", "read", "show"]);
+
+/**
+ * Pupu 浏览器的一步交给电脑 App 的主进程（bridge/browser.ts）。会动页面的按 requestId 去重，
+ * 同一次调用再送来，回上次的结果，不再点第二下。
+ */
+async function performBrowser(
+  call: Call,
+  action: Extract<Action, { kind: "browser" }>,
+  host: ActionHost,
+  approved: boolean
+): Promise<void> {
+  const { requestId } = call;
+  const { kind: _kind, ...op } = action;
+  const answer = (result: BrowserResult) => {
+    if (result.ok) host.send({ type: "data", requestId, bytes: Buffer.byteLength(result.text), text: result.text });
+    else host.send({ type: "error", requestId, message: result.error });
+  };
+  if (BROWSER_LOOKS.has(action.op)) {
+    if (!begin(call)) return;
+    answer(await browse({ ...op, approved }));
+    return;
+  }
+  const claim = await claimRequest(host.requests, requestId, "browser");
+  if (claim.state === "done") {
+    replay(requestId, claim.record, host);
+    return;
+  }
+  if (claim.state === "running") {
+    host.send({ type: "error", requestId, message: alreadyRunning(undefined) });
+    return;
+  }
+  if (!begin(call)) {
+    await writeRecord(claim.file, { status: "cancelled", kind: "browser" });
+    return;
+  }
+  const result = await browse({ ...op, approved });
+  await writeRecord(
+    claim.file,
+    result.ok ? { status: "done", kind: "browser", output: result.text } : { status: "done", kind: "browser", error: result.error }
+  );
+  answer(result);
 }
 
 async function claimRequest(

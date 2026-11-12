@@ -47,6 +47,8 @@ export type BridgeLink = {
   readonly terminalsFolder: string;
   /** 桥报的有没有人在用这台电脑。老的桥不报。 */
   readonly present?: boolean;
+  /** 桥在 hello 里报了带 Pupu 浏览器。 */
+  readonly browser?: boolean;
 };
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -261,6 +263,16 @@ export class ComputerBridge {
       };
     }
 
+    // 旧的桥不认 browser 动作，整帧会被丢掉，云端只能干等。没报能力的就不发。
+    if (input.action.kind === "browser" && !readLink(socket)?.browser) {
+      return {
+        ok: false,
+        text: `「${computer.name}」上的 Pupu 没有浏览器：要电脑 App 0.2.4 以后的版本，命令行桥没有。请用户更新电脑 App。`,
+        computerId: computer.id,
+        computerName: computer.name
+      };
+    }
+
     const waiter: Waiter = { socket, frames: [], failed: null, notify: null };
     this.#waiters.set(input.requestId, waiter);
     const approved = this.approvedFor({
@@ -343,7 +355,8 @@ export class ComputerBridge {
       name,
       ready: true,
       localRoot: frame.localRoot,
-      terminalsFolder: frame.terminalsFolder
+      terminalsFolder: frame.terminalsFolder,
+      ...(frame.capabilities?.includes("browser") ? { browser: true } : {})
     };
     this.#writeLink(socket, next);
     this.#directory.markSeen(link.computerId, {
@@ -449,7 +462,8 @@ export class ComputerBridge {
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
       screen: screenOn(row.screen, now),
-      ...(alive && link?.present !== undefined ? { inUse: link.present } : {})
+      ...(alive && link?.present !== undefined ? { inUse: link.present } : {}),
+      ...(alive && link?.browser ? { browser: true } : {})
     };
   }
 
@@ -689,6 +703,7 @@ export function readLink(socket: { deserializeAttachment(): unknown }): BridgeLi
     ...(typeof link.seenPingAt === "number" ? { seenPingAt: link.seenPingAt } : {}),
     localRoot: typeof link.localRoot === "string" ? link.localRoot : "",
     terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : "",
-    ...(typeof link.present === "boolean" ? { present: link.present } : {})
+    ...(typeof link.present === "boolean" ? { present: link.present } : {}),
+    ...(link.browser === true ? { browser: true } : {})
   };
 }
