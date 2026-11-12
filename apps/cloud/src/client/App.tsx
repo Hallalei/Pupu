@@ -1,5 +1,5 @@
 import { Button, Dropdown, Label, Spinner, Tabs } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
@@ -10,11 +10,11 @@ import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
 import { useDesktopComputer } from "./desktop";
 import { Doing } from "./Doing";
-import { ChatIcon, CheckIcon, LockIcon, MenuIcon, PlusIcon } from "./icons";
+import { CheckIcon, MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { confirmWhere, type ConfirmWhere } from "./passkey";
-import { Settings } from "./Settings";
+import { Settings, type SettingsPage } from "./Settings";
 import { setNight } from "./theme";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
@@ -81,9 +81,9 @@ function rememberProject(id: string) {
 }
 
 /**
- * 手机（窄于 1024）：顶部切换聊天和项目，聊天那段是 Pupu，长按换大家和私聊。项目页左上角 ≡ 打开整页项目列表，
- * 切换下方的小胶囊写项目名。
- * 宽屏（电脑 App 的窗口、电脑浏览器）：左侧栏放大家、私聊和全部项目，不要顶部切换和胶囊。
+ * 和 iOS 同一个结构：顶栏中间切换聊天和项目，聊天那段是 Pupu，长按、右键或再点一下换大家和私聊；
+ * 右边「我」打开设置。项目页顶上的小胶囊写项目名。
+ * 窄于 1024：项目页左上角 ≡ 打开整页项目列表。宽屏（电脑 App 的窗口、电脑浏览器）：这页列表常驻在左边。
  */
 export function App() {
   const [route, go] = useRoute();
@@ -94,6 +94,7 @@ export function App() {
     devices,
     activity,
     members,
+    connectors,
     applyActivity,
     reports,
     chats,
@@ -105,7 +106,7 @@ export function App() {
   } = usePupuState();
   const [listOpen, setListOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<SettingsPage | null>(null);
   const section = sectionOf(route);
   const lines = useChatLines(chats, route.kind === "chat");
   const { line, session, canSwitch } = lines;
@@ -205,9 +206,9 @@ export function App() {
         key={project.session}
         session={project.session}
         context={chat}
-        placeholder="给 Pupu 发消息"
+        placeholder={`在「${project.name}」里说`}
         top={
-          <span className="glass flex h-7 max-w-full items-center rounded-full px-3 text-footnote text-foreground lg:hidden">
+          <span className="glass flex h-7 max-w-full items-center rounded-full px-3 text-footnote text-foreground">
             <span className="truncate">{project.name}</span>
           </span>
         }
@@ -246,35 +247,30 @@ export function App() {
       <div className="sky" />
       <div className="window-drag" />
       <Sidebar
-        route={route}
-        loaded={loaded}
         projects={projects}
         waiting={waiting}
         current={project?.id}
-        line={line}
-        canSwitch={canSwitch}
-        unread={lines.unread}
-        onOpenLine={openLine}
-        onGo={go}
+        onOpen={(id) => go({ kind: "project", id })}
         onCreate={() => setCreating(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
         thisComputer={thisComputer}
+        onOpenThisComputer={() => setSettings("this")}
       />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)] lg:hidden">
-          <div className="titlebar-lead flex h-11 items-center justify-between px-4">
+        <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)]">
+          <div className="titlebar-lead flex h-bar items-center justify-between px-4">
+            {/* 宽屏的项目列表在左侧栏，≡ 不要了，位置留着让切换居中。 */}
             {section === "projects" ? (
               <button
                 type="button"
                 aria-label="全部项目"
                 aria-expanded={listOpen}
                 onClick={() => setListOpen((open) => !open)}
-                className="glass lift tap grid size-11 place-items-center rounded-full text-[20px]"
+                className="glass lift tap grid size-bar place-items-center rounded-full text-[20px] lg:invisible"
               >
                 <MenuIcon />
               </button>
             ) : (
-              <div className="size-11" />
+              <div className="size-bar" />
             )}
             <SectionSwitch
               section={section}
@@ -287,8 +283,8 @@ export function App() {
             <button
               type="button"
               aria-label="设置"
-              onClick={() => setSettingsOpen(true)}
-              className="glass lift tap grid size-11 place-items-center rounded-full text-subheadline font-semibold"
+              onClick={() => setSettings("root")}
+              className="glass lift tap grid size-bar place-items-center rounded-full text-subheadline font-semibold"
             >
               我
             </button>
@@ -300,7 +296,7 @@ export function App() {
             <div className="strong bubble rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
           </div>
         )}
-        <div className="status relative z-10 flex shrink-0 flex-col lg:[&:not(:empty)]:pt-3">
+        <div className="status relative z-10 flex shrink-0 flex-col">
           <Approvals
             approvals={approvals}
             where={approvalWhere}
@@ -343,8 +339,13 @@ export function App() {
       </div>
 
       <Settings
-        isOpen={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        page={settings}
+        onPage={setSettings}
+        connectors={connectors}
+        onRemoveConnector={async (id) => {
+          await api.removeConnector(id);
+          await refresh();
+        }}
         computers={computers}
         onRevoke={async (id) => {
           await api.revokeComputer(id);
@@ -387,7 +388,7 @@ export function App() {
   );
 }
 
-/** 顶部切换。聊天那段是 Pupu：写着当前那条聊天，长按或右键换大家和私聊。 */
+/** 顶部切换。聊天那段是 Pupu：写着当前那条聊天，长按、右键或在已选中时再点一下，换大家和私聊。 */
 function SectionSwitch({
   section,
   onSection,
@@ -411,21 +412,32 @@ function SectionSwitch({
   });
   const fresh = (["main", "private"] as const).filter((key) => unread[key]);
   const segment =
-    "h-9 rounded-full px-0 text-subheadline text-foreground data-[selected=true]:text-background";
+    "h-bar-inner rounded-full px-0 text-subheadline text-foreground data-[selected=true]:text-background";
   const indicator = <Tabs.Indicator className="rounded-full bg-foreground" />;
 
   return (
     <>
       <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
         <Tabs.ListContainer>
-          <Tabs.List aria-label="Pupu" className="glass h-11 rounded-full p-1">
+          <Tabs.List aria-label="Pupu" className="glass h-bar rounded-full p-1">
             <Tabs.Tab
               id="chat"
               aria-label={[LINE_NAMES[line], ...fresh.map((key) => `${LINE_NAMES[key]}有新消息`)].join("，")}
               className={`${segment} font-semibold`}
             >
-              <span {...(canSwitch ? press : {})} className="pressable relative flex h-9 items-center gap-1.5 pr-3 pl-1.5">
-                <img src="/pupu-avatar.png" alt="" className="size-6.5 rounded-full [image-rendering:pixelated]" />
+              <span
+                {...(canSwitch ? press : {})}
+                onClick={(event) => {
+                  // 电脑上没有长按：已经在聊天时再点一下也打开菜单。
+                  if (canSwitch && section === "chat") press.onContextMenu(event);
+                }}
+                className="pressable relative flex h-bar-inner items-center gap-1.5 pr-3 pl-1"
+              >
+                <img
+                  src="/pupu-avatar.png"
+                  alt=""
+                  className="size-6.5 rounded-full [image-rendering:pixelated] pointer-fine:size-6"
+                />
                 {LINE_NAMES[line]}
                 {fresh.length > 0 && (
                   <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />
@@ -433,7 +445,7 @@ function SectionSwitch({
               </span>
               {indicator}
             </Tabs.Tab>
-            <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium`}>
+            <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}>
               项目
               {indicator}
             </Tabs.Tab>
@@ -462,145 +474,66 @@ function SectionSwitch({
   );
 }
 
-/** 宽屏的左侧栏：大家、私聊、全部项目；底下是这台电脑（只在电脑 App 里）和设置。 */
+/**
+ * 宽屏的左侧栏：就是窄窗口里 ≡ 打开的那页项目列表，常驻在左边。第一行「新项目」，下面是全部项目，最近活动的在前。
+ * 导航属于控件层，用和顶栏一样的玻璃。这台电脑没连上时，底下露一行，点开设置里的「这台电脑」。
+ */
 function Sidebar({
-  route,
-  loaded,
   projects,
   waiting,
   current,
-  line,
-  canSwitch,
-  unread,
-  onOpenLine,
-  onGo,
+  onOpen,
   onCreate,
-  onOpenSettings,
-  thisComputer
+  thisComputer,
+  onOpenThisComputer
 }: {
-  route: Route;
-  loaded: boolean;
   projects: readonly Project[];
   waiting: ReadonlySet<string>;
   current: string | undefined;
-  line: LineKey;
-  canSwitch: boolean;
-  unread: Record<LineKey, boolean>;
-  onOpenLine: (line: LineKey) => void;
-  onGo: (route: Route) => void;
+  onOpen: (id: string) => void;
   onCreate: () => void;
-  onOpenSettings: () => void;
   thisComputer: ReturnType<typeof useDesktopComputer>;
+  onOpenThisComputer: () => void;
 }) {
+  const row = "flex min-h-control w-full shrink-0 items-center gap-2 rounded-tag px-3 py-1.5 text-left text-body";
+  const trouble = thisComputer && (!thisComputer.paired || thisComputer.status === "offline");
   return (
-    <aside className="sidebar soft relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col gap-0.5 overflow-hidden rounded-panel p-2 lg:flex">
-      <NavItem
-        icon={<ChatIcon />}
-        current={route.kind === "chat" && line === "main"}
-        unread={unread.main}
-        onPress={() => onOpenLine("main")}
-      >
-        {LINE_NAMES.main}
-      </NavItem>
-      {canSwitch && (
-        <NavItem
-          icon={<LockIcon />}
-          current={route.kind === "chat" && line === "private"}
-          unread={unread.private}
-          onPress={() => onOpenLine("private")}
-        >
-          {LINE_NAMES.private}
-        </NavItem>
-      )}
-      <div className="mt-3 flex h-8 shrink-0 items-center justify-between pl-2">
-        <span className="text-caption font-medium text-muted">项目</span>
+    <aside className="sidebar glass relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-panel lg:flex">
+      <nav aria-label="全部项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
+        <button type="button" onClick={onCreate} className={`${row} hover:bg-foreground/6`}>
+          新项目
+        </button>
+        {projects.map((project) => {
+          const selected = project.id === current;
+          const detail = project.progress || project.goal;
+          return (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => onOpen(project.id)}
+              aria-current={selected ? "page" : undefined}
+              className={`${row} ${selected ? "bg-nav-current font-semibold" : "hover:bg-foreground/6"}`}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{project.name}</span>
+                {detail && <span className="block truncate text-subheadline font-normal text-muted">{detail}</span>}
+              </span>
+              {waiting.has(project.id) && <WaitingChip />}
+            </button>
+          );
+        })}
+      </nav>
+      {trouble && (
         <button
           type="button"
-          aria-label="新项目"
-          onClick={onCreate}
-          className="grid size-control-sm place-items-center rounded-tag text-[16px] text-muted hover:bg-foreground/6 hover:text-foreground"
+          onClick={onOpenThisComputer}
+          className="m-2 mt-0 flex shrink-0 items-center gap-2 rounded-tag px-3 py-2 text-left text-subheadline text-muted hover:bg-foreground/6"
         >
-          <PlusIcon />
+          <span className="size-2 shrink-0 rounded-full bg-offline" aria-hidden="true" />
+          {thisComputer.paired ? "这台电脑没连上 Pupu" : "这台电脑的授权被吊销了"}
         </button>
-      </div>
-      <nav aria-label="项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-        {projects.map((project) => (
-          <NavItem
-            key={project.id}
-            current={project.id === current}
-            detail={project.progress || project.goal}
-            trailing={waiting.has(project.id) && <WaitingChip />}
-            onPress={() => onGo({ kind: "project", id: project.id })}
-          >
-            {project.name}
-          </NavItem>
-        ))}
-      </nav>
-      <div className="mt-1 flex shrink-0 flex-col gap-0.5 border-t border-foreground/10 pt-1">
-        {thisComputer && (
-          <NavItem
-            icon={
-              <span className="grid size-5 place-items-center" aria-hidden="true">
-                <span
-                  className={`size-2 rounded-full ${thisComputer.status === "offline" ? "bg-offline" : "bg-online"}`}
-                />
-              </span>
-            }
-            detail={thisComputer.title}
-            onPress={onOpenSettings}
-          >
-            这台电脑
-          </NavItem>
-        )}
-        <NavItem
-          icon={
-            <span className="grid size-5 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background">
-              我
-            </span>
-          }
-          onPress={onOpenSettings}
-        >
-          设置
-        </NavItem>
-      </div>
+      )}
     </aside>
-  );
-}
-
-function NavItem({
-  icon,
-  current = false,
-  unread = false,
-  detail,
-  trailing,
-  onPress,
-  children
-}: {
-  icon?: ReactNode;
-  current?: boolean;
-  unread?: boolean;
-  detail?: string;
-  trailing?: ReactNode;
-  onPress: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onPress}
-      aria-current={current ? "page" : undefined}
-      className={`flex min-h-control shrink-0 items-center gap-2 rounded-tag px-2 py-1 text-left text-body ${
-        current ? "bg-nav-current font-semibold" : "hover:bg-foreground/6"
-      }`}
-    >
-      {icon && <span className="grid size-5 shrink-0 place-items-center text-[16px]">{icon}</span>}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">{children}</span>
-        {detail && <span className="block truncate text-caption font-normal text-muted">{detail}</span>}
-      </span>
-      {trailing}
-      {unread && <span role="img" aria-label="有新消息" className="mr-1 size-2.5 shrink-0 rounded-full bg-danger" />}
-    </button>
   );
 }
 

@@ -92,6 +92,7 @@ import {
   actorOf,
   emailKey,
   isEmail,
+  mayConnect,
   mayInvite,
   mayManageInvites,
   mayRemoveMember,
@@ -1362,8 +1363,7 @@ export class Pupu extends DurableObject<Env> {
 
   /**
    * 成员在手机上连一个账号：在 open-connector 发起授权，返回授权页地址。授权完跳回
-   * `/api/connectors/done`，见 `finishConnector`。连账号是放宽 Pupu 能做的事，和放宽电脑分级一样
-   * 只在手机 App 上做（`mayChangePolicy` 的理由）；`device` 是 null 是本机开发。
+   * `/api/connectors/done`，见 `finishConnector`。谁能连见 members.ts 的 `mayConnect`；`device` 是 null 是本机开发。
    */
   async startConnector(
     service: string,
@@ -1374,9 +1374,9 @@ export class Pupu extends DurableObject<Env> {
     if (!client) return { ok: false, status: 409, error: "这个 Pupu 还没配连接器（open-connector）" };
     if (!serviceOf(service)) return { ok: false, status: 400, error: "现在还不能连这个服务" };
     const actor = this.#actor(device);
-    if (actor !== null && actor?.kind !== "phone") return { ok: false, status: 403, error: "连账号要在手机 App 上做" };
-    if (actor !== null && actor.memberId === null && this.members.creator()) {
-      return { ok: false, status: 403, error: "这台手机不属于哪个成员，先用 Google 登录" };
+    if (!mayConnect(actor)) {
+      const error = actor?.kind === "phone" ? "这台手机不属于哪个成员，先用 Google 登录" : "连账号要在手机 App 上做";
+      return { ok: false, status: 403, error };
     }
     const attempt = crypto.randomUUID();
     const returnUri = new URL(`/api/connectors/done?attempt=${attempt}`, origin).toString();

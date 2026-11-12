@@ -45,6 +45,9 @@
   /* 最小点击区、圆形图标按钮。 */
   --spacing-control: 44px;
   --spacing-control-sm: 36px;
+  /* 顶栏：两段切换、≡ 和「我」的高度，`bar-inner` 是切换里每一段的高度。 */
+  --spacing-bar: 44px;
+  --spacing-bar-inner: 36px;
 
   --color-surface-glass: #ffffff9e;
   --color-surface-strong: #ffffffd1;
@@ -84,6 +87,8 @@
     --radius-panel: 24px;
     --spacing-control: 32px;
     --spacing-control-sm: 28px;
+    --spacing-bar: 36px;
+    --spacing-bar-inner: 28px;
   }
 }
 
@@ -159,7 +164,7 @@ body {
 
 /*
  * 电脑 App 的窗口没有系统标题栏：红绿灯浮在页面左上角，顶上一条用来拖窗口。
- * `--titlebar` 是侧栏给红绿灯让的高度，`--traffic-lights` 是窄窗口顶栏让的宽度。
+ * `--titlebar` 是侧栏给红绿灯让的高度，`--traffic-lights` 是窄窗口（没有侧栏）顶栏让的宽度。
  * 浏览器和老版本的 App 里 data-titlebar 不存在，这些都不生效。
  */
 :root {
@@ -183,33 +188,25 @@ body {
 :root[data-titlebar="inset"] :is(button, a, input, textarea, [role="tab"], [role="menuitem"]) {
   -webkit-app-region: no-drag;
 }
-.titlebar-lead {
-  padding-left: max(var(--spacing) * 4, var(--traffic-lights));
+@media (max-width: 1023.98px) {
+  .titlebar-lead {
+    padding-left: max(var(--spacing) * 4, var(--traffic-lights));
+  }
 }
 .sidebar {
   padding-top: calc(var(--spacing) * 2 + var(--titlebar));
 }
 
-/*
- * 宽屏没有顶栏：对话铺到窗口顶上，上沿模糊淡出（照 Hark），控件和内容不用抢位置。
- * 上面挂着审批或「正在做」时，对话从它们下面开始，不用再留这么多。
- */
+/* 对话从顶栏下面开始，上沿模糊淡出。 */
 :root {
   --chat-top: calc(var(--spacing) * 2);
-}
-@media (min-width: 1024px) {
-  .status:empty + main {
-    --chat-top: calc(var(--spacing) * 12);
-  }
 }
 .scroll-body {
   padding-top: var(--chat-top);
 }
-/* 窄窗口顶上浮着项目名小胶囊，第一条消息要从它下面开始。 */
-@media (max-width: 1023.98px) {
-  .scroll-body[data-capped] {
-    padding-top: calc(var(--spacing) * 10);
-  }
+/* 项目页顶上浮着项目名小胶囊，第一条消息要从它下面开始。 */
+.scroll-body[data-capped] {
+  padding-top: calc(var(--spacing) * 10);
 }
 .scroll-fade {
   position: absolute;

@@ -108,6 +108,12 @@ export const api = {
     request<{ ok: true }>("/api/members", { method: "POST", body: JSON.stringify({ email, proof }) }),
   removeMember: (id: string) =>
     request<{ ok: true }>(`/api/members/${encodeURIComponent(id)}/remove`, { method: "POST" }),
+  /** 连一个账号：返回 open-connector 的授权页地址。只有手机和本机开发能连，见 members.ts 的 `mayConnect`。 */
+  connect: (service: string) =>
+    request<{ url: string }>(`/api/connectors/${encodeURIComponent(service)}/connect`, { method: "POST" }),
+  /** 断开一个账号，open-connector 那边一起撤销授权。 */
+  removeConnector: (id: string) =>
+    request<{ ok: true }>(`/api/connectors/${encodeURIComponent(id)}/remove`, { method: "POST" }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>
@@ -115,6 +121,7 @@ export const api = {
 };
 
 const NO_CHATS: ChatsView = { main: { session: MAIN_SESSION, lastAt: null }, private: null };
+const NO_CONNECTORS: PupuState["connectors"] = { enabled: false, services: [], accounts: [] };
 
 /**
  * 项目、电脑、请示、设备和项目报回聊天的结果。页面拿到 `projects_changed` 这类消息时调 `refresh()`。
@@ -127,6 +134,7 @@ export function usePupuState() {
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);
   const [activity, setActivity] = useState<PupuState["activity"]>([]);
   const [members, setMembers] = useState<PupuState["members"]>([]);
+  const [connectors, setConnectors] = useState<PupuState["connectors"]>(NO_CONNECTORS);
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
   const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
@@ -149,6 +157,7 @@ export function usePupuState() {
         setApprovals(state.approvals);
         setDevices(state.devices);
         setMembers(state.members);
+        setConnectors(state.connectors);
         // 部署新云端之前的老 DO 没有这一项。
         setReports(state.reports ?? []);
         setChats(state.chats ?? NO_CHATS);
@@ -203,6 +212,7 @@ export function usePupuState() {
     devices,
     activity,
     members,
+    connectors,
     applyActivity,
     reports,
     chats,
