@@ -24,6 +24,7 @@ const PAGE = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>
 <p><label for="n">名字</label> <input id="n"></p>
 <button onclick="out.textContent='你好，'+n.value">打招呼</button>
 <p id="out"></p>
+<form action="/two"><input id="q" name="q" aria-label="查询"><button>查</button></form>
 <a href="/two">下一页</a>
 </body></html>`;
 
