@@ -1,4 +1,5 @@
 import { utilityProcess, type UtilityProcess } from "electron";
+import type { BrowserReply, BrowserRequest } from "../../cloud/bridge/browser.ts";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
 import { bridgeEnv } from "./env.ts";
@@ -14,6 +15,8 @@ export type SupervisorHooks = {
   onRejected(): void;
   /** 桥让推流窗口做事。 */
   onCapture(command: CaptureCommand): void;
+  /** 桥让 Pupu 浏览器做一步，做完用 `browserReply` 回。 */
+  onBrowser(request: BrowserRequest): void;
   /** 桥意外退出，`delay` 毫秒后重启。 */
   onCrash(code: number, delay: number): void;
   log(line: string): void;
@@ -56,6 +59,10 @@ export class BridgeSupervisor {
 
   capture(event: CaptureEvent): void {
     this.#send({ type: "capture", event });
+  }
+
+  browserReply(reply: BrowserReply): void {
+    this.#send(reply);
   }
 
   /** 让桥停掉命令、断开连接再退出；等不到就直接杀。 */
@@ -109,6 +116,7 @@ export class BridgeSupervisor {
       if (message.type === "state") this.#hooks.onState(message.state);
       else if (message.type === "rejected") this.#hooks.onRejected();
       else if (message.type === "capture") this.#hooks.onCapture(message.command);
+      else if (message.type === "browser") this.#hooks.onBrowser(message);
     });
     child.on("exit", (code) => {
       if (this.#child === child) this.#child = null;

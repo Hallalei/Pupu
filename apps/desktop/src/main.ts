@@ -21,6 +21,7 @@ import {
   type Session,
   type WebContents
 } from "electron";
+import { BrowserHost } from "./browser-host.ts";
 import { CaptureHost } from "./capture.ts";
 import { configPath, readConfig } from "../../cloud/bridge/config.ts";
 import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/local.ts";
@@ -77,6 +78,7 @@ let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
 let capture: CaptureHost | null = null;
+let browser: BrowserHost | null = null;
 let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
@@ -130,6 +132,10 @@ const supervisor = new BridgeSupervisor(dist("bridge.mjs"), {
   },
   onCapture(command) {
     capture?.command(command);
+  },
+  onBrowser(request) {
+    browser ??= new BrowserHost({ log, background });
+    void browser.run(request.op).then((result) => supervisor.browserReply({ type: "browser-result", id: request.id, result }));
   },
   onCrash(code, delay) {
     log(`桥退出了（${code}），${Math.round(delay / 1000)} 秒后重启。`);
@@ -693,6 +699,7 @@ if (refused.length > 0) {
     quitting = true;
     log("退出：先停桥。");
     capture?.stop();
+    browser?.stop();
     void supervisor.stop().finally(() => {
       tray?.destroy();
       log("已退出。");

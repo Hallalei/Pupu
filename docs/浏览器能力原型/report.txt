@@ -1,0 +1,114 @@
+[主进程] 收到桥的请求 b1：{"op":"open","url":"http://127.0.0.1:<端口>/"}
+[主进程] Pupu 浏览器窗口已创建。
+[主进程] 回给桥 b1：ok=true
+[主进程] 收到桥的请求 b2：{"op":"click","ref":10,"label":"加一"}
+[主进程] 回给桥 b2：ok=true
+[主进程] 收到桥的请求 b3：{"op":"type","ref":13,"text":"小猫"}
+[主进程] 回给桥 b3：ok=true
+[主进程] 收到桥的请求 b4：{"op":"click","ref":15}
+[主进程] 回给桥 b4：ok=true
+[主进程] 收到桥的请求 b5：{"op":"read"}
+[主进程] 回给桥 b5：ok=true
+[主进程] 收到桥的请求 b6：{"op":"click","ref":17}
+[主进程] 回给桥 b6：ok=true
+[主进程] 收到桥的请求 b7：{"op":"open","url":"file:///etc/hosts"}
+[主进程] 回给桥 b7：ok=false
+[主进程] 收到桥的请求 b8：{"op":"open","url":"https://example.com/"}
+[主进程] 回给桥 b8：ok=true
+[主进程] 收到桥的请求 b9：{"op":"look","query":"domain"}
+[主进程] 回给桥 b9：ok=true
+
+=== 打开测试页：{"op":"open","url":"http://127.0.0.1:<端口>/"}
+网址：http://127.0.0.1:<端口>/
+标题：Pupu 浏览器探针
+
+## Pupu 浏览器探针
+计数： 0
+[10] button "加一"
+[13] textbox "名字"
+[15] button "打招呼"
+[17] link "下一页"
+[桥] 截图 shot-1.png
+
+=== 点「加一」：{"op":"click","ref":10,"label":"加一"}
+网址：http://127.0.0.1:<端口>/
+标题：点过 1 次
+
+## Pupu 浏览器探针
+计数： 1
+[10] button "加一" (focused)
+[13] textbox "名字"
+[15] button "打招呼"
+[17] link "下一页"
+
+=== 在「名字」里输入：{"op":"type","ref":13,"text":"小猫"}
+网址：http://127.0.0.1:<端口>/
+标题：点过 1 次
+
+## Pupu 浏览器探针
+计数： 1
+[10] button "加一"
+[13] textbox "名字" = "小猫" (focused)
+[15] button "打招呼"
+[17] link "下一页"
+
+=== 点「打招呼」：{"op":"click","ref":15}
+网址：http://127.0.0.1:<端口>/
+标题：点过 1 次
+
+## Pupu 浏览器探针
+计数： 1
+[10] button "加一"
+[13] textbox "名字" = "小猫"
+[15] button "打招呼" (focused)
+你好，小猫
+[17] link "下一页"
+
+=== 读全文：{"op":"read"}
+网址：http://127.0.0.1:<端口>/
+标题：点过 1 次
+
+Pupu 浏览器探针
+
+计数：1
+
+加一
+
+名字 
+
+打招呼
+
+你好，小猫
+
+下一页
+[桥] 截图 shot-2.png
+
+=== 点链接「下一页」：{"op":"click","ref":17}
+网址：http://127.0.0.1:<端口>/two
+标题：第二页
+
+## 第二页
+到了。
+
+=== 打开 file:// 应被拒：{"op":"open","url":"file:///etc/hosts"}
+失败：只能打开 http 或 https 的网址。
+
+=== 打开外网 example.com：{"op":"open","url":"https://example.com/"}
+网址：https://example.com/
+标题：Example Domain
+
+该域名仅用于文档示例，无需获得许可。这并非一项服务，请勿将其用于测试和监控目的。
+This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.
+هذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.
+L’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.
+Данный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.
+Este dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.
+[18] link "Learn more"
+[桥] 截图 shot-3.png
+
+=== 按 query 只看一部分：{"op":"look","query":"domain"}
+网址：https://example.com/
+标题：Example Domain
+
+This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.
+L’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.
