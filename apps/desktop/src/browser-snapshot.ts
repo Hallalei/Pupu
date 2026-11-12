@@ -6,6 +6,8 @@
  * 去空文本、不重复打印控件自己的文字，取自 ego-lite 的 docs/native-snapshot-ref-requirement.md（MIT）。
  */
 
+import { SENSITIVE_NAME } from "./browser-frames.ts";
+
 type AXValue = { readonly value?: unknown };
 
 export type AXNode = {
@@ -38,11 +40,21 @@ function prop(node: AXNode, name: string): unknown {
   return node.properties?.find((item) => item.name === name)?.value.value;
 }
 
+function isField(role: string): boolean {
+  return role === "textbox" || role === "searchbox" || role === "spinbutton" || role === "combobox" || role === "generic";
+}
+
 function fold(value: string): string {
   return value.toLowerCase();
 }
 
-export function renderSnapshot(nodes: readonly AXNode[], query?: string): string {
+/** 敏感输入框（密码、验证码、卡号）填了什么不给模型看，只说填过了：画面上涂掉了，文字里也不能漏。 */
+export const HIDDEN_VALUE = "（已填，不显示）";
+
+/**
+ * @param hidden 页面上认出来的敏感输入框（backendDOMNodeId）。取不到时按无障碍名字再认一遍，宁可多藏。
+ */
+export function renderSnapshot(nodes: readonly AXNode[], query?: string, hidden: ReadonlySet<number> = new Set()): string {
   const byId = new Map(nodes.map((node) => [node.nodeId, node]));
   const childIds = new Set(nodes.flatMap((node) => node.childIds ?? []));
   const roots = nodes.filter((node) => !childIds.has(node.nodeId));
@@ -78,14 +90,17 @@ export function renderSnapshot(nodes: readonly AXNode[], query?: string): string
       return;
     }
     const ref = node.backendDOMNodeId;
-    const value = text(node.value?.value);
+    const raw = text(node.value?.value);
+    const secret = raw !== "" && ((ref !== undefined && hidden.has(ref)) || (isField(role) && SENSITIVE_NAME.test(name)));
+    const value = secret ? HIDDEN_VALUE : raw;
     const focusable = prop(node, "focusable") === true && role !== "RootWebArea" && (name || value || prop(node, "editable"));
     if (ref && (CONTROLS.has(role) || focusable)) {
       flush();
       // 控件前面那行要是它自己的标签，就不重复了。
       if (name && lines.at(-1)?.toLowerCase() === name.toLowerCase()) lines.pop();
       lines.push(describe(node, ref, role, name, value));
-      each(`${inside} ${fold(name)} ${fold(value)}`);
+      // 敏感框里面的文字（输入框的值有时挂在子节点上）一个字也不往下走。
+      if (!secret) each(`${inside} ${fold(name)} ${fold(value)}`);
       flush();
       return;
     }

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { BrowserOp, BrowserResult } from "../../cloud/bridge/browser.ts";
 import { isPrivateHost, urlRisk } from "../../cloud/src/bridge/policy.ts";
-import { isRects, paintRects, quadRect, scaleRects, SENSITIVE_RECTS_SCRIPT, type Rect } from "./browser-frames.ts";
+import { isRects, paintRects, quadRect, scaleRects, SENSITIVE_ELEMENTS_SCRIPT, SENSITIVE_RECTS_SCRIPT, type Rect } from "./browser-frames.ts";
 import { renderSnapshot, type AXNode } from "./browser-snapshot.ts";
 
 /** 和主窗口、推流窗口都分开，登录态只在这里。 */
@@ -55,6 +55,13 @@ const REPEAT_MS = 3_000;
 const FRAME_WIDTH = 960;
 const FRAME_QUALITY = 60;
 const CAPTURE_TIMEOUT_MS = 3_000;
+/** 认敏感输入框最多等这么久。没加载过页面的窗口上 Runtime.evaluate 会一直等执行上下文，不能卡住整条队列。 */
+const SENSITIVE_TIMEOUT_MS = 2_000;
+
+/** 等不到就当没有：返回 fallback。 */
+function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
 
 export type BrowserHostOptions = {
   readonly log: (line: string) => void;
@@ -161,7 +168,7 @@ export class BrowserHost {
   async #frame(): Promise<void> {
     const contents = this.#window?.webContents;
     if (!contents || contents.isDestroyed() || !contents.getURL()) return;
-    const rects = await this.#sensitiveRects();
+    const rects = await within(this.#sensitiveRects(), SENSITIVE_TIMEOUT_MS, null);
     if (!rects) {
       this.#note("这一帧没发：算不出敏感输入框的位置。");
       return;
@@ -218,6 +225,33 @@ export class BrowserHost {
     } catch {
       return null;
     }
+  }
+
+  /** 页面上的敏感输入框，换成 backendNodeId；带 sensitive 填过的也算。取不到就只剩这些，快照再按名字认。 */
+  async #sensitiveNodes(): Promise<Set<number>> {
+    const ids = new Set(this.#sensitiveRefs);
+    if (!this.#contents().getURL()) return ids;
+    try {
+      const { result } = (await this.#cdp("Runtime.evaluate", { expression: SENSITIVE_ELEMENTS_SCRIPT })) as {
+        result: { objectId?: string };
+      };
+      if (!result.objectId) return ids;
+      try {
+        const { result: items } = (await this.#cdp("Runtime.getProperties", { objectId: result.objectId, ownProperties: true })) as {
+          result: { name: string; value?: { objectId?: string } }[];
+        };
+        for (const item of items) {
+          if (!/^\d+$/.test(item.name) || !item.value?.objectId) continue;
+          const { node } = (await this.#cdp("DOM.describeNode", { objectId: item.value.objectId })) as { node: { backendNodeId: number } };
+          ids.add(node.backendNodeId);
+        }
+      } finally {
+        await this.#cdp("Runtime.releaseObject", { objectId: result.objectId }).catch(() => undefined);
+      }
+    } catch {
+      // 页面在换，或者脚本跑不了：按名字认的那层还在。
+    }
+    return ids;
   }
 
   /** 调试和取证用：当前页面的截图，PNG 的 base64。 */
@@ -410,7 +444,8 @@ export class BrowserHost {
   async #look(query?: string): Promise<BrowserResult> {
     await this.#cdp("Accessibility.enable");
     const { nodes } = (await this.#cdp("Accessibility.getFullAXTree")) as { nodes: AXNode[] };
-    const body = renderSnapshot(nodes, query);
+    const hidden = await within(this.#sensitiveNodes(), SENSITIVE_TIMEOUT_MS, new Set(this.#sensitiveRefs));
+    const body = renderSnapshot(nodes, query, hidden);
     return { ok: true, url: this.#contents().getURL(), text: `${this.#header()}\n${UNTRUSTED}\n\n${body || "（页面上没有文字）"}` };
   }
 

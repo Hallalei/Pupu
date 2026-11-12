@@ -16,6 +16,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
         case projectTag(name: String, projectId: String?)
         case tool(ToolStep)
         case toolGroup(ToolGroup)
+        /// 一段连着的浏览器操作，画成一张卡片：实时画面、状态、计划、做完后的一句结果。
+        case browser(BrowserTask)
         case notice(String)
         /// 项目会话里，从聊天转来的事。
         case handoff(String)
@@ -44,6 +46,28 @@ nonisolated struct ToolStep: Equatable, Sendable {
     let output: String
     let outputPath: String?
     var expanded: Bool
+}
+
+/// 浏览器任务卡片。和网页的 chat-rows.ts 里的 BrowserTask 是同一套规则，两边一起改。
+nonisolated struct BrowserTask: Equatable, Sendable {
+    /// live：正在做。waiting：停在一步等批。done：做完了。stopped：这一轮停了、没给结果。failed：最后一步出错了。
+    enum State: Equatable, Sendable { case live, waiting, done, stopped, failed }
+    struct PlanStep: Equatable, Sendable {
+        let text: String
+        let done: Bool
+    }
+
+    let id: String
+    let computerId: String?
+    let computer: String?
+    let state: State
+    /// 卡片下面那一行，比如「正在浏览 example.com」「正在阅读页面」。
+    let status: String
+    let plan: [PlanStep]
+    let result: String?
+    let steps: [ToolStep]
+
+    var active: Bool { state == .live || state == .waiting }
 }
 
 /// 连着好几步，合成一组。
@@ -93,6 +117,8 @@ nonisolated enum ChatRows {
 
         var reports = context.reports[...]
         var rows: [ChatRow] = []
+        /// 浏览器的那几步：按行 id 记下动作和参数，下面合成卡片。
+        var marks: [String: BrowserMark] = [:]
         for message in messages where !retried.contains(message.id) {
             // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
             while let report = reports.first, message.timestamp > 0, report.at <= message.timestamp {
@@ -126,6 +152,10 @@ nonisolated enum ChatRows {
                     switch part {
                     case .text(let text) where !text.isBlank:
                         own.append(ChatRow(id: id, kind: .assistant(text)))
+                    case .toolCall(let callId, let name, let arguments) where name == "browser_plan":
+                        let planId = "plan:\(callId)"
+                        marks[planId] = BrowserMark(op: "plan", arguments: arguments)
+                        own.append(ChatRow(id: planId, kind: .assistant("")))
                     case .toolCall(let callId, let name, let arguments):
                         if let row = toolRow(
                             callId: callId,
@@ -136,6 +166,9 @@ nonisolated enum ChatRows {
                             running: view.running,
                             context: context
                         ) {
+                            if name.hasPrefix("browser_") {
+                                marks[row.id] = BrowserMark(op: String(name.dropFirst(8)), arguments: arguments)
+                            }
                             own.append(row)
                         }
                     default:
@@ -152,6 +185,7 @@ nonisolated enum ChatRows {
             rows += own
         }
         rows += reports.map(reportRow)
+        rows = browserCards(rows, marks: marks, running: view.running, context: context)
         rows = grouped(rows, context: context)
         if view.running && !(view.live?.hasText ?? false) {
             rows.append(ChatRow(id: "typing", kind: .typing(retrying: view.retry != nil)))
@@ -322,6 +356,113 @@ nonisolated enum ChatRows {
         return .denied
     }
 
+    struct BrowserMark {
+        let op: String
+        let arguments: JSON
+    }
+
+    /// 把浏览器的几步合成卡片：卡片放在第一步的位置，后面的浏览器步骤和计划都收进去，中间说的话照常显示。
+    /// 用户发了新消息、项目报回结果、系统通知，就算下一件事，另起一张。
+    private static func browserCards(_ rows: [ChatRow], marks: [String: BrowserMark], running: Bool, context: ChatContext) -> [ChatRow] {
+        struct Open {
+            let index: Int
+            let id: String
+            var steps: [(ToolStep, BrowserMark)] = []
+            var plans: [JSON] = []
+        }
+        var result: [ChatRow] = []
+        var cards: [Open] = []
+        var open: Int?
+        for row in rows {
+            if let mark = marks[row.id] {
+                if open == nil {
+                    let raw = row.id.hasPrefix("tool:") ? String(row.id.dropFirst(5)) : row.id.hasPrefix("plan:") ? String(row.id.dropFirst(5)) : row.id
+                    cards.append(Open(index: result.count, id: "browser:\(raw)"))
+                    open = cards.count - 1
+                    result.append(row)
+                }
+                if mark.op == "plan" {
+                    cards[open!].plans.append(mark.arguments)
+                } else if case .tool(let step) = row.kind {
+                    cards[open!].steps.append((step, mark))
+                }
+                continue
+            }
+            switch row.kind {
+            case .user, .other, .handoff, .notice, .report: open = nil
+            default: break
+            }
+            result.append(row)
+        }
+        for (position, card) in cards.enumerated() {
+            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && position == cards.count - 1, context: context)
+            result[card.index] = ChatRow(id: card.id, kind: .browser(task), gap: result[card.index].gap)
+        }
+        return result
+    }
+
+    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext) -> BrowserTask {
+        let plan = plans.last
+        let planSteps: [BrowserTask.PlanStep] = plan?["steps"]?.array?.compactMap { item in
+            guard let text = item["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+            return BrowserTask.PlanStep(text: text, done: item["done"]?.bool == true)
+        } ?? []
+        let resultText = plan?["result"]?.string.flatMap { $0.isBlank ? nil : $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let computerName = steps.lazy.compactMap { $0.0.computer }.first
+        let computer = context.computers.first { $0.name == computerName || $0.id == computerName }
+        let latest = steps.last
+        let waiting = steps.first { $0.0.status == .waiting }
+        let state: BrowserTask.State
+        let status: String
+        if resultText != nil {
+            (state, status) = (.done, "做完了")
+        } else if let waiting {
+            let title = waiting.0.title.replacingOccurrences(of: #"^在「[^」]*」上|^在电脑上"#, with: "", options: .regularExpression)
+            (state, status) = (.waiting, "等你批准：\(title)")
+        } else if last {
+            (state, status) = (.live, latest.map { browserDoing($0.1) } ?? "正在想怎么做")
+        } else if latest?.0.status == .failed {
+            (state, status) = (.failed, "没做完，最后一步出错了")
+        } else if latest == nil || [.unfinished, .denied, .expired].contains(latest!.0.status) {
+            (state, status) = (.stopped, "已停下")
+        } else {
+            (state, status) = (.done, "做完了")
+        }
+        return BrowserTask(
+            id: id,
+            computerId: computer?.id,
+            computer: computer?.name ?? computerName,
+            state: state,
+            status: status,
+            plan: planSteps,
+            result: resultText,
+            steps: steps.map(\.0)
+        )
+    }
+
+    /// 卡片下面那一行：正在做的这一步，说成人话。
+    static func browserDoing(_ mark: BrowserMark) -> String {
+        func text(_ key: String) -> String { mark.arguments[key]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        func clip(_ value: String) -> String { value.count > 60 ? String(value.prefix(60)) + "…" : value }
+        switch mark.op {
+        case "open":
+            let raw = text("url")
+            let host = URLComponents(string: raw).flatMap { components in
+                components.host.map { host in components.port.map { "\(host):\($0)" } ?? host }
+            } ?? raw
+            return "正在浏览 \(clip(host))"
+        case "look", "read": return "正在阅读页面"
+        case "click": return text("label").isEmpty ? "正在点页面上的按钮" : "正在点「\(clip(text("label")))」"
+        case "type": return "正在填写"
+        case "key": return "正在按键"
+        case "scroll": return "正在翻看页面"
+        case "back": return "正在回到上一页"
+        case "show": return "浏览器窗口已经放到电脑屏幕上"
+        case "download": return "正在下载文件"
+        default: return "正在用浏览器"
+        }
+    }
+
     /// 连着的几步合成一组，点开再看每一步。
     private static func grouped(_ rows: [ChatRow], context: ChatContext) -> [ChatRow] {
         var result: [ChatRow] = []
@@ -408,6 +549,20 @@ nonisolated struct ToolAction {
         case "computer_menu":
             let path = arguments["menu"]?.array?.compactMap(\.string).joined(separator: " → ") ?? ""
             (icon, verb, object) = ("filemenu.and.selection", "点菜单", " " + path)
+        case "browser_open": (icon, verb, object) = ("safari", "在浏览器里打开", " " + Self.clip(text("url")))
+        case "browser_look": (icon, verb, object) = ("eye", "看", "网页")
+        case "browser_read": (icon, verb, object) = ("doc.text", "读", "网页")
+        case "browser_click":
+            let label = text("label")
+            (icon, verb, object) = ("cursorarrow.click", "在网页上点", label.isBlank ? " 编号 \(Self.number(arguments["ref"]))" : " " + label)
+        case "browser_type":
+            let hidden = arguments["sensitive"]?.bool == true
+            (icon, verb, object) = ("character.cursor.ibeam", "在网页上输入", hidden ? "敏感内容" : "「\(Self.clip(text("text")))」")
+        case "browser_key": (icon, verb, object) = ("command", "在网页上按", " " + text("key"))
+        case "browser_scroll": (icon, verb, object) = ("arrow.up.and.down", "滚动", "网页")
+        case "browser_back": (icon, verb, object) = ("chevron.backward", "后退到", "上一页")
+        case "browser_show": (icon, verb, object) = ("macwindow", "把浏览器给人看", "")
+        case "browser_download": (icon, verb, object) = ("arrow.down.circle", "下载", " " + Self.clip(text("url")))
         default: return nil
         }
     }

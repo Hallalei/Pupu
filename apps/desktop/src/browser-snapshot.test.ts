@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { renderSnapshot, type AXNode } from "./browser-snapshot.ts";
+import { HIDDEN_VALUE, renderSnapshot, type AXNode } from "./browser-snapshot.ts";
 
 const v = (value: unknown) => ({ value });
 const nodes: AXNode[] = [
@@ -25,4 +25,20 @@ test("快照：标题一行、正文合并、控件带编号且不重复打印�
 test("快照：query 只留匹配的行，没有匹配时说清楚", () => {
   assert.equal(renderSnapshot(nodes, "名字"), '[13] textbox "名字" = "小猫" (focused)');
   assert.match(renderSnapshot(nodes, "不存在"), /没有找到/);
+});
+
+test("快照：敏感输入框的值不给模型看（页面认出来的、按名字认的都算），框里的子文字也不漏", () => {
+  const page: AXNode[] = [
+    { nodeId: "1", role: v("RootWebArea"), name: v("登录"), childIds: ["2", "3", "4"] },
+    { nodeId: "2", role: v("textbox"), name: v("邮箱"), value: v("xiaomao@example.com"), backendDOMNodeId: 20 },
+    { nodeId: "3", role: v("textbox"), name: v("短信验证码"), value: v("482913"), backendDOMNodeId: 21, childIds: ["3a"] },
+    { nodeId: "3a", role: v("StaticText"), name: v("482913") },
+    { nodeId: "4", role: v("textbox"), name: v("口令"), value: v("hunter2"), backendDOMNodeId: 22 }
+  ];
+  const out = renderSnapshot(page, undefined, new Set([22]));
+  assert.ok(!out.includes("482913") && !out.includes("hunter2"), out);
+  assert.ok(out.includes(`[21] textbox "短信验证码" = "${HIDDEN_VALUE}"`), out);
+  assert.ok(out.includes(`[22] textbox "口令" = "${HIDDEN_VALUE}"`), out);
+  assert.ok(out.includes('"xiaomao@example.com"'), out);
+  assert.equal(renderSnapshot(page, "482913"), "没有找到包含「482913」的内容。");
 });

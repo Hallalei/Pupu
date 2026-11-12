@@ -10,6 +10,11 @@
  * 跨域 iframe（看不到里面，整块涂掉）。算不出位置时这一帧不发，宁可卡住也不漏。
  */
 
+/** 按类型和 autocomplete 认出来的敏感输入框。 */
+const SENSITIVE_FIELDS = `input[type=password i], input[autocomplete*="cc-" i], input[autocomplete*="password" i], input[autocomplete="one-time-code" i]`;
+/** 名字、id、标签、占位字里有这些词的输入框也算敏感。快照里按无障碍名字再认一遍（见 browser-snapshot.ts）。 */
+export const SENSITIVE_NAME = /(pass(word|wd)?|pwd|cvv|cvc|csc|card.?num|cc.?num|security.?code|otp|one.?time|verification.?code|ssn|身份证|密码|验证码|卡号)/i;
+
 /** 在页面里跑：返回要涂掉的矩形（CSS 像素，相对视口）和视口大小。 */
 export const SENSITIVE_RECTS_SCRIPT = `(() => {
   const out = [];
@@ -19,8 +24,8 @@ export const SENSITIVE_RECTS_SCRIPT = `(() => {
       out.push([r.left, r.top, r.width, r.height]);
     }
   };
-  const fields = 'input[type=password i], input[autocomplete*="cc-" i], input[autocomplete*="password" i], input[autocomplete="one-time-code" i]';
-  const named = /(pass(word|wd)?|pwd|cvv|cvc|csc|card.?num|cc.?num|security.?code|otp|one.?time|verification.?code|ssn|身份证|密码|验证码|卡号)/i;
+  const fields = '${SENSITIVE_FIELDS}';
+  const named = ${SENSITIVE_NAME.toString()};
   const seen = new Set();
   const visit = (root) => {
     for (const el of root.querySelectorAll(fields)) { seen.add(el); add(el); }
@@ -46,6 +51,32 @@ export const SENSITIVE_RECTS_SCRIPT = `(() => {
   };
   visit(document);
   return { width: innerWidth, height: innerHeight, rects: out };
+})()`;
+
+/**
+ * 在页面里跑：返回敏感输入框本身（数组，按 objectId 取回再换成 backendNodeId），给快照用来隐去它们的值。
+ * 和上面涂画面用同一套规则，同源 iframe 和 shadow root 里的也算。
+ */
+export const SENSITIVE_ELEMENTS_SCRIPT = `(() => {
+  const out = [];
+  const fields = '${SENSITIVE_FIELDS}';
+  const named = ${SENSITIVE_NAME.toString()};
+  const visit = (root) => {
+    for (const el of root.querySelectorAll(fields)) out.push(el);
+    for (const el of root.querySelectorAll('input:not([type=hidden]), textarea')) {
+      if (out.includes(el)) continue;
+      const hint = [el.name, el.id, el.getAttribute('aria-label'), el.getAttribute('placeholder')].join(' ');
+      if (named.test(hint)) out.push(el);
+    }
+    for (const frame of root.querySelectorAll('iframe')) {
+      let doc = null;
+      try { doc = frame.contentDocument; } catch (e) { doc = null; }
+      if (doc) visit(doc);
+    }
+    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+  };
+  visit(document);
+  return out;
 })()`;
 
 export type Rect = readonly [x: number, y: number, width: number, height: number];

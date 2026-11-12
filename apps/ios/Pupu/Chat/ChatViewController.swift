@@ -34,6 +34,14 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         didSet { composer.sending = sending }
     }
     private var toggled = Set<String>()
+    /// 每台电脑上 Pupu 浏览器最新的一帧（这个会话里的）。
+    private var frames: [String: BrowserFrame] = [:]
+    /// 每张浏览器卡片最后看到的画面：做完了还留着，重开页面就没了。
+    private var cardFrames: [String: UIImage] = [:]
+    /// 打开了「计划」的卡片。
+    private var planOpen = Set<String>()
+    private weak var large: BrowserLargeViewController?
+    private var largeId: String?
     private var rowsByID: [String: ChatRow] = [:]
     private var rowIDs: [String] = []
 
@@ -155,6 +163,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let notices = registration(NoticeCell.self)
         let errors = registration(ErrorCell.self)
         let reports = registration(ReportCell.self)
+        let browsers = registration(BrowserCardCell.self)
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
@@ -165,6 +174,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             case .tool, .toolGroup: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
             case .notice, .handoff: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
             case .report: return view.dequeueConfiguredReusableCell(using: reports, for: path, item: id)
+            case .browser: return view.dequeueConfiguredReusableCell(using: browsers, for: path, item: id)
             case .error, nil: return view.dequeueConfiguredReusableCell(using: errors, for: path, item: id)
             }
         }
@@ -330,6 +340,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         socket.onEvents = { [weak self] events in self?.receive(events) }
         socket.onChanged = { Store.shared.refresh() }
         socket.onActivity = { [identity] in Store.shared.apply(activity: $0, for: identity) }
+        socket.onBrowserFrame = { [weak self] frame in self?.receive(frame) }
         socket.onError = { [weak self] message in
             self?.state.error = message
             self?.scheduleRender()
@@ -345,6 +356,36 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             stick = true
         }
         scheduleRender()
+    }
+
+    /// 新的一帧画面：只重画浏览器卡片，放大的画面也跟着换。
+    private func receive(_ frame: BrowserFrame) {
+        frames[frame.computerId] = frame
+        let ids = rowIDs.filter { id in
+            if case .browser = rowsByID[id]?.kind { return true }
+            return false
+        }
+        if !ids.isEmpty {
+            var snapshot = source.snapshot()
+            snapshot.reconfigureItems(ids)
+            source.apply(snapshot, animatingDifferences: false)
+        }
+        if let largeId, let large, case .browser(let task) = rowsByID[largeId]?.kind {
+            large.update(task: task, frame: frameFor(task))
+        }
+    }
+
+    /// 卡片上该放哪一帧。正在做的卡片跟着最新的帧；最后一张卡做完得快、第一帧晚到，也收下。
+    private func frameFor(_ task: BrowserTask) -> UIImage? {
+        let last = rowIDs.last { id in
+            if case .browser = rowsByID[id]?.kind { return true }
+            return false
+        }
+        if task.active || (task.id == last && cardFrames[task.id] == nil) {
+            let live = task.computerId.flatMap { frames[$0] } ?? (frames.count == 1 ? frames.values.first : nil)
+            if let live { cardFrames[task.id] = live.image }
+        }
+        return cardFrames[task.id]
     }
 
     /// 流式输出时一秒几十个事件，攒一攒，最多 30 帧一画。
@@ -431,6 +472,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .error: 6
         case .report: 7
         case .other: 8
+        case .browser: 9
         }
     }
 
@@ -481,6 +523,29 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             guard let cell = cell as? ReportCell else { return }
             cell.configure(card: card, width: width)
             cell.onOpen = { [weak self] in self?.openProject(card.projectId) }
+        case .browser(let task):
+            guard let cell = cell as? BrowserCardCell else { return }
+            let image = frameFor(task)
+            cell.configure(task: task, frame: image, planOpen: planOpen.contains(id), width: bubbleWidth / Theme.Size.bubbleMax, canStop: state.running)
+            cell.onStop = { [weak self] in self?.socket?.abort() }
+            cell.onTogglePlan = { [weak self] in
+                guard let self else { return }
+                if self.planOpen.contains(id) { self.planOpen.remove(id) } else { self.planOpen.insert(id) }
+                var snapshot = self.source.snapshot()
+                snapshot.reconfigureItems([id])
+                self.source.apply(snapshot, animatingDifferences: false)
+            }
+            cell.onExpand = { [weak self] in
+                guard let self else { return }
+                let controller = BrowserLargeViewController(
+                    task: task,
+                    frame: image,
+                    onStop: self.state.running ? { [weak self] in self?.socket?.abort() } : nil
+                )
+                self.large = controller
+                self.largeId = id
+                self.present(controller, animated: true)
+            }
         }
         if let texts = Self.menuTexts(row) {
             cell.accessibilityCustomActions = [
