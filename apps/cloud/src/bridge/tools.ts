@@ -336,7 +336,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     ),
     computerTool(
       "browser_look",
-      "看 Pupu 浏览器当前页的快照：标题、正文和带编号的控件。动作的结果里已经带了最新快照，不用再看一遍确认；只在页面自己变了（等加载、别人操作过）时用。页面很长时用 query 只看相关的几行。",
+      "看 Pupu 浏览器当前页的快照：标题、正文和带编号的控件。动作的结果里已经带了最新快照，不用再看一遍确认；只在页面自己变了（等加载、别人操作过）时用。页面很长时用 query 只看相关的几行。密码、验证码、卡号这类框的值显示成「（已填，不显示）」：框里有内容，但不给你看，也别向用户转述或猜。",
       { query: Type.Optional(Type.String({ description: "只看包含这段文字的行" })) },
       "safe"
     ),

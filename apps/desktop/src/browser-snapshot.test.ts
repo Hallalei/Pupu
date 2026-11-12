@@ -42,3 +42,15 @@ test("快照：敏感输入框的值不给模型看（页面认出来的、按�
   assert.ok(out.includes('"xiaomao@example.com"'), out);
   assert.equal(renderSnapshot(page, "482913"), "没有找到包含「482913」的内容。");
 });
+
+test("快照：按名字认敏感框要整词，「Passenger name」「laptop」照常显示", () => {
+  const page: AXNode[] = [
+    { nodeId: "1", role: v("RootWebArea"), childIds: ["2", "3", "4"] },
+    { nodeId: "2", role: v("textbox"), name: v("Passenger name"), value: v("Xiao Mao"), backendDOMNodeId: 30 },
+    { nodeId: "3", role: v("textbox"), name: v("Your laptop model"), value: v("MacBook"), backendDOMNodeId: 31 },
+    { nodeId: "4", role: v("textbox"), name: v("Enter OTP"), value: v("123456"), backendDOMNodeId: 32 }
+  ];
+  const out = renderSnapshot(page);
+  assert.ok(out.includes('"Xiao Mao"') && out.includes('"MacBook"'), out);
+  assert.ok(!out.includes("123456"), out);
+});

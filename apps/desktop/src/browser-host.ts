@@ -2,7 +2,7 @@ import { app, BrowserWindow, nativeImage, session, type Session, type WebContent
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { BrowserOp, BrowserResult } from "../../cloud/bridge/browser.ts";
+import { browserTimeoutMs, type BrowserOp, type BrowserResult } from "../../cloud/bridge/browser.ts";
 import { isPrivateHost, urlRisk } from "../../cloud/src/bridge/policy.ts";
 import { isRects, paintRects, quadRect, scaleRects, SENSITIVE_ELEMENTS_SCRIPT, SENSITIVE_RECTS_SCRIPT, type Rect } from "./browser-frames.ts";
 import { renderSnapshot, type AXNode } from "./browser-snapshot.ts";
@@ -125,7 +125,11 @@ export class BrowserHost {
   run(op: BrowserOp): Promise<BrowserResult> {
     if (op.op === "type" && op.sensitive && typeof op.ref === "number") this.#sensitiveRefs.add(op.ref);
     this.#stream(Number.POSITIVE_INFINITY);
-    const result = this.#queue.then(() => this.#perform(op));
+    // 每一步比桥早 2 秒放弃：某个 CDP 调用卡死时，后面的步骤不会一直排在它后面，直到重启 App。
+    const limit = Math.max(1_000, browserTimeoutMs(op.op) - 2_000);
+    const result = this.#queue.then(() =>
+      within(this.#perform(op), limit, { ok: false as const, error: `浏览器这一步 ${Math.round(limit / 1000)} 秒没做完，放弃了。` })
+    );
     this.#queue = result.catch(() => undefined);
     void result.finally(() => this.#stream(Date.now() + STREAM_AFTER_MS)).catch(() => undefined);
     return result.catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
@@ -270,6 +274,12 @@ export class BrowserHost {
 
   async #perform(op: BrowserOp): Promise<BrowserResult> {
     const approved = op.approved === true;
+    // 还没打开过页面的窗口没有渲染进程，看、读、点、输的 CDP 调用都会一直等。
+    if (op.op !== "open" && op.op !== "download" && op.op !== "show" && !this.#contents().getURL()) {
+      return op.op === "look"
+        ? { ok: true, url: "", text: `${this.#header()}\n\n（空白页，还没打开任何网址。用 browser_open 打开。）` }
+        : { ok: false, error: "Pupu 浏览器还是空白页，先用 browser_open 打开网址。" };
+    }
     switch (op.op) {
       case "open": {
         const refusal = this.#urlRefusal(op.url ?? "", approved);

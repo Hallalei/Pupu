@@ -6,7 +6,7 @@
  * 去空文本、不重复打印控件自己的文字，取自 ego-lite 的 docs/native-snapshot-ref-requirement.md（MIT）。
  */
 
-import { SENSITIVE_NAME } from "./browser-frames.ts";
+import { SENSITIVE_LABEL } from "./browser-frames.ts";
 
 type AXValue = { readonly value?: unknown };
 
@@ -91,7 +91,7 @@ export function renderSnapshot(nodes: readonly AXNode[], query?: string, hidden:
     }
     const ref = node.backendDOMNodeId;
     const raw = text(node.value?.value);
-    const secret = raw !== "" && ((ref !== undefined && hidden.has(ref)) || (isField(role) && SENSITIVE_NAME.test(name)));
+    const secret = raw !== "" && ((ref !== undefined && hidden.has(ref)) || (isField(role) && SENSITIVE_LABEL.test(name)));
     const value = secret ? HIDDEN_VALUE : raw;
     const focusable = prop(node, "focusable") === true && role !== "RootWebArea" && (name || value || prop(node, "editable"));
     if (ref && (CONTROLS.has(role) || focusable)) {

@@ -14,6 +14,11 @@
 const SENSITIVE_FIELDS = `input[type=password i], input[autocomplete*="cc-" i], input[autocomplete*="password" i], input[autocomplete="one-time-code" i]`;
 /** 名字、id、标签、占位字里有这些词的输入框也算敏感。快照里按无障碍名字再认一遍（见 browser-snapshot.ts）。 */
 export const SENSITIVE_NAME = /(pass(word|wd)?|pwd|cvv|cvc|csc|card.?num|cc.?num|security.?code|otp|one.?time|verification.?code|ssn|身份证|密码|验证码|卡号)/i;
+/**
+ * 快照里按名字认敏感框用这个更窄的：画面上多涂一块没关系，快照里多藏会让模型读不到「Passenger name」「laptop」这类普通字段。
+ * 英文词要整词出现。
+ */
+export const SENSITIVE_LABEL = /(\b(password|passwd|passcode|pwd|cvv|cvc|csc|otp|ssn|pin)\b|card.?number|security.?code|one.?time.?(code|password)|verification.?code|身份证|密码|口令|验证码|校验码|卡号|安全码)/i;
 
 /** 在页面里跑：返回要涂掉的矩形（CSS 像素，相对视口）和视口大小。 */
 export const SENSITIVE_RECTS_SCRIPT = `(() => {
