@@ -130,6 +130,14 @@ export class ComputerGate {
       // 选不出电脑时让工具自己去说明，这里不拦。
       const selected = selectComputer(this.#options.computers(), planned.computerId);
       if (!selected.ok) return undefined;
+      if (planned.action.kind === "browser") {
+        // 没有浏览器的电脑让工具自己去说明，不为一个做不了的动作请示。
+        if (!selected.computer.browser) return undefined;
+        // Pupu 浏览器不开本地文件：批了也不开，就别请示了。
+        if (/^\s*file:/i.test(planned.action.url ?? "")) {
+          return { block: "Pupu 浏览器不开本地文件。看文件用 read_file；要在浏览器里看，先用 run_command 起一个本机的 http 服务，再打开它（会请示批准）。" };
+        }
+      }
       row = this.#ask(call.id, session, selected.computer, planned.action);
       if (!row) return undefined;
     }

@@ -43,7 +43,7 @@ class MemoryApprovals implements ApprovalDirectory {
   }
 }
 
-function setup(policy: ComputerPolicy = "ask_risky") {
+function setup(policy: ComputerPolicy = "ask_risky", browser = true) {
   let now = 1_000_000;
   let computer: ComputerRow = {
     id: "c1",
@@ -66,7 +66,8 @@ function setup(policy: ComputerPolicy = "ask_risky") {
     stale: false,
     lastSeenAt: now,
     policy: computer.policy,
-    screen: screenOn(computer.screen, now)
+    screen: screenOn(computer.screen, now),
+    ...(browser ? { browser: true } : {})
   });
   const options = {
     computers: () => [view()],
@@ -304,5 +305,38 @@ describe("审批", () => {
     controller.abort(new Error("stopped"));
     await assert.rejects(waiting, /stopped/);
     assert.equal(gate.pending().length, 0);
+  });
+});
+
+describe("浏览器的审批", () => {
+  const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, name, arguments: args });
+
+  test("公开网页和普通点击不问，也不算批过：点到提交按钮时桥上会拦", async () => {
+    const { gate, approvals } = setup();
+    assert.equal(await gate.beforeTool(call("b1", "browser_open", { url: "https://example.com/" })), undefined);
+    assert.equal(await gate.beforeTool(call("b2", "browser_click", { ref: 20 })), undefined);
+    assert.equal(approvals.rows.length, 0);
+    assert.equal(gate.approved({ requestId: "b2", computerId: "c1", action: { kind: "browser", op: "click", ref: 20 } }), false);
+  });
+
+  test("内网地址出卡，批了 exec 才带 approved", async () => {
+    const { gate } = setup();
+    const waiting = gate.beforeTool(call("b3", "browser_open", { url: "http://[::ffff:127.0.0.1]:8765/" }));
+    await settle();
+    const [row] = gate.pending();
+    assert.equal(row?.title, "在「mbpro」上在 Pupu 浏览器里打开");
+    assert.equal(row?.reason, "打开这台电脑本机或内网的地址");
+    gate.decide(row!.id, "allow");
+    assert.equal(await waiting, undefined);
+    assert.equal(gate.approved({ requestId: "b3", computerId: "c1", action: { kind: "browser", op: "open", url: "http://[::ffff:127.0.0.1]:8765/" } }), true);
+  });
+
+  test("file: 不出卡，直接拦下说明；没有浏览器的电脑不出卡，交给工具说明", async () => {
+    const { gate, approvals } = setup();
+    const blocked = await gate.beforeTool(call("b4", "browser_open", { url: "file:///etc/hosts" }));
+    assert.match(blocked && "block" in blocked ? blocked.block : "", /read_file/);
+    const old = setup("ask_risky", false);
+    assert.equal(await old.gate.beforeTool(call("b5", "browser_open", { url: "http://192.168.1.1/" })), undefined);
+    assert.equal(approvals.rows.length + old.approvals.rows.length, 0);
   });
 });

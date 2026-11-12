@@ -5,6 +5,7 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { receiveBrowserReply, useBrowserHost } from "../../cloud/bridge/browser.ts";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import { useDriverFrom } from "../../cloud/bridge/computer.ts";
 import { usePrebuiltInput } from "../../cloud/bridge/input.ts";
@@ -66,6 +67,9 @@ async function stop(): Promise<void> {
   process.exit(0);
 }
 
+// Pupu 浏览器在主进程里，桥只发请求、等回包。
+useBrowserHost((request) => post(request));
+
 port.on("message", (event) => {
   const message = event.data as ToBridge;
   if (message.type === "config") {
@@ -79,6 +83,10 @@ port.on("message", (event) => {
     onAction?.(message.action);
   } else if (message.type === "capture") {
     bridge?.fromCapture(message.event);
+  } else if (message.type === "browser-result") {
+    receiveBrowserReply(message);
+  } else if (message.type === "browser-frame") {
+    bridge?.browserFrame(message.frame);
   } else if (message.type === "stop") {
     void stop();
   }

@@ -307,3 +307,27 @@ export function HandIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function SparkleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M12 4v4M12 16v4M4 12h4M16 12h4M7 7l1.8 1.8M15.2 15.2 17 17M17 7l-1.8 1.8M8.8 15.2 7 17" />
+    </Icon>
+  );
+}
+
+export function ExpandIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M14 5h5v5M10 19H5v-5M19 5l-6 6M5 19l6-6" />
+    </Icon>
+  );
+}
+
+export function CollapseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M19 10h-5V5M5 14h5v5M14 10l6-6M10 14l-6 6" />
+    </Icon>
+  );
+}

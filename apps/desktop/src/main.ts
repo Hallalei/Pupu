@@ -12,6 +12,7 @@ import {
   app,
   autoUpdater,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   session,
@@ -21,6 +22,8 @@ import {
   type Session,
   type WebContents
 } from "electron";
+import { BROWSER_PARTITION, BrowserHost } from "./browser-host.ts";
+import { defaultChromeDir, keychainPassword, listProfiles, readChromeCookies } from "./chrome-import.ts";
 import { CaptureHost } from "./capture.ts";
 import { configPath, readConfig } from "../../cloud/bridge/config.ts";
 import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/local.ts";
@@ -77,6 +80,7 @@ let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
 let capture: CaptureHost | null = null;
+let browser: BrowserHost | null = null;
 let mainLog: WriteStream | null = null;
 let bridgeLog: WriteStream | null = null;
 let quitting = false;
@@ -131,6 +135,10 @@ const supervisor = new BridgeSupervisor(dist("bridge.mjs"), {
   onCapture(command) {
     capture?.command(command);
   },
+  onBrowser(request) {
+    browser ??= newBrowser();
+    void browser.run(request.op).then((result) => supervisor.browserReply({ type: "browser-result", id: request.id, result }));
+  },
   onCrash(code, delay) {
     log(`桥退出了（${code}），${Math.round(delay / 1000)} 秒后重启。`);
     bridgeState = null;
@@ -141,6 +149,65 @@ const supervisor = new BridgeSupervisor(dist("bridge.mjs"), {
     write(bridgeLog, line);
   }
 });
+
+function newBrowser(): BrowserHost {
+  return new BrowserHost({ log, background, onFrame: (frame) => supervisor.browserFrame(frame) });
+}
+
+/**
+ * 开发版可以换成假的 Chrome 用户资料目录和假密码来测导入，不碰真的 Chrome、不弹钥匙串。正式包不认这两个变量。
+ */
+const fakeChrome =
+  !app.isPackaged && process.env.PUPU_CHROME_DIR && process.env.PUPU_CHROME_TEST_PASSWORD
+    ? { dir: process.env.PUPU_CHROME_DIR, password: process.env.PUPU_CHROME_TEST_PASSWORD }
+    : null;
+
+function chromeDir(): string {
+  return fakeChrome?.dir ?? defaultChromeDir();
+}
+
+/** 人在「这台电脑」页上点了从 Chrome 导入。只回个数，不回也不记 cookie 的名字和值。 */
+async function importChrome(profile: string): Promise<{ ok: true; imported: number; skipped: number } | { ok: false; error: string }> {
+  const profiles = await listProfiles(chromeDir());
+  if (!profiles.some((item) => item.dir === profile)) return { ok: false, error: "没找到这个 Chrome 用户资料。" };
+  let password: string;
+  if (fakeChrome) {
+    password = fakeChrome.password;
+  } else {
+    const options = {
+      type: "info" as const,
+      buttons: ["继续", "取消"],
+      defaultId: 0,
+      cancelId: 1,
+      message: "从 Chrome 导入登录状态",
+      detail:
+        "接下来 macOS 会问 Pupu 能不能使用钥匙串里的「Chrome Safe Storage」，点「允许」才能导入。\n\n导入的登录状态只存在这台电脑的 Pupu 浏览器里，不会上传到云端。"
+    };
+    const { response } = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+    if (response !== 0) return { ok: false, error: "取消了。" };
+    try {
+      password = await keychainPassword();
+    } catch (error) {
+      return { ok: false, error: message(error) };
+    }
+  }
+  const { cookies, skipped } = await readChromeCookies({ chromeDir: chromeDir(), profile, password });
+  const jar = session.fromPartition(BROWSER_PARTITION).cookies;
+  let imported = 0;
+  let failed = 0;
+  for (const cookie of cookies) {
+    try {
+      await jar.set(cookie);
+      imported += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  await jar.flushStore();
+  log(`从 Chrome 导入登录状态：导进 ${imported} 个，跳过 ${skipped + failed} 个。`);
+  if (cookies.length > 0 && imported === 0) return { ok: false, error: "一个也没导进去：可能钥匙串密码不对，或者 Chrome 的格式变了。" };
+  return { ok: true, imported, skipped: skipped + failed };
+}
 
 function startBridge(): void {
   const computer = pairing.computer;
@@ -605,6 +672,20 @@ function registerIpc(): void {
     if (!url) throw new Error("没有这个设置页。");
     await shell.openExternal(url);
   });
+  ipcMain.handle("pupu:show-browser", (event) => {
+    fromMain(event);
+    browser ??= newBrowser();
+    browser.show();
+  });
+  ipcMain.handle("pupu:chrome-profiles", async (event) => {
+    fromMain(event);
+    return listProfiles(chromeDir());
+  });
+  ipcMain.handle("pupu:import-chrome", async (event, profile: unknown) => {
+    fromMain(event);
+    if (typeof profile !== "string") throw new Error("要给用户资料目录名。");
+    return importChrome(profile);
+  });
   ipcMain.handle("pupu:repair", async (event) => {
     fromMain(event);
     await checkDesktop();
@@ -693,6 +774,7 @@ if (refused.length > 0) {
     quitting = true;
     log("退出：先停桥。");
     capture?.stop();
+    browser?.stop();
     void supervisor.stop().finally(() => {
       tray?.destroy();
       log("已退出。");

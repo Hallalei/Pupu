@@ -35,6 +35,30 @@ export type ToolStep = {
   readonly expanded: boolean;
 };
 
+export type BrowserPlanStep = { readonly text: string; readonly done: boolean };
+
+/**
+ * live：正在做（这一轮还在跑，它是最后一个浏览器任务）。waiting：停在一步等批。
+ * done：做完了。stopped：这一轮停了、没给结果。failed：最后一步出错了，这一轮也结束了。
+ */
+export type BrowserTaskState = "live" | "waiting" | "done" | "stopped" | "failed";
+
+/**
+ * 一段连着的浏览器操作，画成一张卡片：实时画面、状态、计划、做完后的一句结果。学的是 Hark。
+ * 计划和结果来自 browser_plan，状态来自最后一步浏览器动作；画面不在这里，另外从 browser_frame 来。
+ */
+export type BrowserTask = {
+  readonly id: string;
+  readonly computerId: string | null;
+  readonly computer: string | null;
+  readonly state: BrowserTaskState;
+  /** 卡片下面那一行，比如「正在浏览 example.com」「正在阅读页面」「等你批准」。 */
+  readonly status: string;
+  readonly plan: readonly BrowserPlanStep[];
+  readonly result: string | null;
+  readonly steps: readonly ToolStep[];
+};
+
 export type ChatRow = {
   readonly id: string;
   /** 和上一行的间距：同一条消息里 8，消息之间 12。 */
@@ -51,6 +75,7 @@ export type ChatRow = {
   | { readonly kind: "typing"; readonly retrying: boolean }
   | { readonly kind: "project-tag"; readonly name: string; readonly projectId: string | null }
   | { readonly kind: "tool"; readonly step: ToolStep }
+  | { readonly kind: "browser"; readonly task: BrowserTask }
   | {
       readonly kind: "tool-group";
       readonly title: string;
@@ -110,6 +135,8 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
 
   const reports = [...(context.reports ?? [])];
   let rows: Row[] = [];
+  /** 浏览器的那几步：按行 id 记下动作和参数，下面合成卡片。 */
+  const browserMarks = new Map<string, BrowserMark>();
   for (const message of messages) {
     if (retried.has(message.id)) continue;
     // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
@@ -137,8 +164,18 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
         if (part.type === "text" && part.text.trim()) {
           own.push({ id: `${message.id}#${index}`, kind: "assistant", text: part.text });
         } else if (part.type === "tool-call") {
+          if (part.name === "browser_plan") {
+            const args = asRecord(part.arguments);
+            const id = `plan:${part.id}`;
+            browserMarks.set(id, { op: "plan", args });
+            own.push({ id, kind: "assistant", text: "" });
+            return;
+          }
           const row = toolRow(part, results.get(part.id), outputs.get(part.id), view.running, context);
-          if (row) own.push(row);
+          if (row) {
+            if (part.name.startsWith("browser_")) browserMarks.set(row.id, { op: part.name.slice(8), args: asRecord(part.arguments) });
+            own.push(row);
+          }
         }
       });
       if (message.error?.trim()) {
@@ -148,6 +185,7 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
     rows.push(...own.map((row, index) => ({ ...row, gap: index === 0 ? 12 : 8 }) as Row));
   }
   rows.push(...reports.map(reportRow));
+  rows = browserCards(rows, browserMarks, view.running, context);
   rows = grouped(rows, context);
   if (view.running && !hasText(view.live)) {
     rows.push({ id: "typing", gap: 12, kind: "typing", retrying: view.retry !== null });
@@ -331,6 +369,128 @@ export function readable(text: string, status: StepStatus): string {
   return reason ?? result;
 }
 
+type BrowserMark = { readonly op: string; readonly args: Record<string, unknown> };
+
+/**
+ * 把浏览器的几步合成卡片：卡片放在第一步的位置，后面的浏览器步骤和计划都收进去，中间说的话照常显示。
+ * 用户发了新消息、项目报回结果、系统通知，就算下一件事，另起一张。和 iOS 的 ChatRows.swift 一起改。
+ */
+function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMark>, running: boolean, context: RowContext): Row[] {
+  type Open = { index: number; id: string; steps: { step: ToolStep; mark: BrowserMark }[]; plans: Record<string, unknown>[] };
+  const result: Row[] = [];
+  const cards: Open[] = [];
+  let open: Open | null = null;
+  for (const row of rows) {
+    const mark = marks.get(row.id);
+    if (mark) {
+      if (!open) {
+        open = { index: result.length, id: `browser:${row.id.replace(/^(tool|plan):/, "")}`, steps: [], plans: [] };
+        cards.push(open);
+        result.push(row);
+      }
+      if (mark.op === "plan") open.plans.push(mark.args);
+      else if (row.kind === "tool") open.steps.push({ step: row.step, mark });
+      continue;
+    }
+    if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report") open = null;
+    result.push(row);
+  }
+  cards.forEach((card, position) => {
+    const first = result[card.index]!;
+    const task = browserTask(card.id, card.steps, card.plans, running && position === cards.length - 1, context);
+    result[card.index] = { id: card.id, gap: first.gap, kind: "browser", task };
+  });
+  return result;
+}
+
+function browserTask(
+  id: string,
+  steps: readonly { step: ToolStep; mark: BrowserMark }[],
+  plans: readonly Record<string, unknown>[],
+  last: boolean,
+  context: RowContext
+): BrowserTask {
+  const plan = plans.at(-1);
+  const planSteps: BrowserPlanStep[] = Array.isArray(plan?.steps)
+    ? plan.steps.flatMap((item) => {
+        const step = asRecord(item);
+        const text = typeof step.text === "string" ? step.text.trim() : "";
+        return text ? [{ text, done: step.done === true }] : [];
+      })
+    : [];
+  const resultText = typeof plan?.result === "string" && plan.result.trim() ? plan.result.trim() : null;
+  const computerName = steps.find(({ step }) => step.computer)?.step.computer ?? null;
+  const computer = context.computers.find((item) => item.name === computerName || item.id === computerName);
+  const latest = steps.at(-1);
+  const waiting = steps.find(({ step }) => step.status === "waiting");
+  let state: BrowserTaskState;
+  let status: string;
+  if (resultText) {
+    state = "done";
+    status = "做完了";
+  } else if (waiting) {
+    state = "waiting";
+    status = `等你批准：${waiting.step.title.replace(/^在「[^」]*」上|^在电脑上/, "")}`;
+  } else if (last) {
+    state = "live";
+    status = latest ? browserDoing(latest.mark) : "正在想怎么做";
+  } else if (latest?.step.status === "failed") {
+    state = "failed";
+    status = "没做完，最后一步出错了";
+  } else if (!latest || latest.step.status === "unfinished" || latest.step.status === "denied" || latest.step.status === "expired") {
+    state = "stopped";
+    status = "已停下";
+  } else {
+    state = "done";
+    status = "做完了";
+  }
+  return {
+    id,
+    computerId: computer?.id ?? null,
+    computer: computer?.name ?? computerName,
+    state,
+    status,
+    plan: planSteps,
+    result: resultText,
+    steps: steps.map(({ step }) => step)
+  };
+}
+
+/** 卡片下面那一行：正在做的这一步，说成人话。 */
+export function browserDoing(mark: BrowserMark): string {
+  const text = (key: string) => (typeof mark.args[key] === "string" ? (mark.args[key] as string).trim() : "");
+  switch (mark.op) {
+    case "open": {
+      let host = text("url");
+      try {
+        host = new URL(host).host || host;
+      } catch {
+        // 不是完整网址，原样显示。
+      }
+      return `正在浏览 ${clip(host)}`;
+    }
+    case "look":
+    case "read":
+      return "正在阅读页面";
+    case "click":
+      return text("label") ? `正在点「${clip(text("label"))}」` : "正在点页面上的按钮";
+    case "type":
+      return "正在填写";
+    case "key":
+      return "正在按键";
+    case "scroll":
+      return "正在翻看页面";
+    case "back":
+      return "正在回到上一页";
+    case "show":
+      return "浏览器窗口已经放到电脑屏幕上";
+    case "download":
+      return "正在下载文件";
+    default:
+      return "正在用浏览器";
+  }
+}
+
 /** 连着的几步合成一组，点开再看每一步。 */
 function grouped(rows: readonly Row[], context: RowContext): Row[] {
   const result: Row[] = [];
@@ -430,6 +590,26 @@ function describe(
       return { icon: "keyboard", verb: "按", object: ` ${text("key")}` };
     case "computer_menu":
       return { icon: "cursor", verb: "点菜单", object: ` ${Array.isArray(args.menu) ? args.menu.join(" → ") : ""}` };
+    case "browser_open":
+      return { icon: "cursor", verb: "在浏览器里打开", object: ` ${clip(text("url"))}` };
+    case "browser_look":
+      return { icon: "screenshot", verb: "看", object: "网页" };
+    case "browser_read":
+      return { icon: "file", verb: "读", object: "网页" };
+    case "browser_click":
+      return { icon: "cursor", verb: "在网页上点", object: named() ?? ` 编号 ${number(args.ref)}` };
+    case "browser_type":
+      return { icon: "keyboard", verb: "在网页上输入", object: args.sensitive === true ? "敏感内容" : `「${clip(text("text"))}」` };
+    case "browser_key":
+      return { icon: "keyboard", verb: "在网页上按", object: ` ${text("key")}` };
+    case "browser_scroll":
+      return { icon: "cursor", verb: "滚动", object: "网页" };
+    case "browser_back":
+      return { icon: "cursor", verb: "后退到", object: "上一页" };
+    case "browser_show":
+      return { icon: "screenshot", verb: "把浏览器给人看", object: "" };
+    case "browser_download":
+      return { icon: "file", verb: "下载", object: ` ${clip(text("url"))}` };
     default:
       return null;
   }

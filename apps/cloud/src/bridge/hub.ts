@@ -5,6 +5,7 @@ import {
   BRIDGE_PONG,
   CANCEL_CONFIRM_MS,
   FIRST_BYTE_MS,
+  browserReplyMs,
   FOREGROUND_DEFAULT_MS,
   OUTDATED_CODE,
   REJECT_CODE,
@@ -12,6 +13,7 @@ import {
   tokenFromRequest,
   tokenHash,
   type Action,
+  type BrowserFrame,
   type ComputerView,
   type DownFrame,
   type UpFrame
@@ -47,6 +49,8 @@ export type BridgeLink = {
   readonly terminalsFolder: string;
   /** 桥报的有没有人在用这台电脑。老的桥不报。 */
   readonly present?: boolean;
+  /** 桥在 hello 里报了带 Pupu 浏览器。 */
+  readonly browser?: boolean;
 };
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -106,6 +110,8 @@ export class ComputerBridge {
   onDesktop: (computerId: string, session: string, message: DesktopUp) => void = () => {};
   /** 这台电脑的桥断了。 */
   onGone: (computerId: string) => void = () => {};
+  /** Pupu 浏览器的一帧画面，只转给能看到这台电脑上的活的人。 */
+  onBrowserFrame: (computerId: string, frame: BrowserFrame) => void = () => {};
   /** 调用找不到能用的电脑：`computerId` 是离线的那台，没指定、一台都不在线是 null。 */
   onUnavailable: (requestId: string, computerId: string | null) => void = () => {};
   /** 命令交出去了：后台命令，或者前台到时间转到后台。退出时桥发 finished。 */
@@ -175,6 +181,11 @@ export class ComputerBridge {
     if (frame.type === "takeback") {
       const link = readLink(socket);
       if (link?.ready) this.onTakeback(link.computerId);
+      return;
+    }
+    if (frame.type === "browser-frame") {
+      const link = readLink(socket);
+      if (link?.ready && link.browser) this.onBrowserFrame(link.computerId, frame);
       return;
     }
     if (frame.type === "desktop") {
@@ -256,6 +267,16 @@ export class ComputerBridge {
       return {
         ok: false,
         text: computer.stale ? staleText(computer) : offlineText(computer),
+        computerId: computer.id,
+        computerName: computer.name
+      };
+    }
+
+    // 旧的桥不认 browser 动作，整帧会被丢掉，云端只能干等。没报能力的就不发。
+    if (input.action.kind === "browser" && !readLink(socket)?.browser) {
+      return {
+        ok: false,
+        text: `「${computer.name}」上的 Pupu 没有浏览器：要电脑 App 0.2.4 以后的版本，命令行桥没有。请用户更新电脑 App。`,
         computerId: computer.id,
         computerName: computer.name
       };
@@ -343,7 +364,8 @@ export class ComputerBridge {
       name,
       ready: true,
       localRoot: frame.localRoot,
-      terminalsFolder: frame.terminalsFolder
+      terminalsFolder: frame.terminalsFolder,
+      ...(frame.capabilities?.includes("browser") ? { browser: true } : {})
     };
     this.#writeLink(socket, next);
     this.#directory.markSeen(link.computerId, {
@@ -395,7 +417,7 @@ export class ComputerBridge {
       log.truncated ||= next.truncated;
       input.onOutput?.(frame.text);
     };
-    let deadline = this.#now() + FIRST_BYTE_MS;
+    let deadline = this.#now() + (input.action.kind === "browser" ? browserReplyMs(input.action.op) : FIRST_BYTE_MS);
     while (true) {
       const frame = await this.#next(waiter, input.signal, deadline - this.#now());
       if (frame === "abort") return this.#cancel(waiter, input.requestId, take);
@@ -449,7 +471,8 @@ export class ComputerBridge {
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
       screen: screenOn(row.screen, now),
-      ...(alive && link?.present !== undefined ? { inUse: link.present } : {})
+      ...(alive && link?.present !== undefined ? { inUse: link.present } : {}),
+      ...(alive && link?.browser ? { browser: true } : {})
     };
   }
 
@@ -689,6 +712,7 @@ export function readLink(socket: { deserializeAttachment(): unknown }): BridgeLi
     ...(typeof link.seenPingAt === "number" ? { seenPingAt: link.seenPingAt } : {}),
     localRoot: typeof link.localRoot === "string" ? link.localRoot : "",
     terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : "",
-    ...(typeof link.present === "boolean" ? { present: link.present } : {})
+    ...(typeof link.present === "boolean" ? { present: link.present } : {}),
+    ...(link.browser === true ? { browser: true } : {})
   };
 }

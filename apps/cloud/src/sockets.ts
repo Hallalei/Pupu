@@ -149,12 +149,13 @@ export class PiSessionSockets {
     this.broadcastBy(() => message);
   }
 
-  /** 按设备发各自的那一份，同一个帧不是人人都能看的时候用。 */
-  broadcastBy(messageFor: (device: string | null) => ServerMessage): void {
+  /** 按设备发各自的那一份，同一个帧不是人人都能看的时候用。返回 null 的设备不发。 */
+  broadcastBy(messageFor: (device: string | null) => ServerMessage | null): void {
     for (const socket of this.#getWebSockets()) {
       const tags = this.#getTags(socket);
       if (this.#routes.some((route) => tags.includes(route.tag))) continue;
-      send(socket, messageFor(deviceOfTags(tags)));
+      const message = messageFor(deviceOfTags(tags));
+      if (message) send(socket, message);
     }
   }
 

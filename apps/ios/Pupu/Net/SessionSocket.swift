@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 跟随 Pupu 的一个 pi 会话。连上后服务端先说 hello、再发一份快照，之后一批批发事件；
 /// 断了就退避重连，重连拿到的是新快照，所以不需要续传。
@@ -45,6 +46,8 @@ final class SessionSocket {
     var onChanged: (() -> Void)?
     /// 电脑在做的事变了，带着整份新的。
     var onActivity: (([ComputerActivity]) -> Void)?
+    /// Pupu 浏览器的一帧实时画面，只收这个会话里的。
+    var onBrowserFrame: ((BrowserFrame) -> Void)?
     var onError: ((String) -> Void)?
 
     private let endpoint: Endpoint
@@ -215,6 +218,14 @@ final class SessionSocket {
             if let decoded = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) {
                 onActivity?(decoded.activity)
             }
+        case "browser_frame":
+            guard frame["session"]?.string == session,
+                  let computerId = frame["computerId"]?.string,
+                  let base64 = frame["jpeg"]?.string,
+                  let data = Data(base64Encoded: base64),
+                  let image = UIImage(data: data)
+            else { return }
+            onBrowserFrame?(BrowserFrame(computerId: computerId, image: image, url: frame["url"]?.string ?? "", title: frame["title"]?.string ?? ""))
         case "result":
             settle(frame["id"]?.string, refusal: nil)
         case "error":
@@ -253,4 +264,12 @@ final class SessionSocket {
             if error != nil { task.cancel(with: .goingAway, reason: nil) }
         }
     }
+}
+
+/// 浏览器任务卡片上的一帧画面：电脑 App 截的、敏感输入框已经涂掉，经云端转过来。只在内存里。
+struct BrowserFrame {
+    let computerId: String
+    let image: UIImage
+    let url: String
+    let title: String
 }

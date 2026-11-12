@@ -9,6 +9,7 @@ import {
 } from "./actions.ts";
 import { userPresent } from "./computer.ts";
 import type { DesktopInput } from "../src/bridge/desktop.ts";
+import type { BrowserFrame } from "../src/bridge/protocol.ts";
 import { requestsDir, type BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
 import { menubarState, type Menubar, type MenubarAction, type MenubarProblem } from "./menubar.ts";
@@ -39,6 +40,8 @@ export type RunningBridge = {
   readonly done: Promise<void>;
   /** 推流窗口发来的。 */
   fromCapture(event: CaptureEvent): void;
+  /** Pupu 浏览器的一帧画面，转给云端。没连上就丢掉，不攒。 */
+  browserFrame(frame: Omit<BrowserFrame, "type">): void;
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
@@ -222,6 +225,9 @@ export function runBridge(options: RunOptions): RunningBridge {
   return {
     done,
     fromCapture: (event) => remote.fromCapture(event),
+    browserFrame: (frame) => {
+      current?.send({ type: "browser-frame", ...frame });
+    },
     stop() {
       if (stopped) return;
       stopped = true;

@@ -730,9 +730,83 @@ export function classifyAction(action: Action, home?: string): Risk {
     }
     case "computer":
       return isScreenInput(action) && action.sensitive === true ? high("这一步会发消息、付款、提交或删除") : LOW;
+    case "browser":
+      return classifyBrowser(action);
     default:
       return LOW;
   }
+}
+
+// ---- Pupu 浏览器 ----
+
+/**
+ * 浏览器里的一步。看公开网页是低风险；下面这些算高风险，要单独批：
+ * 打开本机或内网地址、file: 这类非网页地址（Pupu 浏览器批了也不开，这里算高风险是多一道保险），下载，输完直接提交、按回车，模型自己标了 sensitive 的。
+ * 点到表单的提交按钮，云端看不出来，桥上的 Pupu 浏览器会拦下来，要模型带上 sensitive 再来。
+ */
+export function classifyBrowser(action: Extract<Action, { kind: "browser" }>): Risk {
+  if (action.op === "open" || action.op === "download") {
+    const reason = urlRisk(action.url ?? "");
+    if (reason) return high(reason);
+    if (action.op === "download") return high("下载文件到这台电脑");
+    return LOW;
+  }
+  if (action.sensitive === true) return high("这一步会提交、付款、发消息或删除");
+  if (action.op === "type" && action.submit === true) return high("输完直接提交表单");
+  if (action.op === "key" && /^(enter|return)$/i.test(action.key ?? "")) return high("按回车可能提交表单");
+  return LOW;
+}
+
+/** 网址的风险：不是 http(s) 的、指向本机或内网的。公开网址返回 null。 */
+export function urlRisk(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return "网址写得不对";
+  }
+  if (url.protocol === "file:") return "打开这台电脑上的本地文件";
+  if (url.protocol !== "http:" && url.protocol !== "https:") return `打开 ${url.protocol} 地址，不是普通网页`;
+  return isPrivateHost(url.hostname) ? "打开这台电脑本机或内网的地址" : null;
+}
+
+/**
+ * 本机、局域网、内网的主机名或 IP。只看字面，不解析域名：解析到内网的公网域名（DNS 重绑定）这里拦不住，
+ * 桥上的 Pupu 浏览器会在跳转时再看一次 IP 字面。
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!host) return true;
+  if (host === "localhost" || /\.(localhost|local|internal|lan|intranet|corp|home\.arpa)$/.test(host)) return true;
+  if (!host.includes(".") && !host.includes(":")) return true;
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (host.includes(":")) {
+    if (host === "::" || host === "::1") return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
+    // 内嵌 IPv4 的写法（::ffff:127.0.0.1，以及兼容地址 ::127.0.0.1）。URL 会把它规范成十六进制，比如 ::ffff:7f00:1。
+    const dotted = host.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
+    if (dotted) return isPrivateHost(dotted[1]!);
+    const hex = host.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const high = parseInt(hex[1]!, 16);
+      const low = parseInt(hex[2]!, 16);
+      return isPrivateHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+    }
+    return false;
+  }
+  return false;
 }
 
 /** 打开应用、点、拖、滚动、打字、按键。看窗口和查权限不算。 */
@@ -767,8 +841,14 @@ export function needFor(
   if (policy === "ask_all" && (action.kind === "run" || action.kind === "write" || action.kind === "stdin")) {
     return { need: "step", risk };
   }
+  // 浏览器不碰用户的屏幕，和命令一个算法：高风险的才问；每步都问时，会动页面的也问。
+  if (policy === "ask_all" && action.kind === "browser" && BROWSER_CHANGES.has(action.op)) {
+    return { need: "step", risk };
+  }
   return { need: "none", risk };
 }
+
+const BROWSER_CHANGES: ReadonlySet<string> = new Set(["open", "click", "type", "key", "download"]);
 
 /** 审批卡片上的标题和详情。 */
 export function describeAction(action: Action): { readonly title: string; readonly detail: string } {
@@ -804,6 +884,29 @@ export function describeAction(action: Action): { readonly title: string; readon
         default:
           return { title: "操作屏幕", detail: "看这台电脑上的窗口，在后台操作它们。" };
       }
+    case "browser":
+      return describeBrowser(action);
+  }
+}
+
+function describeBrowser(action: Extract<Action, { kind: "browser" }>): { readonly title: string; readonly detail: string } {
+  const target = action.label || (action.ref !== undefined ? `编号 ${action.ref} 的控件` : "");
+  switch (action.op) {
+    case "open":
+      return { title: "在 Pupu 浏览器里打开", detail: clip(action.url ?? "", 1000) };
+    case "download":
+      return { title: "用 Pupu 浏览器下载文件", detail: `${clip(action.url ?? "", 1000)}\n存到这台电脑的 下载/Pupu 文件夹` };
+    case "click":
+      return { title: "在 Pupu 浏览器里点击", detail: target };
+    case "type":
+      return {
+        title: action.submit ? "在 Pupu 浏览器里填写并提交" : "在 Pupu 浏览器里输入",
+        detail: `${target}：${clip(action.text ?? "", 1000)}`
+      };
+    case "key":
+      return { title: "在 Pupu 浏览器里按键", detail: action.key ?? "" };
+    default:
+      return { title: "用 Pupu 浏览器", detail: action.op };
   }
 }
 

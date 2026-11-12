@@ -16,8 +16,10 @@ import type { MemberView } from "../members";
 import { quotedMessage, type Sender } from "../messages";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
-import { buildRows, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
+import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
+import { buildRows, type BrowserTask, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
 import { Composer } from "./Composer";
+import { desktop, useDesktopComputer } from "./desktop";
 import { begin, IDLE, restoreDraft, settle, type Outbox } from "./outbox";
 import {
   ChevronDownIcon,
@@ -83,6 +85,31 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   const input = useRef<HTMLTextAreaElement>(null);
 
   const rows = buildRows(pi, { ...context, toggled });
+  const here = useDesktopComputer();
+  /** 每张浏览器卡片最后看到的画面：做完了还留着，刷新页面就没了。 */
+  const cardFrames = useRef(new Map<string, BrowserFrameView>());
+  const lastCard = [...rows].reverse().find((row) => row.kind === "browser")?.id;
+  function frameFor(task: BrowserTask): BrowserFrameView | null {
+    // 最后一张卡做完得快，第一帧可能晚到：做完后到的画面也收下，收起的卡片上留着最后的样子。
+    if (task.state === "live" || task.state === "waiting" || (task.id === lastCard && !cardFrames.current.has(task.id))) {
+      const live = task.computerId
+        ? pi.frames.get(task.computerId)
+        : pi.frames.size === 1
+          ? [...pi.frames.values()][0]
+          : undefined;
+      if (live) cardFrames.current.set(task.id, live);
+    }
+    return cardFrames.current.get(task.id) ?? null;
+  }
+  const browser = {
+    frameFor,
+    onStop: pi.running ? () => pi.abort() : undefined,
+    takeOver: (task: BrowserTask) => {
+      const app = desktop();
+      if (!app?.showBrowser || !here?.computerId || here.computerId !== task.computerId) return undefined;
+      return () => void app.showBrowser?.();
+    }
+  };
 
   // 在底部时跟着新内容往下滚；用户往上翻了就不打扰。
   useLayoutEffect(() => {
@@ -199,7 +226,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
             )}
             {rows.map((row) => (
               <div key={row.id} className={row.gap === 12 ? "mt-3" : row.gap === 8 ? "mt-2" : ""}>
-                <Row row={row} context={context} onMenu={openMenu} onToggle={toggle} />
+                <Row row={row} context={context} onMenu={openMenu} onToggle={toggle} browser={browser} />
               </div>
             ))}
           </div>
@@ -350,18 +377,35 @@ export function usePressMenu(onMenu: (anchor: HTMLElement, point?: MenuPoint) =>
 type MenuPoint = { readonly x: number; readonly y: number };
 type MenuOpener = (anchor: HTMLElement, text: string, point?: MenuPoint) => void;
 
+type BrowserHooks = {
+  readonly frameFor: (task: BrowserTask) => BrowserFrameView | null;
+  readonly onStop?: () => void;
+  readonly takeOver: (task: BrowserTask) => (() => void) | undefined;
+};
+
 function Row({
   row,
   context,
   onMenu,
-  onToggle
+  onToggle,
+  browser
 }: {
   row: ChatRow;
   context: ChatContext;
   onMenu: MenuOpener;
   onToggle: (id: string) => void;
+  browser: BrowserHooks;
 }) {
   switch (row.kind) {
+    case "browser":
+      return (
+        <BrowserCard
+          task={row.task}
+          frame={browser.frameFor(row.task)}
+          onStop={browser.onStop}
+          onTakeOver={browser.takeOver(row.task)}
+        />
+      );
     case "user":
       return row.sender ? (
         <OtherMessage body={row.body} quote={row.quote} sender={row.sender} onMenu={onMenu} />

@@ -74,6 +74,22 @@ const ACTIONS: Readonly<Record<string, (args: Args) => Action>> = {
   computer_type: (args) => ({ kind: "computer", op: "type", ...aimed(args), text: str(args.text) }),
   computer_set: (args) => ({ kind: "computer", op: "set", ...aimed(args), text: str(args.value) }),
   computer_key: (args) => ({ kind: "computer", op: "key", ...aimed(args), key: str(args.key) }),
+  browser_open: (args) => ({ kind: "browser", op: "open", url: str(args.url).trim() }),
+  browser_look: (args) => ({ kind: "browser", op: "look", ...(str(args.query) ? { query: str(args.query) } : {}) }),
+  browser_read: () => ({ kind: "browser", op: "read" }),
+  browser_click: (args) => ({ kind: "browser", op: "click", ...browserTarget(args) }),
+  browser_type: (args) => ({
+    kind: "browser",
+    op: "type",
+    ...browserTarget(args),
+    text: str(args.text),
+    ...(args.submit === true ? { submit: true } : {})
+  }),
+  browser_key: (args) => ({ kind: "browser", op: "key", key: str(args.key).trim(), ...marked(args) }),
+  browser_scroll: (args) => ({ kind: "browser", op: "scroll", direction: args.direction === "up" ? "up" : "down" }),
+  browser_back: () => ({ kind: "browser", op: "back" }),
+  browser_show: () => ({ kind: "browser", op: "show" }),
+  browser_download: (args) => ({ kind: "browser", op: "download", url: str(args.url).trim() }),
   computer_menu: (args) => ({
     kind: "computer",
     op: "menu",
@@ -81,6 +97,15 @@ const ACTIONS: Readonly<Record<string, (args: Args) => Action>> = {
     menu: Array.isArray(args.menu) ? args.menu.filter((item): item is string => typeof item === "string") : []
   })
 };
+
+/** 浏览器里按编号找控件的几步共用的。 */
+function browserTarget(args: Args) {
+  return {
+    ...(typeof args.ref === "number" ? { ref: args.ref } : {}),
+    ...(str(args.label) ? { label: str(args.label) } : {}),
+    ...marked(args)
+  };
+}
 
 /** 模型调的这个工具要在哪台电脑上做什么。不是电脑上的动作就返回 null。 */
 export function actionForCall(
