@@ -24,6 +24,13 @@ export const FIRST_BYTE_MS = 10_000;
 /** 取消发出去以后，最多等电脑这么久说一声做没做。 */
 export const CANCEL_CONFIRM_MS = 3_000;
 export const FOREGROUND_DEFAULT_MS = 30_000;
+/**
+ * 浏览器的一步要等页面加载或下载，桥做完才回一帧，没有「开始了」的帧。云端按这一步最长要多久等，
+ * 不用 FIRST_BYTE_MS：慢网页超过 10 秒会被当成电脑没回应，其实页面已经开了。桥那边比这个短一截。
+ */
+export function browserReplyMs(op: string): number {
+  return op === "download" ? 150_000 : 45_000;
+}
 export const FOREGROUND_MAX_MS = 120_000;
 
 /** 交回给模型的输出，只留末尾这么多字符，完整的在终端文件里。 */

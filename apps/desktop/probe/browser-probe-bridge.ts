@@ -51,6 +51,11 @@ async function main(): Promise<void> {
   await shot();
   await step("没批准点表单的提交按钮，应被拦", { op: "click", ref: ref(page, /\[(\d+)\] button "查"/) });
   await step("没批准按回车，应被拦", { op: "key", key: "Enter" });
+  page = await step("在查询框里输入", { op: "type", ref: ref(page, /\[(\d+)\] textbox "查询"/), text: "猫" });
+  await step("Tab 到提交按钮", { op: "key", key: "Tab" });
+  await step("没批准在提交按钮上按空格，应被拦", { op: "key", key: "Space" });
+  await step("批准过的下载（先 302 重定向）", { op: "download", url: `${origin}/file`, approved: true });
+  await step("批准过也不开 file:", { op: "open", url: "file:///etc/hosts", approved: true });
   await step("没批准打开 127.0.0.1，应被拦", { op: "open", url: `${origin}/` });
   await step("没批准下载，应被拦", { op: "download", url: `${origin}/two` });
   await step("点链接「下一页」", { op: "click", ref: ref(page, /\[(\d+)\] link "下一页"/) });

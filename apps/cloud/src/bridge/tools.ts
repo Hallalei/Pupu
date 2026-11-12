@@ -331,7 +331,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
   const browserTools = [
     computerTool(
       "browser_open",
-      "在这台电脑的 Pupu 浏览器里打开网址，回一份带编号的页面快照。Pupu 浏览器是电脑 App 里单独的窗口，不碰用户自己的浏览器和标签页，平时在后台。一个任务一直用它，不用每个网址开新的。要搜索就直接打开带查询词的搜索网址。打开本机或内网地址、file: 地址要先批准。",
+      "在这台电脑的 Pupu 浏览器里打开网址，回一份带编号的页面快照。Pupu 浏览器是电脑 App 里单独的窗口，不碰用户自己的浏览器和标签页，平时在后台。一个任务一直用它，不用每个网址开新的。要搜索就直接打开带查询词的搜索网址。打开本机或内网地址要先批准；不开 file: 地址，看本地文件用 read_file。",
       { url: Type.String({ description: "完整网址，带 https://" }) }
     ),
     computerTool(

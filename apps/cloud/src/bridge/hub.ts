@@ -5,6 +5,7 @@ import {
   BRIDGE_PONG,
   CANCEL_CONFIRM_MS,
   FIRST_BYTE_MS,
+  browserReplyMs,
   FOREGROUND_DEFAULT_MS,
   OUTDATED_CODE,
   REJECT_CODE,
@@ -408,7 +409,7 @@ export class ComputerBridge {
       log.truncated ||= next.truncated;
       input.onOutput?.(frame.text);
     };
-    let deadline = this.#now() + FIRST_BYTE_MS;
+    let deadline = this.#now() + (input.action.kind === "browser" ? browserReplyMs(input.action.op) : FIRST_BYTE_MS);
     while (true) {
       const frame = await this.#next(waiter, input.signal, deadline - this.#now());
       if (frame === "abort") return this.#cancel(waiter, input.requestId, take);

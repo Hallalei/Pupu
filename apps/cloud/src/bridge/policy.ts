@@ -741,7 +741,7 @@ export function classifyAction(action: Action, home?: string): Risk {
 
 /**
  * 浏览器里的一步。看公开网页是低风险；下面这些算高风险，要单独批：
- * 打开本机或内网地址、file: 这类非网页地址，下载，输完直接提交、按回车，模型自己标了 sensitive 的。
+ * 打开本机或内网地址、file: 这类非网页地址（Pupu 浏览器批了也不开，这里算高风险是多一道保险），下载，输完直接提交、按回车，模型自己标了 sensitive 的。
  * 点到表单的提交按钮，云端看不出来，桥上的 Pupu 浏览器会拦下来，要模型带上 sensitive 再来。
  */
 export function classifyBrowser(action: Extract<Action, { kind: "browser" }>): Risk {
@@ -795,8 +795,16 @@ export function isPrivateHost(hostname: string): boolean {
   if (host.includes(":")) {
     if (host === "::" || host === "::1") return true;
     if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
-    const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    return mapped ? isPrivateHost(mapped[1]!) : false;
+    // 内嵌 IPv4 的写法（::ffff:127.0.0.1，以及兼容地址 ::127.0.0.1）。URL 会把它规范成十六进制，比如 ::ffff:7f00:1。
+    const dotted = host.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
+    if (dotted) return isPrivateHost(dotted[1]!);
+    const hex = host.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const high = parseInt(hex[1]!, 16);
+      const low = parseInt(hex[2]!, 16);
+      return isPrivateHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+    }
+    return false;
   }
   return false;
 }

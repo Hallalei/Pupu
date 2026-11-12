@@ -6,7 +6,7 @@
  * 命令行桥（node bridge/main.ts）没有主进程，用不了浏览器。
  */
 
-import type { BrowserAction } from "../src/bridge/protocol.ts";
+import { browserReplyMs, type BrowserAction } from "../src/bridge/protocol.ts";
 
 /** 主进程要做的一步：动作本身，加上云端批过没有。批过的才放行内网地址、file:、下载、提交表单。 */
 export type BrowserOp = Omit<BrowserAction, "kind"> & { readonly approved?: boolean };
@@ -20,8 +20,10 @@ export type BrowserRequest = { readonly type: "browser"; readonly id: string; re
 /** 主进程 → 桥。 */
 export type BrowserReply = { readonly type: "browser-result"; readonly id: string; readonly result: BrowserResult };
 
-/** 一步最多等这么久。打开慢网页时主进程自己会先停在 20 秒。 */
-export const BROWSER_TIMEOUT_MS = 30_000;
+/** 一步最多等这么久：比云端的 browserReplyMs 短一截，好让超时的话回得到云端。主进程打开网页停在 20 秒，下载停在 120 秒。 */
+export function browserTimeoutMs(op: string): number {
+  return browserReplyMs(op) - 10_000;
+}
 
 let send: ((request: BrowserRequest) => void) | null = null;
 const waiting = new Map<string, { resolve: (result: BrowserResult) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -37,7 +39,7 @@ export function browserAvailable(): boolean {
 }
 
 /** 让主进程做一步，等它回话。超时、没接主进程都回一个失败结果，不抛错。 */
-export function browse(op: BrowserOp, timeoutMs = BROWSER_TIMEOUT_MS): Promise<BrowserResult> {
+export function browse(op: BrowserOp, timeoutMs = browserTimeoutMs(op.op)): Promise<BrowserResult> {
   const post = send;
   if (!post) return Promise.resolve({ ok: false, error: "这台电脑的 Pupu 没有浏览器：只有电脑 App 里的桥能用。" });
   next += 1;

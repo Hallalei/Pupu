@@ -580,4 +580,47 @@ describe("电脑那边晚些才有的消息", () => {
     );
     assert.equal(called, false);
   });
+
+test("旧桥没报 browser 能力：浏览器动作不发下去，直接说要更新", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hello(socket);
+  assert.equal(env.hub.list()[0]?.browser, undefined);
+  const result = await env.hub.exec({ requestId: "b-old", action: { kind: "browser", op: "look" } });
+  assert.equal(result.ok, false);
+  assert.match(result.text, /0\.2\.4/);
+  assert.equal(sentTypes(socket).includes("exec"), false);
+});
+
+test("报了 browser 能力：浏览器动作发下去，慢页面超过 10 秒也照样等结果", async () => {
+  const env = await harness();
+  const socket = await env.connect();
+  await env.hub.onMessage(
+    socket,
+    JSON.stringify({
+      type: "hello",
+      protocol: 1,
+      computerId: env.row.id,
+      name: "书房",
+      localRoot: "/Users/me",
+      terminalsFolder: "/Users/me/.pupu/terminals",
+      capabilities: ["browser"]
+    })
+  );
+  assert.equal(env.hub.list()[0]?.browser, true);
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const pending = env.hub.exec({ requestId: "b-slow", action: { kind: "browser", op: "open", url: "https://example.com/" } });
+    await Promise.resolve();
+    mock.timers.tick(FIRST_BYTE_MS + 5_000);
+    await Promise.resolve();
+    assert.equal(sentTypes(socket).includes("cancel"), false);
+    await env.hub.onMessage(socket, JSON.stringify({ type: "data", requestId: "b-slow", bytes: 4, text: "页面" }));
+    const result = await pending;
+    assert.equal(result.ok, true);
+    assert.equal(result.text, "页面");
+  } finally {
+    mock.timers.reset();
+  }
+});
 });

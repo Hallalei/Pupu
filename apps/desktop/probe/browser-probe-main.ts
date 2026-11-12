@@ -42,6 +42,16 @@ async function main(): Promise<void> {
       agent = request.headers["user-agent"];
       log(`[测试页] 浏览器的 User-Agent：${agent}`);
     }
+    if (request.url === "/file") {
+      response.writeHead(302, { location: "/file.txt" });
+      response.end();
+      return;
+    }
+    if (request.url === "/file.txt") {
+      response.writeHead(200, { "content-type": "text/plain; charset=utf-8", "content-disposition": 'attachment; filename="pupu-probe.txt"' });
+      response.end("探针下载的文件\n");
+      return;
+    }
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(request.url === "/two" ? "<title>第二页</title><h1>第二页</h1><p>到了。</p>" : PAGE);
   });
@@ -49,7 +59,7 @@ async function main(): Promise<void> {
   const address = server.address();
   const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
 
-  const host = new BrowserHost({ log: (line) => log(`[主进程] ${line}`), background: true });
+  const host = new BrowserHost({ log: (line) => log(`[主进程] ${line}`), background: true, downloads: path.join(out, "downloads") });
   const child = utilityProcess.fork(path.join(__dirname, "bridge.mjs"), [origin], { serviceName: "Pupu Probe Bridge", stdio: "pipe" });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
   child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
