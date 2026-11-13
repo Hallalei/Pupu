@@ -46,7 +46,7 @@ export type World = {
   at(t: number, sink: Sink, aspect: number): { cam: Cam; env: Env };
 };
 
-export type Job = { width: number; height: number; samples: number; fps: number; times: number[]; shutter: number };
+export type Job = { world: string; width: number; height: number; samples: number; fps: number; times: number[]; shutter: number };
 
 const SHADOW_SIZE = 2048;
 const BLOOM_LEVELS = 7;

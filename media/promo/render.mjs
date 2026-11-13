@@ -21,7 +21,6 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../..");
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const BEATS = JSON.parse(fs.readFileSync(path.join(HERE, "film/beats.json"), "utf8"));
 
 function options(argv) {
   const out = { mode: argv[0] };
@@ -30,6 +29,8 @@ function options(argv) {
 }
 
 const args = options(process.argv.slice(2));
+const WORLD = args.world ?? "day";
+const BEATS = JSON.parse(fs.readFileSync(path.join(HERE, WORLD, "beats.json"), "utf8"));
 const [width, height] = (args.size ?? "1920x1080").split("x").map(Number);
 const fps = Number(args.fps ?? BEATS.fps);
 const samples = Number(args.samples ?? 8);
@@ -117,7 +118,7 @@ const server = http.createServer((request, response) => {
   const { method, url } = request;
   if (method === "GET" && url === "/job") {
     response.setHeader("content-type", "application/json");
-    return response.end(JSON.stringify({ width, height, samples, fps, times, shutter: Number(args.shutter ?? 0.5) }));
+    return response.end(JSON.stringify({ world: WORLD, width, height, samples, fps, times, shutter: Number(args.shutter ?? 0.5) }));
   }
   if (method === "GET") return serveFile(url, response);
   if (url.startsWith("/frame/")) {

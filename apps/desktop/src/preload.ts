@@ -6,7 +6,7 @@
  * 接口就整个没挂上）。build.mjs 把它打成单个文件，下面只有类型引用。
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { ChromeImport, ChromeProfile, DesktopComputer, PupuDesktop } from "../../cloud/src/client/desktop.ts";
+import type { ChromeImport, ChromeProfile, DesktopComputer, LocalModelResult, LocalModelView, PupuDesktop } from "../../cloud/src/client/desktop.ts";
 
 const ORIGIN_ARG = "--pupu-origin=";
 const origin = process.argv.find((arg) => arg.startsWith(ORIGIN_ARG))?.slice(ORIGIN_ARG.length);
@@ -42,7 +42,9 @@ if (origin && window.location.origin === origin) {
       ipcRenderer.invoke("pupu:browser-attach", { x: rect.x, y: rect.y, width: rect.width, height: rect.height }) as Promise<boolean>,
     detachBrowser: (handback) => ipcRenderer.invoke("pupu:browser-detach", handback === true) as Promise<void>,
     chromeProfiles: () => ipcRenderer.invoke("pupu:chrome-profiles") as Promise<ChromeProfile[]>,
-    importChrome: (profile) => ipcRenderer.invoke("pupu:import-chrome", profile) as Promise<ChromeImport>
+    importChrome: (profile) => ipcRenderer.invoke("pupu:import-chrome", profile) as Promise<ChromeImport>,
+    localModel: () => ipcRenderer.invoke("pupu:local-model") as Promise<LocalModelView | null>,
+    setLocalModel: (input) => ipcRenderer.invoke("pupu:set-local-model", input) as Promise<LocalModelResult>
   };
   contextBridge.exposeInMainWorld("pupuDesktop", api);
 }

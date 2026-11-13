@@ -1,0 +1,16 @@
+{
+ "fps":30,"duration":60,
+ "open":{"ask":0.7,"eyes":2.0,"say":2.35,"lamp":3.1},
+ "walk":{"start":3.7,"door":6.0},
+ "meet":{"ask":6.9,"turn":8.0,"hop":8.7,"land":9.25,"say":9.6,"nod":11.6,"leave":12.4},
+ "drop":{"start":13.45,"land":14.9},
+ "dup":{"ask":15.1,"say":16.0,"look":17.2,"wave":17.8,"leave":18.8},
+ "cup":{"in":19.7,"say":20.3,"tap1":21.4,"tap2":22.5,"tap3":23.6,"slide":24.3,"ok":25.1,"back":25.9},
+ "hand":{"ask":26.6,"say":27.7,"leave":28.4},
+ "dusk":{"start":29.1,"dark":35.1},
+ "night":{"ask":36.7,"say":38.2,
+ "end":40.5},
+ "dawn":{"sun":42.1,"enter":42.4,"ask":43.3,"say":44.7,"wave":45.7},
+ "pull":{"start":46.0,"face":49.3,"blink":50.7,"dots":51.9,"word":53.3},
+ "end":{"brain":55.6,"line":57.0,"logo":58.0}
+}

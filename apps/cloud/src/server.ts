@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
@@ -51,6 +52,11 @@ import {
 import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
 import { createComputerTools } from "./bridge/tools";
+import { ModelRelay } from "./bridge/model-relay";
+import { probeModel } from "./model/probe";
+import { ROUTER_MODEL, routerProvider } from "./model/router";
+import { modelView, parseChoice, type ModelView } from "./model/settings";
+import { ModelStore } from "./model/store";
 import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
 import {
   CONNECTOR_SERVICES,
@@ -153,10 +159,12 @@ import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type Pr
 import { createPupuTools } from "./tools";
 
 /**
- * DeepSeek 官方接口的 V4.1 Flash：支持工具调用，也能看截图。费用从 DeepSeek 开放平台的充值余额里扣，
+ * 我们自带的模型：DeepSeek 官方接口的 V4.1 Flash，支持工具调用，也能看截图。费用从 DeepSeek 开放平台的充值余额里扣，
  * key 用 `wrangler secret put DEEPSEEK_API_KEY` 设置。之前用的 Workers AI gpt-oss-120b 只认文字。
  */
-const MODEL = { provider: "deepseek", id: "deepseek-flash" } as const;
+const PUPU_MODEL_ID = "deepseek-flash";
+/** 会话里记的是路由模型，每次调用按设置换成上面这个或者主人自己的（model/router.ts）。 */
+const MODEL = ROUTER_MODEL;
 /** 模型出错时自动重试几次。报告要知道重试完了还没回上，才算出错。 */
 const MAX_RETRIES = 5;
 
@@ -198,6 +206,8 @@ export type PupuState = {
   readonly avatarPresets: readonly { readonly id: string; readonly name: string; readonly url: string }[];
   /** Pupu 自己的头像，相对地址。null 是没换过，用各端自带的。 */
   readonly pupuAvatar: string | null;
+  /** 用哪个模型，没有 key。`mayEdit`：这个人能不能改（只有创建者）。 */
+  readonly model: { readonly current: ModelView; readonly mayEdit: boolean };
   /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
   readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
 };
@@ -233,6 +243,8 @@ export class Pupu extends DurableObject<Env> {
   readonly followUps = new FollowUpStore(this.ctx.storage.sql);
   readonly connectors = new ConnectorStore(this.ctx.storage.sql);
   readonly usage = new UsageStore(this.ctx.storage.sql);
+  /** 用哪个模型。 */
+  readonly modelChoice = new ModelStore(this.ctx.storage.sql);
   /** 连接器工具和审批要用的状态。 */
   readonly #connectorDeps: ConnectorDeps = {
     client: () => this.#connectorClient(),
@@ -249,6 +261,8 @@ export class Pupu extends DurableObject<Env> {
       return at ? at.getTime() : null;
     }
   });
+  /** 经电脑转发的模型请求。 */
+  readonly relay = new ModelRelay({ send: (computerId, message) => this.bridge.sendModel(computerId, message) });
   readonly approvals = new ApprovalStore(this.ctx.storage.sql);
   readonly signIns = new SignInStore(this.ctx.storage.sql);
   readonly push = new PushStore(this.ctx.storage.sql);
@@ -389,14 +403,28 @@ export class Pupu extends DurableObject<Env> {
           })
         ]
       });
-      // Workers 里没有本机环境变量，key 只从 secret 里拿。
+      // Workers 里没有本机环境变量，key 只从 secret 里拿。路由 provider 自己按路线换 key。
       const models = createModels({
-        authContext: {
-          env: async (name) => (name === "DEEPSEEK_API_KEY" ? this.env.DEEPSEEK_API_KEY : undefined),
-          fileExists: async () => false
-        }
+        authContext: { env: async () => undefined, fileExists: async () => false }
       });
-      models.setProvider(withDailyLimit(deepseekProvider(), () => this.#refusal()));
+      const deepseek = deepseekProvider();
+      const pupuModel = deepseek.getModels().find((model) => model.id === PUPU_MODEL_ID);
+      if (!pupuModel) throw new Error(`pi-ai 里没有 ${PUPU_MODEL_ID}`);
+      models.setProvider(
+        routerProvider({
+          choice: () => this.modelChoice.get(),
+          // 只有用我们的模型（包括电脑离线时顶上）才过每日额度。
+          pupu: {
+            provider: withDailyLimit(deepseek, () => this.#refusal()),
+            model: pupuModel,
+            apiKey: () => this.env.DEEPSEEK_API_KEY
+          },
+          openai: openAICompletionsApi(),
+          computerModel: (computerId) => this.bridge.modelOf(computerId),
+          computerName: (computerId) => this.#computerName(computerId),
+          relayFetch: (computerId) => this.relay.fetch(computerId)
+        })
+      );
       return Harness.open(
         storage,
         {
@@ -503,6 +531,8 @@ export class Pupu extends DurableObject<Env> {
         log: (message) => console.warn(message)
       }).catch((error: unknown) => console.warn(`接手提醒没推出去：${String(error)}`));
     };
+    this.bridge.onModel = (computerId, message) => this.relay.receive(computerId, message);
+    this.bridge.onModelGone = (computerId) => this.relay.gone(computerId);
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
       this.sockets.broadcast({ type: "computers_changed" });
@@ -897,6 +927,7 @@ export class Pupu extends DurableObject<Env> {
       chats: this.threads.chats(own),
       avatarPresets: AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
       pupuAvatar: pupuAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null),
+      model: { current: modelView(this.modelChoice.get()), mayEdit: mayChangeModel(this.#actor(current)) },
       passkeys:
         viewer === null
           ? null
@@ -1293,6 +1324,28 @@ export class Pupu extends DurableObject<Env> {
     if (!this.computers.list().some((row) => row.id === computerId)) return false;
     this.gate.takeback(computerId);
     return true;
+  }
+
+  /**
+   * 换模型。只有创建者能改：用谁的模型、内容发到哪，是整个 Pupu 的事。
+   * 自带 key 先试一次能不能调工具，不过不存；经电脑转发的在那台电脑上存的时候已经试过。
+   */
+  async setModel(input: unknown, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
+    await this.lifecycle.start();
+    if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
+    const parsed = parseChoice(input, this.modelChoice.get());
+    if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
+    const choice = parsed.choice;
+    if (choice.source === "computer" && !this.computers.list().some((row) => row.id === choice.computerId)) {
+      return { ok: false, status: 400, error: "没有这台电脑。" };
+    }
+    if (choice.source === "key") {
+      const probe = await probeModel({ baseUrl: choice.baseUrl, apiKey: choice.apiKey, model: choice.model });
+      if (!probe.ok) return { ok: false, status: 400, error: probe.error };
+    }
+    this.modelChoice.set(choice);
+    this.sockets.broadcast({ type: "computers_changed" });
+    return { ok: true };
   }
 
   /** 改分级：主人在哪个端都能改，不用再确认；别人只能往严里改。见 `mayChangePolicy`。 */
@@ -1986,6 +2039,10 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     }
     return Response.json({ ok: true });
   }
+  if (pathname === "/api/model" && method === "POST") {
+    const result = await caller.pupu.setModel(await readJson<unknown>(request), caller.device);
+    return result.ok ? Response.json({ ok: true }) : Response.json({ error: result.error }, { status: result.status });
+  }
   const approval = pathname.match(/^\/api\/approvals\/([^/]+)$/);
   if (approval && method === "POST") {
     const body = await readJson<{ decision?: string; proof?: unknown }>(request);
@@ -2275,3 +2332,8 @@ export default {
     }
   }
 } satisfies ExportedHandler<Env>;
+
+/** 换模型只认创建者。本机开发不带凭据时（`actor` 是 null）当创建者。 */
+function mayChangeModel(actor: Actor | null | undefined): boolean {
+  return actor === null || actor?.role === "creator";
+}

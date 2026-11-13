@@ -125,6 +125,8 @@ export const api = {
     request<{ ok: true }>("/api/pupu/avatar", { method: "POST", body: JSON.stringify({ preset }) }),
   uploadPupuAvatar: (image: Blob) =>
     request<{ ok: true }>("/api/pupu/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
+  /** 换模型。自带 key 会先试一次，不过就报错。 */
+  setModel: (choice: unknown) => request<{ ok: true }>("/api/model", { method: "POST", body: JSON.stringify(choice) }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>
@@ -150,6 +152,7 @@ export function usePupuState() {
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
   const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
   const [pupuAvatar, setPupuAvatar] = useState<string | null>(null);
+  const [model, setModel] = useState<PupuState["model"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -175,6 +178,7 @@ export function usePupuState() {
         setChats(state.chats ?? NO_CHATS);
         setPasskeys(state.passkeys ?? null);
         setPupuAvatar(state.pupuAvatar ?? null);
+        setModel(state.model ?? null);
         setLoaded(true);
       }
       if (use.activity) setActivity(state.activity);
@@ -231,6 +235,7 @@ export function usePupuState() {
     chats,
     passkeys,
     pupuAvatar,
+    model,
     error,
     unauthorized,
     loaded,

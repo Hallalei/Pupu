@@ -1,12 +1,12 @@
 /** 页面入口：要任务，一帧一帧算，把像素交回去。 */
 import { createStage, type Job } from "./stage.ts";
-import { buildWorld } from "./world.ts";
 
 const say = (url: string, body: string) => fetch(url, { method: "POST", body });
 
 async function run() {
   const job: Job = await (await fetch("/job")).json();
   const started = performance.now();
+  const { buildWorld } = await import(job.world === "day" ? "../day/world.ts" : "./world.ts");
   const world = await buildWorld();
   const stage = createStage(document.getElementById("film") as HTMLCanvasElement, job, world);
   await say("/log", `${stage.renderer}，世界建好了，用了 ${((performance.now() - started) / 1000).toFixed(1)} 秒`);

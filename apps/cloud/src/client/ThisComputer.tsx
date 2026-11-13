@@ -1,6 +1,7 @@
 import { Button, Label, Switch } from "@heroui/react";
 import { useState } from "react";
 import { desktop, type ChromeProfile, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
+import { LocalModelForm } from "./ModelSettings";
 
 const SWITCHES: readonly (readonly [DesktopSwitch, string, string])[] = [
   ["allowCommands", "允许跑命令和写文件", "关掉后，批准了也不做。"],
@@ -134,6 +135,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
         )}
       </section>
       {app.importChrome && app.chromeProfiles && computer.paired && <ChromeImportRow group={group} />}
+      {computer.paired && <LocalModelForm />}
       {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
     </>
   );

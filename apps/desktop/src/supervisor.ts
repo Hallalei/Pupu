@@ -3,6 +3,7 @@ import type { BrowserReply, BrowserRequest } from "../../cloud/bridge/browser.ts
 import type { BrowserFrame } from "../../cloud/src/bridge/protocol.ts";
 import type { BridgeConfig } from "../../cloud/bridge/config.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
+import type { LocalModel } from "../../cloud/bridge/model.ts";
 import { bridgeEnv } from "./env.ts";
 import type { CaptureCommand, CaptureEvent } from "../../cloud/bridge/remote.ts";
 import type { FromBridge, ToBridge } from "./messages.ts";
@@ -47,11 +48,17 @@ export class BridgeSupervisor {
   }
 
   /** 给桥一份凭据。还没起就拉起来，已经在跑就换上新的。 */
-  start(config: BridgeConfig, blocked: readonly string[], helpers: string | null): void {
+  start(config: BridgeConfig, blocked: readonly string[], helpers: string | null, model: LocalModel | null): void {
     this.#stopping = false;
-    this.#config = { type: "config", config, blocked, helpers };
+    this.#config = { type: "config", config, blocked, helpers, model };
     if (this.#child) this.#send(this.#config);
     else if (!this.#timer) this.#spawn();
+  }
+
+  /** 换本机的模型。桥重启时随凭据一起再发。 */
+  model(model: LocalModel | null): void {
+    if (this.#config) this.#config = { ...this.#config, model };
+    this.#send({ type: "model", model });
   }
 
   action(action: MenubarAction): void {

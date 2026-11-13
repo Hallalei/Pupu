@@ -102,6 +102,7 @@ export function App() {
     chats,
     passkeys,
     pupuAvatar,
+    model,
     loaded,
     error,
     unauthorized,
@@ -356,6 +357,8 @@ export function App() {
           await refresh();
         }}
         computers={computers}
+        model={model}
+        onModelSaved={refresh}
         onRevoke={async (id) => {
           await api.revokeComputer(id);
           await refresh();

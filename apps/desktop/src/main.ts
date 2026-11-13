@@ -28,7 +28,10 @@ import { CaptureHost } from "./capture.ts";
 import { configPath, readConfig } from "../../cloud/bridge/config.ts";
 import { readLocal, writeLocal, type LocalSwitches } from "../../cloud/bridge/local.ts";
 import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts";
-import type { DesktopComputer, DesktopSwitch, PrivacyPane } from "../../cloud/src/client/desktop.ts";
+import type { DesktopComputer, DesktopSwitch, LocalModelView, PrivacyPane } from "../../cloud/src/client/desktop.ts";
+import { modelPath, parseLocalModel, type LocalModel } from "../../cloud/bridge/model.ts";
+import { probeModel } from "../../cloud/src/model/probe.ts";
+import { localModelPath, readLocalModel, writeLocalModel } from "./local-model.ts";
 import { credentialsPath, readPairing, writePairing, type Credential, type Pairing } from "./credentials.ts";
 import { debugSwitches, devVariables } from "./env.ts";
 import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
@@ -76,6 +79,8 @@ app.setAppLogsPath(path.join(os.homedir(), "Library", "Logs", dataName));
 let pairing: Pairing = { desktop: null, computer: null };
 let bridgeState: MenubarState | null = null;
 let switches: LocalSwitches = { allowCommands: true, allowScreen: true };
+/** 这台电脑上设的模型，解密后的，只在主进程和桥里。 */
+let localModel: LocalModel | null = null;
 let mainWindow: BrowserWindow | null = null;
 let pairWindow: BrowserWindow | null = null;
 let tray: PupuTray | null = null;
@@ -277,10 +282,38 @@ function startBridge(): void {
   if (!computer) return;
   supervisor.start(
     { url: origin, computerId: computer.id, token: computer.token, name: computer.name },
-    // App 的凭据文件，还有命令行桥的 bridge.json，文件工具都不让碰。
-    [credentialsPath(), configPath()],
-    helpers
+    // App 的凭据和模型文件，还有命令行桥的 bridge.json、model.json，文件工具都不让碰。
+    [credentialsPath(), configPath(), localModelPath(), modelPath()],
+    helpers,
+    localModel
   );
+}
+
+/** 这台电脑上设的模型。key 不给页面，只说有没有。 */
+function localModelView(): LocalModelView | null {
+  if (!localModel) return null;
+  const { apiKey, ...rest } = localModel;
+  return { ...rest, hasKey: apiKey.length > 0 };
+}
+
+/** 存这台电脑上的模型：先试能不能调工具，过了才存，交给桥，桥告诉云端。key 留空是沿用旧的。 */
+async function setLocalModel(input: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (input === null) {
+    await writeLocalModel(null);
+    localModel = null;
+    supervisor.model(null);
+    return { ok: true };
+  }
+  const parsed = parseLocalModel(input);
+  if (typeof parsed === "string") return { ok: false, error: parsed };
+  const kept = !parsed.apiKey && localModel?.baseUrl === parsed.baseUrl ? localModel.apiKey : parsed.apiKey;
+  const next: LocalModel = { ...parsed, apiKey: kept };
+  const probe = await probeModel(next);
+  if (!probe.ok) return { ok: false, error: probe.error };
+  await writeLocalModel(next);
+  localModel = next;
+  supervisor.model(next);
+  return { ok: true };
 }
 
 /** 托盘和窗口上点的收回、停命令、本机开关。桥没在跑时，开关直接写本机文件。 */
@@ -790,6 +823,14 @@ function registerIpc(): void {
     if (typeof profile !== "string") throw new Error("要给用户资料目录名。");
     return importChrome(profile);
   });
+  ipcMain.handle("pupu:local-model", (event) => {
+    fromMain(event);
+    return localModelView();
+  });
+  ipcMain.handle("pupu:set-local-model", async (event, input: unknown) => {
+    fromMain(event);
+    return setLocalModel(input);
+  });
   ipcMain.handle("pupu:repair", async (event) => {
     fromMain(event);
     await checkDesktop();
@@ -850,6 +891,7 @@ async function boot(): Promise<void> {
     fake: !app.isPackaged && process.env.PUPU_FAKE_SCREEN === "1"
   });
   switches = await readLocal();
+  localModel = await readLocalModel();
   pairing = await loadPairing();
   startBridge();
   render();

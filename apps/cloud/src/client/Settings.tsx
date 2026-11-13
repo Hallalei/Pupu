@@ -37,9 +37,11 @@ import {
   MailIcon,
   PeopleIcon,
   PhoneIcon,
+  SparkleIcon,
   TicketIcon
 } from "./icons";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
+import { ModelSection, modelSummary } from "./ModelSettings";
 import { ThisComputer } from "./ThisComputer";
 
 /** 什么时候先问你。和 iOS 的 Computer.Policy 一样的三档、一样的字。 */
@@ -55,6 +57,7 @@ type PairingCode = { readonly code: string; readonly expiresAt: number };
 export type SettingsPage =
   | "root"
   | "accounts"
+  | "model"
   | "this"
   | "computers"
   | "members"
@@ -69,6 +72,7 @@ export type SettingsPage =
 const TITLES: Record<Exclude<SettingsPage, object>, string> = {
   root: "设置",
   accounts: "账户",
+  model: "模型",
   this: "这台电脑",
   computers: "电脑",
   members: "成员",
@@ -110,6 +114,8 @@ export function Settings({
   connectors,
   onRemoveConnector,
   computers,
+  model,
+  onModelSaved,
   onRevoke,
   onSetPolicy,
   devices,
@@ -130,6 +136,9 @@ export function Settings({
   connectors: Connectors;
   onRemoveConnector: (id: string) => Promise<void>;
   computers: readonly ComputerView[];
+  /** 用哪个模型。老的云端没有这一项。 */
+  model: PupuState["model"] | null;
+  onModelSaved: () => Promise<void>;
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
   devices: readonly DeviceView[];
@@ -213,6 +222,14 @@ export function Settings({
             }
             onPress={() => onPage("accounts")}
           />
+          {model && (
+            <LinkRow
+              icon={<SparkleIcon />}
+              title="模型"
+              summary={modelSummary(model.current, computers)}
+              onPress={() => onPage("model")}
+            />
+          )}
           {thisComputer && (
             <LinkRow
               icon={<LaptopIcon />}
@@ -260,6 +277,8 @@ export function Settings({
     );
   } else if (shown === "accounts") {
     body = <Accounts connectors={connectors} members={members} actor={actor} onRemove={onRemoveConnector} />;
+  } else if (shown === "model") {
+    body = model ? <ModelSection model={model} computers={computers} onSaved={onModelSaved} /> : <Note>这个 Pupu 还不能换模型。</Note>;
   } else if (shown === "this") {
     body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
   } else if (shown === "computers") {

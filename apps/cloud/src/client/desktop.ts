@@ -22,6 +22,26 @@ export type DesktopComputer = {
 };
 
 export type DesktopSwitch = "allowCommands" | "allowScreen";
+
+/** 这台电脑上设的模型。key 不给页面，只说有没有。 */
+export type LocalModelView = {
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly vision: boolean;
+  readonly contextWindow: number;
+  readonly hasKey: boolean;
+};
+
+/** 要存的模型。`apiKey` 留空是沿用旧的。 */
+export type LocalModelInput = {
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly apiKey: string;
+  readonly vision: boolean;
+  readonly contextWindow: number;
+};
+
+export type LocalModelResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 export type PrivacyPane = "screen" | "accessibility";
 
 export type BrowserRect = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -56,6 +76,10 @@ export type PupuDesktop = {
    * 导进来的只存在这台电脑的 Pupu 浏览器里，不上传。0.2.4 以前的 App 没有。
    */
   importChrome?(profile: string): Promise<ChromeImport>;
+  /** 这台电脑上设的模型。0.2.6 以前的 App 没有这两项，页面要先看有没有。 */
+  localModel?(): Promise<LocalModelView | null>;
+  /** 存之前试一次能不能调工具，不过就不存。null 是清掉。 */
+  setLocalModel?(input: LocalModelInput | null): Promise<LocalModelResult>;
 };
 
 export type ChromeProfile = { readonly dir: string; readonly name: string };
