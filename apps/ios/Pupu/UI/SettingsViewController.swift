@@ -266,7 +266,7 @@ final class SettingsViewController: UICollectionViewController {
     private func renderComputers(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         let store = Store.shared
         snapshot.appendSections([.computers])
-        snapshot.appendItems(store.computers.isEmpty ? [.noComputer] : store.computers.map(Item.computer), toSection: .computers)
+        snapshot.appendItems(store.computers.isEmpty ? [.noComputer] : store.computers.map { .computer($0.settled) }, toSection: .computers)
         renderPair(&snapshot)
     }
 
@@ -281,7 +281,7 @@ final class SettingsViewController: UICollectionViewController {
         let me = Store.shared.members.first(where: \.current)
         if computer.ownerId == nil || computer.ownerId == me?.id {
             snapshot.appendSections([.remoteDesktop])
-            snapshot.appendItems([.remoteDesktop(computer)], toSection: .remoteDesktop)
+            snapshot.appendItems([.remoteDesktop(computer.settled)], toSection: .remoteDesktop)
         }
         snapshot.appendSections([.policy(computerId: id), .abilities])
         snapshot.appendItems(Computer.Policy.allCases.map {
@@ -292,7 +292,7 @@ final class SettingsViewController: UICollectionViewController {
         ], toSection: .abilities)
         if mayRevoke(owner: computer.ownerId) {
             snapshot.appendSections([.revokeComputer])
-            snapshot.appendItems([.revokeComputer(computer)], toSection: .revokeComputer)
+            snapshot.appendItems([.revokeComputer(computer.settled)], toSection: .revokeComputer)
         }
     }
 
@@ -1013,5 +1013,14 @@ private extension Push.Status {
         case .notAsked: "未打开"
         case .off: "已关闭"
         }
+    }
+}
+
+private extension Computer {
+    /// 放进列表格子的样子：在线时去掉每次心跳都变的 lastSeenAt（在线时也不显示它）。
+    /// 不去掉的话，每次心跳格子都被删了重建，正点着的那一下就丢了。
+    var settled: Computer {
+        guard online, lastSeenAt != nil else { return self }
+        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen)
     }
 }

@@ -569,7 +569,14 @@ nonisolated enum ChatRows {
             let task = computerTask(card.id, steps: card.steps, context: context, live: running && position == cards.count - 1)
             result[index] = ChatRow(id: card.id, kind: .computer(task), gap: result[index].gap)
             if task.expanded {
-                let steps = card.steps.map { ChatRow(id: "tool:\($0.callId)", kind: .tool($0), gap: 8) }
+                // 卡片上已经写了是哪台电脑，下面每一步不再重复。
+                let steps = card.steps.map { step in
+                    let short = ToolStep(
+                        callId: step.callId, computer: step.computer, icon: step.icon, title: stepText(step),
+                        status: step.status, output: step.output, outputPath: step.outputPath, expanded: step.expanded, image: step.image
+                    )
+                    return ChatRow(id: "tool:\(step.callId)", kind: .tool(short), gap: 8)
+                }
                 result.insert(contentsOf: steps, at: index + 1)
                 inserted += steps.count
             }
