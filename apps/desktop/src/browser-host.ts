@@ -86,7 +86,7 @@ const HOST_BOUNDS: Rectangle = { x: 0, y: 0, width: 1280, height: 860 };
  * 任何时候都不出现单独的浏览器窗口：平时挂在一个从不显示的宿主窗口里；人来接手时（登录、验证码）挪进 Pupu 主窗口，
  * 盖住对话区，人直接点、直接输；关掉放大视图就挪回宿主，任务接着做。宿主窗口关了就丢，下一步再建，登录态在 partition 里留着。
  * 挪视图、按网页里占位框的位置 setBounds 的做法参考了 Min 浏览器的 main/viewManager.js（Apache-2.0）和
- * electron-browser-shell 的 packages/shell/browser/tabs.js（GPL-3.0，只看思路），代码是自己写的。
+ * electron-browser-shell 的 packages/shell/browser/tabs.js（MIT），代码是自己写的。
  * 快照、点击的做法参考 browser-use 的 browser_use/ax.py（MIT），自己写的，没搬代码。
  */
 export class BrowserHost {
