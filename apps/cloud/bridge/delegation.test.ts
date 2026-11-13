@@ -132,13 +132,45 @@ describe("派活", () => {
 });
 
 describe("回报", () => {
-  test("还有子会话在做，从聊天转来的事先不报；都回报了才报", async () => {
+  test("还有子会话在做，从聊天转来的事先不报；回投之后的那一轮才报", async () => {
+    const pupu = await space();
+    const main = pupu.threads.of("9");
+    await pupu.run("delegate", { title: "排版", task: "改" }, "9");
+    assert.equal(reportsWait(main, pupu.children, NOW), true);
+    // 子会话做完、回投：主会话处理回投的那一轮（提问时间晚于回投）才报。
+    pupu.children.markIdle("20", NOW + 5);
+    pupu.children.markReported("20", NOW + 6);
+    assert.equal(reportsWait(main, pupu.children, NOW + 7), false);
+    assert.equal(reportsWait(pupu.threads.of(MAIN_SESSION), pupu.children, NOW), false);
+  });
+
+  test("子会话比主会话先做完：主会话说「派出去了」的那一轮还不报", async () => {
+    const pupu = await space();
+    const main = pupu.threads.of("9");
+    // 主会话这一轮在 NOW 提问，派活；子会话很快做完，在主会话回完之前就回投了。
+    await pupu.run("delegate", { title: "排版", task: "改" }, "9");
+    pupu.children.markIdle("20", NOW + 1);
+    pupu.children.markReported("20", NOW + 2);
+    assert.equal(pupu.children.busy(pupu.site.id), false);
+    assert.equal(reportsWait(main, pupu.children, NOW), true);
+  });
+
+  test("排着队的 message_child 还没做，前一轮回完不算空着", async () => {
     const pupu = await space();
     await pupu.run("delegate", { title: "排版", task: "改" }, "9");
-    assert.equal(reportsWait(pupu.threads.of("9"), pupu.children), true);
+    pupu.children.markBusy("20", NOW + 10);
+    pupu.children.markIdle("20", NOW + 1);
+    assert.equal(pupu.children.busy(pupu.site.id), true);
+    pupu.children.markIdle("20", NOW + 10);
+    assert.equal(pupu.children.busy(pupu.site.id), false);
+  });
+
+  test("停下的子会话不管排队，直接空出来", async () => {
+    const pupu = await space();
+    await pupu.run("delegate", { title: "排版", task: "改" }, "9");
+    pupu.children.markBusy("20", NOW + 10);
     pupu.children.markIdle("20");
-    assert.equal(reportsWait(pupu.threads.of("9"), pupu.children), false);
-    assert.equal(reportsWait(pupu.threads.of(MAIN_SESSION), pupu.children), false);
+    assert.equal(pupu.children.busy(pupu.site.id), false);
   });
 
   test("回报带子会话的名字，太长的截断", () => {

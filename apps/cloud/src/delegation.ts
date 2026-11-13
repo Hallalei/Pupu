@@ -58,7 +58,8 @@ export class SpaceSessionStore {
         title TEXT NOT NULL,
         operation TEXT UNIQUE,
         created_at INTEGER NOT NULL,
-        busy_since INTEGER
+        busy_since INTEGER,
+        reported_at INTEGER
       )`);
       this.#ready = true;
     }
@@ -107,8 +108,29 @@ export class SpaceSessionStore {
     this.#db().exec("UPDATE pupu_space_sessions SET busy_since = ? WHERE session = ?", now, session);
   }
 
-  markIdle(session: string): void {
-    this.#db().exec("UPDATE pupu_space_sessions SET busy_since = NULL WHERE session = ?", session);
+  /**
+   * 子会话回完一轮。`upTo` 是这一轮的提问时间：之后又送去的话（排着队的 message_child）还没做，不算空着。
+   * 不给 `upTo` 就是不管排队，直接空出来（停下）。
+   */
+  markIdle(session: string, upTo = Number.MAX_SAFE_INTEGER): void {
+    this.#db().exec(
+      "UPDATE pupu_space_sessions SET busy_since = NULL WHERE session = ? AND busy_since <= ?",
+      session,
+      upTo
+    );
+  }
+
+  /** 记下回投给主会话的时间。 */
+  markReported(session: string, at: number): void {
+    this.#db().exec("UPDATE pupu_space_sessions SET reported_at = ? WHERE session = ?", at, session);
+  }
+
+  /** 这个空间最近一次有子会话回投的时间。 */
+  lastReported(projectId: string): number | null {
+    const [row] = this.#db()
+      .exec("SELECT MAX(reported_at) AS at FROM pupu_space_sessions WHERE project_id = ?", projectId)
+      .toArray();
+    return row?.at === null || row?.at === undefined ? null : Number(row.at);
   }
 }
 
@@ -125,9 +147,21 @@ export function mayCall(thread: Thread | undefined, tool: string): { block: stri
   return undefined;
 }
 
-/** 协调模式的主会话回完一轮时，从聊天转来的事要不要先别报：还有子会话在做，就等它们回报完。 */
-export function reportsWait(thread: Thread | undefined, children: Pick<SpaceSessionStore, "busy">): boolean {
-  return thread?.kind === "project" && children.busy(thread.project.id);
+/**
+ * 空间主会话回完一轮（`askedAt` 是这一轮的提问时间）时，从聊天转来的事要不要先别报：
+ * - 还有子会话在做；
+ * - 或者有子会话的回投晚于这一轮的提问：回投排在后面，主会话还没看到，这一轮说的多半只是「派出去了」。
+ * 子会话很快做完、回投先到的时候，只看第一条会漏，所以两条都要。
+ */
+export function reportsWait(
+  thread: Thread | undefined,
+  children: Pick<SpaceSessionStore, "busy" | "lastReported">,
+  askedAt: number
+): boolean {
+  if (thread?.kind !== "project") return false;
+  if (children.busy(thread.project.id)) return true;
+  const reported = children.lastReported(thread.project.id);
+  return reported !== null && reported > askedAt;
 }
 
 /** 子会话回投给主会话的那条消息。 */

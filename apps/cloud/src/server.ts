@@ -149,7 +149,7 @@ import { REVOKED_CLOSE_CODE, type ServerMessage } from "./protocol";
 import type { Project, SpaceMode } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
-import { asksUser, failureSummary, reportCards, ReportStore, type ReportCard } from "./reports";
+import { asksUser, failureSummary, reportCards, ReportStore, STOPPED_SUMMARY, type ReportCard } from "./reports";
 import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
 import { ApprovalPusher } from "./push/approvals";
 import { LivePusher, liveDue, type LiveInput } from "./push/live";
@@ -398,7 +398,7 @@ export class Pupu extends DurableObject<Env> {
               if (thread?.kind === "child") this.#reportToSpace(thread, reply);
               const progressed = this.store.recordReply(session, reply);
               // 协调模式的主会话派完活就会回一句「派出去了」，这时从聊天转来的事还没做完，等子会话都回报了再报。
-              const waiting = reportsWait(thread, this.children);
+              const waiting = reportsWait(thread, this.children, this.#askedAt.get(session) ?? Date.now());
               const reported =
                 !waiting &&
                 this.reports.settle(
@@ -471,6 +471,9 @@ export class Pupu extends DurableObject<Env> {
     (device) => this.#senderOf(device),
     (session, device) => mayOpen(this.threads.of(session), this.#viewer(device)),
     (session, at) => {
+      // 人在子会话里按了停：主会话那边也要知道，不然空间一直等它。
+      const thread = this.threads.of(session);
+      if (thread?.kind === "child") this.#reportToSpace(thread, STOPPED_SUMMARY, true);
       if (this.reports.stop(session, at, Date.now())) this.#changed();
     },
     [
@@ -611,6 +614,9 @@ export class Pupu extends DurableObject<Env> {
     const errors = this.reports.countError(session, upTo);
     if (isRetryableAssistantError(message) && errors <= MAX_RETRIES) return;
     const summary = failureSummary(message.errorMessage ?? "");
+    // 子会话出错也要报回主会话，不然空间一直等它。
+    const thread = this.threads.of(session);
+    if (thread?.kind === "child") this.#reportToSpace(thread, summary);
     if (this.reports.settle(session, upTo, "failed", summary, Date.now())) this.#changed();
   }
 
@@ -1754,9 +1760,11 @@ export class Pupu extends DurableObject<Env> {
    * 子会话回完一轮，把结果送回空间的主会话。人直接在子会话里说的也报。
    * 用这一轮的提问时间去重，重启后重放不会报两次。不在钩子里等提交：钩子可能在 pi 的事务里。
    */
-  #reportToSpace(thread: Extract<Thread, { kind: "child" }>, reply: string): void {
-    this.children.markIdle(thread.session);
+  #reportToSpace(thread: Extract<Thread, { kind: "child" }>, reply: string, stopped = false): void {
     const run = this.#askedAt.get(thread.session) ?? Date.now();
+    // 停下时 pi 把排着的也撤了，直接空出来。
+    this.children.markIdle(thread.session, stopped ? undefined : run);
+    this.children.markReported(thread.session, Date.now());
     this.ctx.waitUntil(
       this.harness
         .session(thread.project.session)
