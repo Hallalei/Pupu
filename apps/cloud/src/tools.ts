@@ -1,6 +1,7 @@
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import type { Project, ProjectStore } from "./projects.ts";
+import { mayRead } from "./access.ts";
 import type { Thread } from "./threads.ts";
 
 function text(value: string) {
@@ -38,8 +39,9 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
     description: "列出用户已有的项目：名称、目标和 id。",
     parameters: Type.Object({}),
     replay: "safe",
-    async execute() {
-      const projects = store.listProjects();
+    async execute(_args, api) {
+      const from = actions.threadOf(String(api.conversationId));
+      const projects = from ? store.listProjects().filter((project) => mayRead(from, project)) : [];
       const lines = projects.map(
         (project) => `- ${project.name}（id: ${project.id}）：${project.goal}`
       );
@@ -111,12 +113,16 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
     replay: "safe",
     async execute(args, api) {
       const origin = String(api.conversationId);
-      const refused = onlyInChat(actions.threadOf(origin));
-      if (refused) return refused;
-      const project = store.getProject(args.project_id);
+      const from = actions.threadOf(origin);
+      const refused = onlyInChat(from);
+      if (refused || !from) return refused!;
+      // 交过去的事和报回来的结果都会留在两边，两边的受众都得看得到对方。
+      const found = store.getProject(args.project_id);
+      const project = found && mayRead(from, found) ? found : undefined;
       if (!project) {
         const known = store
           .listProjects()
+          .filter((item) => mayRead(from, item))
           .map((item) => `${item.name}（id: ${item.id}）`)
           .join("、");
         return {

@@ -1,6 +1,7 @@
 import type { ComputerView } from "./bridge/protocol";
 import { describeComputers } from "./bridge/status.ts";
 import { HANDOFF_MARK, NOTICE_MARK } from "./messages.ts";
+import { mayRead } from "./access.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 import { STATUS_LABELS, statusOf, type ReportStore } from "./reports.ts";
 import type { ChatThread, Thread } from "./threads.ts";
@@ -112,8 +113,8 @@ function clock(at: number): string {
  * 聊天里 Pupu 要随时知道项目的真实状态：用户在界面上手动建项目不经过对话，
  * 所以每次请求前把当前状态写进提示词。
  */
-function currentState(store: ProjectStore, reports: ReportStore): string {
-  const projects = store.listProjects();
+function currentState(thread: ChatThread, store: ProjectStore, reports: ReportStore): string {
+  const projects = store.listProjects().filter((project) => mayRead(thread, project));
   const latest = reports.latestByProject();
   const lines = projects.length
     ? projects
@@ -166,6 +167,6 @@ export function renderPrompt(
   const body =
     thread.kind === "project"
       ? projectPrompt(thread.project, computers)
-      : `${chatPrompt(thread, nameOf)}\n\n${currentState(store, reports)}\n\n${describeComputers(computers)}`;
+      : `${chatPrompt(thread, nameOf)}\n\n${currentState(thread, store, reports)}\n\n${describeComputers(computers)}`;
   return `${body}\n\n${describeConnectors(accounts)}\n\n今天是 ${today()}（UTC）。`;
 }

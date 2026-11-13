@@ -3,6 +3,7 @@
  * 谁能打开、谁看得到、提示词怎么写，都从这里的 `Thread` 判断，别的地方不比较会话 id。
  */
 
+import { seesWork } from "./access.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 
 /** pi 的根会话，和 agents/harness/pi 的 ROOT_SESSION 是同一个值。写在这里，网页和测试不用引 pi 的服务端代码。 */
@@ -27,21 +28,7 @@ export type PrivateChatRow = {
 export type ChatLine = { readonly session: string; readonly lastAt: number | null };
 export type ChatsView = { readonly main: ChatLine; readonly private: ChatLine | null };
 
-/** 打开这条会话：主会话和项目谁都行，私聊只有本人。没有成员身份的只进得了公开的。查不到的会话不让开。 */
-export function mayOpen(thread: Thread | undefined, viewer: string | null): boolean {
-  if (!thread) return false;
-  return thread.kind !== "private" || thread.memberId === viewer;
-}
-
-/**
- * 这个会话里发起的动作（审批卡、「正在做」）给不给 `viewer` 看。公开会话谁都看；私聊发起的只给发起人和批准这一步的人。
- * 说不准是哪个会话的（`thread` 是 undefined）按私聊算，只给批准的人。
- */
-export function seesWork(thread: Thread | undefined, viewer: string | null, approver: string | null): boolean {
-  if (thread && thread.kind !== "private") return true;
-  if (viewer === null) return false;
-  return viewer === approver || (thread?.kind === "private" && thread.memberId === viewer);
-}
+export { mayOpen, seesWork } from "./access.ts";
 
 /** `viewer` 看得到哪些调用。`session` 是 null 时说不准是哪个会话的。 */
 export function workFilter(

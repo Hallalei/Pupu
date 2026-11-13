@@ -155,6 +155,7 @@ import { PushStore, type PushTokenType } from "./push/store";
 import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
+import { maySeeSpace } from "./access.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
 import { createPupuTools } from "./tools";
 
@@ -909,7 +910,7 @@ export class Pupu extends DurableObject<Env> {
     const own = viewer === null ? null : await this.#ensurePrivateChat(viewer);
     const sees = this.#seenBy(viewer);
     return {
-      projects: this.store.listProjects(),
+      projects: this.store.listProjects().filter((project) => maySeeSpace(project, viewer)),
       computers: this.bridge.list(),
       approvals: [
         ...this.gate.pending((row) => sees(row.session, row.computerId)),
@@ -957,8 +958,9 @@ export class Pupu extends DurableObject<Env> {
    * 主会话的卡谁打开都算；私聊转去的卡只有本人打开才算。
    */
   async markProjectSeen(projectId: string, device: string | null = null): Promise<boolean> {
-    if (!this.store.getProject(projectId)) return false;
+    const project = this.store.getProject(projectId);
     const viewer = this.#viewer(device);
+    if (!project || !maySeeSpace(project, viewer)) return false;
     const own = viewer === null ? undefined : this.threads.byMember(viewer);
     if (this.reports.markSeen(projectId, chatSessions(own), Date.now())) this.#changed();
     return true;
