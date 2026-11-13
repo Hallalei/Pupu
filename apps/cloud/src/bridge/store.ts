@@ -1,5 +1,5 @@
 import type { ScreenGrant } from "./gate.ts";
-import { DEFAULT_POLICY, isComputerPolicy, type ComputerPolicy } from "./policy.ts";
+import { DEFAULT_POLICY, isComputerPolicy, NEW_COMPUTER_POLICY, type ComputerPolicy } from "./policy.ts";
 
 /**
  * 授权电脑和设备凭据。和项目表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
@@ -117,18 +117,20 @@ export class ComputerStore implements ComputerDirectory {
       .map(toRow);
   }
 
-  insert(input: { name: string; tokenHash: string; ownerId?: string | null }): ComputerRow {
+  /** 新配对一台电脑。分级显式写进去：老库里 policy 列的默认值还是建表时的，靠不住。 */
+  insert(input: { name: string; tokenHash: string; ownerId?: string | null; policy?: ComputerPolicy }): ComputerRow {
     const now = Date.now();
     const id = crypto.randomUUID();
     this.#db().exec(
       `INSERT INTO pupu_computers
-        (id, name, owner_id, token_hash, local_root, terminals_folder, created_at, revoked_at, last_seen_at)
-       VALUES (?, ?, ?, ?, '', '', ?, NULL, NULL)`,
+        (id, name, owner_id, token_hash, local_root, terminals_folder, created_at, revoked_at, last_seen_at, policy)
+       VALUES (?, ?, ?, ?, '', '', ?, NULL, NULL, ?)`,
       id,
       input.name,
       input.ownerId ?? null,
       input.tokenHash,
-      now
+      now,
+      input.policy ?? NEW_COMPUTER_POLICY
     );
     const created = this.byTokenHash(input.tokenHash);
     if (!created) throw new Error("电脑没有写进去");

@@ -71,10 +71,10 @@ export const api = {
       method: "POST"
     }),
   /** `proof` 是往宽里改时用通行密钥确认过的结果，见 passkey.ts。 */
-  setPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) =>
+  setPolicy: (id: string, policy: ComputerPolicy) =>
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/policy`, {
       method: "POST",
-      body: JSON.stringify({ policy, proof })
+      body: JSON.stringify({ policy })
     }),
   decideApproval: (id: string, decision: "allow" | "deny", proof?: AuthenticationResponseJSON) =>
     request<{ ok: true }>(`/api/approvals/${encodeURIComponent(id)}`, {

@@ -101,7 +101,7 @@ export function sentInput(input: UserInput, sender: Sender): { content: UserInpu
 export function handbackNotice(computer: string): string {
   return [
     `「${computer}」前的人在 Pupu 里接手完浏览器，收起了放大视图。`,
-    "接着做刚才的浏览器任务：先看一眼页面现在的样子（比如是不是已经登录了），再往下做。没登录成功就说清楚，再交给他一次；已经不需要了就不用做。"
+    "接着做刚才的浏览器任务：先看一眼页面现在的样子（比如是不是已经登录了），再往下做。还没弄好（比如没登录上）就在对话里说一声，等他回话，不要马上再交给他一次；已经不需要了就不用做。"
   ].join("\n");
 }
 

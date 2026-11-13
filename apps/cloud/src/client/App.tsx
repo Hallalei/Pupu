@@ -353,8 +353,8 @@ export function App() {
           await api.revokeComputer(id);
           await refresh();
         }}
-        onSetPolicy={async (id, policy, proof) => {
-          await api.setPolicy(id, policy, proof);
+        onSetPolicy={async (id, policy) => {
+          await api.setPolicy(id, policy);
           await refresh();
         }}
         devices={devices}

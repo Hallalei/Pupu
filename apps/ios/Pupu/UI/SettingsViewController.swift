@@ -168,7 +168,8 @@ final class SettingsViewController: UICollectionViewController {
     private func title(of section: Section) -> String? {
         switch section {
         case .connected: "已连接"
-        case .policy: "权限分级"
+        case .policy: "什么时候先问你"
+        case .computers: Store.shared.computers.isEmpty ? nil : "管理设备"
         case .abilities: "这台电脑能做的"
         case .devices: "手机、浏览器和电脑 App"
         case .pair: "连接新设备"
@@ -406,12 +407,16 @@ final class SettingsViewController: UICollectionViewController {
             cell.accessories = [.customView(configuration: .init(customView: connect, placement: .trailing()))]
         case .computer(let computer):
             content.text = computer.name
-            content.secondaryText = [computer.label, computer.currentPolicy.title, email(of: computer.ownerId)]
+            content.secondaryText = [computer.label, email(of: computer.ownerId)]
                 .compactMap { $0 }.joined(separator: " · ")
             content.image = UIImage(systemName: "circle.fill")
             content.imageProperties.tintColor = computer.online ? Theme.online : Theme.offline
             content.imageProperties.maximumSize = CGSize(width: 8, height: 8)
-            cell.accessories = [.disclosureIndicator()]
+            // 学 Grok Bot 的「电脑」页：每台电脑右边直接是分级的下拉，不用点进去。
+            cell.accessories = [
+                .customView(configuration: .init(customView: policyMenu(for: computer), placement: .trailing())),
+                .disclosureIndicator()
+            ]
         case .noComputer:
             content.text = "还没有授权的电脑"
             content.secondaryText = "在下面生成配对码，在电脑上配对之后，这里会显示它在不在线。"
@@ -421,9 +426,10 @@ final class SettingsViewController: UICollectionViewController {
             content.image = UIImage(systemName: "display")
             content.imageProperties.tintColor = Theme.ink
             cell.accessories = computer.online ? [.disclosureIndicator()] : []
-        case .policy(_, let policy, let selected):
+        case .policy(let computerId, let policy, let selected):
             content.text = policy.title
-            content.secondaryText = policy.detail
+            let allowed = Store.shared.computer(id: computerId).map { mayChangePolicy($0, to: policy) } ?? false
+            content.textProperties.color = allowed ? Theme.ink : Theme.inkMuted
             cell.accessories = selected ? [.checkmark()] : []
         case .revokeComputer(let computer):
             content = UIListContentConfiguration.cell()
@@ -568,16 +574,8 @@ final class SettingsViewController: UICollectionViewController {
             guard computer.online, let endpoint = Connection.shared.endpoint else { return }
             RemoteDesktopViewController.open(computer, endpoint: endpoint, from: self)
         case .policy(let computerId, let policy, let selected):
-            guard !selected, let api = Store.shared.api else { return }
-            Task {
-                do {
-                    try await api.setPolicy(policy, computer: computerId)
-                    UISelectionFeedbackGenerator().selectionChanged()
-                } catch {
-                    self.show(error.localizedDescription)
-                }
-                Store.shared.refresh()
-            }
+            guard !selected, let computer = Store.shared.computer(id: computerId), mayChangePolicy(computer, to: policy) else { return }
+            setPolicy(policy, of: computerId)
         case .revokeComputer(let computer):
             confirmRevoke(computer)
         case .notifications(let status, _):
@@ -781,6 +779,56 @@ final class SettingsViewController: UICollectionViewController {
 
     /// 和云端 members.ts 的 mayRevoke 一样：自己名下的自己能吊销，创建者能吊销所有人的。
     /// 还没有成员（没开 Google 登录）时都能吊销，和以前一样。
+    /// 分级的下拉：一颗小胶囊，点开是三档。别人的电脑只能往严里改，放宽的几项灰掉。
+    private func policyMenu(for computer: Computer) -> UIButton {
+        var config = UIButton.Configuration.gray()
+        config.title = computer.currentPolicy.title
+        config.image = UIImage(systemName: "chevron.up.chevron.down")
+        config.imagePlacement = .trailing
+        config.imagePadding = 4
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .caption2, scale: .small)
+        config.cornerStyle = .capsule
+        config.buttonSize = .small
+        config.baseForegroundColor = Theme.ink
+        let actions = Computer.Policy.allCases.map { policy in
+            UIAction(
+                title: policy.title,
+                attributes: mayChangePolicy(computer, to: policy) ? [] : [.disabled],
+                state: computer.currentPolicy == policy ? .on : .off
+            ) { [weak self] _ in
+                guard policy != computer.currentPolicy else { return }
+                self?.setPolicy(policy, of: computer.id)
+            }
+        }
+        let button = UIButton(configuration: config)
+        button.menu = UIMenu(options: .singleSelection, children: actions)
+        button.showsMenuAsPrimaryAction = true
+        button.accessibilityLabel = "「\(computer.name)」上什么时候先问你：\(computer.currentPolicy.title)"
+        return button
+    }
+
+    /// 改分级不用再确认（2026-11-13 定）：主人在哪个端都能改，别人只能往严里改。
+    private func mayChangePolicy(_ computer: Computer, to policy: Computer.Policy) -> Bool {
+        if policy.strictness >= computer.currentPolicy.strictness { return true }
+        let members = Store.shared.members
+        guard !members.isEmpty else { return true }
+        guard let me = members.first(where: \.current) else { return false }
+        return computer.ownerId == nil || computer.ownerId == me.id
+    }
+
+    private func setPolicy(_ policy: Computer.Policy, of computerId: String) {
+        guard let api = Store.shared.api else { return }
+        Task {
+            do {
+                try await api.setPolicy(policy, computer: computerId)
+                UISelectionFeedbackGenerator().selectionChanged()
+            } catch {
+                self.show(error.localizedDescription)
+            }
+            Store.shared.refresh()
+        }
+    }
+
     private func mayRevoke(owner: String?) -> Bool {
         let members = Store.shared.members
         guard !members.isEmpty else { return true }

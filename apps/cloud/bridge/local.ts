@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { classifyAction, usesScreen } from "../src/bridge/policy.ts";
+import { classifyAction, hardRefusal, usesScreen } from "../src/bridge/policy.ts";
 import type { Action } from "../src/bridge/protocol.ts";
 import { pupuDir } from "./config.ts";
 
@@ -51,6 +51,9 @@ export function localRefusal(
   switches: LocalSwitches,
   home: string
 ): string | null {
+  // 云端已经拦过；这里再拦一次，云端怎么说都不做。
+  const refused = hardRefusal(action);
+  if (refused) return refused;
   const changes = action.kind === "run" || action.kind === "stdin" || action.kind === "write";
   if (changes && !switches.allowCommands) {
     return "这台电脑上关掉了「允许跑命令和写文件」，没有做。要用的话，在这台电脑菜单栏的 Pupu 图标里打开。";

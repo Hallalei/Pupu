@@ -249,9 +249,9 @@ describe("确认过的算亲手确认", () => {
     assert.equal(mayDecide("allow", browser, null, "me"), false);
   });
 
-  test("放宽分级同理", () => {
-    assert.equal(mayChangePolicy("ask_risky", "trust", browser, "me", "me"), true);
-    assert.equal(mayChangePolicy("ask_risky", "trust", browser, "me", null), false);
+  test("放宽分级不用通行密钥：主人的浏览器直接就能改", () => {
+    assert.equal(mayChangePolicy("ask_risky", "trust", browser, "me"), true);
+    assert.equal(mayChangePolicy("ask_risky", "trust", { ...browser, memberId: "other" }, "me"), false);
   });
 
   test("邀请成员：创建者用通行密钥确认过就行", () => {

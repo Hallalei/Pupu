@@ -228,22 +228,18 @@ export function mayPair(kind: DeviceKind | "computer", codeByPhone: boolean, had
 const STRICTNESS: Readonly<Record<ComputerPolicy, number>> = { trust: 0, ask_risky: 1, ask_all: 2 };
 
 /**
- * 电脑的权限分级往宽里改只认电脑主人亲手确认，理由和 `mayDecide` 一样：改成 `trust` 就等于以后都不用批。
- * 往严里改、不变，哪儿都行。`actor` 的 null 和 undefined、`owner` 的 null、`proven` 也和 `mayDecide` 一样。
+ * 电脑的权限分级：主人在哪个登录着的端都能改，不用手机或通行密钥再确认一次（2026-11-13 定：审核点已经够多了）。
+ * 别的成员只能往严里改，不能替别人放宽。往严里改、不变，谁都行。
+ * `actor` 是 null（本机开发没设访问口令）照常放行，undefined（凭据查不到这台设备）不放行；还没主人的老电脑谁都能改。
  */
 export function mayChangePolicy(
   from: ComputerPolicy,
   to: ComputerPolicy,
   actor: Actor | null | undefined,
-  owner: string | null,
-  proven: string | null = null
+  owner: string | null
 ): boolean {
-  return STRICTNESS[to] >= STRICTNESS[from] || actor === null || confirmedByOwner(actor, owner, proven);
-}
-
-/** 往宽里改：要亲手确认的那种改法。网页拿它决定点了要不要先过通行密钥。 */
-export function loosens(from: ComputerPolicy, to: ComputerPolicy): boolean {
-  return STRICTNESS[to] < STRICTNESS[from];
+  if (STRICTNESS[to] >= STRICTNESS[from] || actor === null) return true;
+  return actor !== undefined && (owner === null || actor.memberId === owner);
 }
 
 export class DeviceStore {

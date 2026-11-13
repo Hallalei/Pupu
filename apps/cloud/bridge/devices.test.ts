@@ -47,10 +47,10 @@ test("浏览器、电脑 App 和电脑不管码是谁生成的", () => {
   }
 });
 
-test("权限分级往宽里改只认这台电脑主人的手机", () => {
+test("权限分级往宽里改：主人在哪个端都行，不用再确认；别人不行", () => {
   assert.equal(mayChangePolicy("ask_risky", "trust", mine("phone"), "me"), true);
-  assert.equal(mayChangePolicy("ask_risky", "trust", mine("desktop"), "me"), false);
-  assert.equal(mayChangePolicy("ask_all", "ask_risky", mine("browser"), "me"), false);
+  assert.equal(mayChangePolicy("ask_risky", "trust", mine("desktop"), "me"), true);
+  assert.equal(mayChangePolicy("ask_all", "ask_risky", mine("browser"), "me"), true);
   assert.equal(mayChangePolicy("ask_risky", "trust", others("phone"), "me"), false, "创建者也不行");
   assert.equal(mayChangePolicy("ask_all", "trust", undefined, "me"), false);
   assert.equal(mayChangePolicy("ask_risky", "trust", others("phone"), null), true, "还没主人的老电脑");

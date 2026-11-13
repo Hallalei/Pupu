@@ -5,6 +5,7 @@ import {
   DEFAULT_POLICY,
   SCREEN_GRANT_IDLE_MS,
   describeAction,
+  hardRefusal,
   needFor,
   usesScreen,
   type ComputerPolicy
@@ -127,6 +128,8 @@ export class ComputerGate {
         row = this.#options.approvals.byCall(call.id) ?? this.#askOther(call.id, session, asked);
         return this.#await(row, signal);
       }
+      const refused = hardRefusal(planned.action);
+      if (refused) return { block: refused };
       // 选不出电脑时让工具自己去说明，这里不拦。
       const selected = selectComputer(this.#options.computers(), planned.computerId);
       if (!selected.ok) return undefined;
@@ -211,8 +214,18 @@ export class ComputerGate {
     return times.length > 0 ? Math.min(...times) : null;
   }
 
+  /**
+   * 改分级。改成始终允许时，这台电脑还挂着的请示一起放行：人刚说了都不用问，卡片别再挂着等批。
+   */
   setPolicy(computerId: string, policy: ComputerPolicy): boolean {
     if (!this.#options.directory.setPolicy(computerId, policy)) return false;
+    if (policy === "trust") {
+      const now = this.#options.now();
+      for (const row of this.#options.approvals.pending(now)) {
+        if (row.computerId !== computerId) continue;
+        if (this.#options.approvals.settle(row.id, "allowed", now)) this.#wake(row.id);
+      }
+    }
     this.#options.onChange([computerId]);
     return true;
   }

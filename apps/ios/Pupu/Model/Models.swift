@@ -18,24 +18,26 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
 }
 
 nonisolated struct Computer: Decodable, Sendable, Hashable {
+    /// 什么时候先问你。和网页 Settings.tsx 的 POLICIES 一样的三档、一样的字。
     enum Policy: String, Sendable, CaseIterable {
+        case trust
         case askRisky = "ask_risky"
         case askAll = "ask_all"
-        case trust
 
         var title: String {
             switch self {
-            case .askRisky: "高风险才问"
-            case .askAll: "每一步都问"
-            case .trust: "都放行"
+            case .trust: "始终允许"
+            case .askRisky: "高风险时询问"
+            case .askAll: "每次询问"
             }
         }
 
-        var detail: String {
+        /// 越大越严。别人的电脑只能往严里改（云端的 mayChangePolicy 也这么判）。
+        var strictness: Int {
             switch self {
-            case .askRisky: "删除、push、发布、sudo 这类先问你"
-            case .askAll: "跑命令、写文件、点屏幕之前都先问你"
-            case .trust: "不问你，Mac 菜单栏照常显示 Pupu 在做什么"
+            case .trust: 0
+            case .askRisky: 1
+            case .askAll: 2
             }
         }
     }

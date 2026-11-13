@@ -14,14 +14,21 @@ export type Risk =
   | { readonly level: "high"; readonly reason: string };
 
 /**
- * 每台电脑一个分级。
- * - ask_risky：高风险的才问，屏幕按电脑批一次（默认）；
- * - ask_all：跑命令、写文件、写输入、点屏幕，每一步都问；
- * - trust：都放行。
+ * 每台电脑一个分级，设置里叫「始终允许 / 高风险时询问 / 每次询问」。
+ * - trust：始终允许，什么都不弹审批卡（新配对的电脑默认这个）；`hardRefusal` 里的照样不做。
+ * - ask_risky：高风险的才问，屏幕按电脑批一次；
+ * - ask_all：跑命令、写文件、写输入、点屏幕，每一步都问。
  */
 export type ComputerPolicy = "ask_risky" | "ask_all" | "trust";
 
+/**
+ * 读不出分级、找不到电脑时按这个算：宁严勿松。不是新电脑的默认值，新电脑见 `NEW_COMPUTER_POLICY`。
+ * 也是表上 policy 列的默认值（老库里这一列早就建好了，改不了，所以新电脑插入时显式写分级）。
+ */
 export const DEFAULT_POLICY: ComputerPolicy = "ask_risky";
+
+/** 新配对的电脑：始终允许。已经配对的电脑保留原来的选择，不悄悄改。 */
+export const NEW_COMPUTER_POLICY: ComputerPolicy = "trust";
 
 export function isComputerPolicy(value: unknown): value is ComputerPolicy {
   return value === "ask_risky" || value === "ask_all" || value === "trust";
@@ -812,6 +819,19 @@ export function isPrivateHost(hostname: string): boolean {
 /** 打开应用、点、拖、滚动、打字、按键。看窗口和查权限不算。 */
 export function isScreenInput(action: Action): boolean {
   return action.kind === "computer" && action.op !== "look" && action.op !== "windows" && action.op !== "permissions";
+}
+
+const TCC = /\btccutil\b|com\.apple\.TCC/i;
+
+/**
+ * 不管什么分级都不做的事：改 macOS 的隐私权限（TCC）。放开就能给自己开屏幕录制、辅助功能、完全磁盘访问，
+ * 等于绕过分级，只留给人自己在系统设置里改。系统的授权和密码窗口不让点，在桥上拦（bridge/computer.ts）。
+ * 云端在请示之前拦一次，桥上再拦一次。返回拒绝的原因，没事返回 null。
+ */
+export function hardRefusal(action: Action): string | null {
+  const text = action.kind === "run" ? action.command : action.kind === "stdin" ? action.data : action.kind === "write" ? action.path : "";
+  if (TCC.test(text)) return "改 macOS 的隐私权限（TCC）只能用户自己在系统设置里改，Pupu 不做。";
+  return null;
 }
 
 /** 看窗口或者屏幕输入，都要有屏幕授权。 */

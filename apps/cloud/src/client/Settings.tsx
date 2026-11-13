@@ -23,6 +23,7 @@ import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
   CalendarIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CodeIcon,
@@ -40,10 +41,11 @@ import {
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ThisComputer } from "./ThisComputer";
 
-const POLICIES: readonly (readonly [ComputerPolicy, string, string])[] = [
-  ["ask_risky", "高风险的才问", "删除、推送、发布这类先问你；屏幕先批一次，15 分钟不用就失效。"],
-  ["ask_all", "每一步都问", "跑命令、写文件、点屏幕，每一步都等你批准。读文件不问。"],
-  ["trust", "都放行", "什么都不问。电脑菜单栏上照样能看到 Pupu 在做什么。"]
+/** 什么时候先问你。和 iOS 的 Computer.Policy 一样的三档、一样的字。 */
+const POLICIES: readonly (readonly [ComputerPolicy, string])[] = [
+  ["trust", "始终允许"],
+  ["ask_risky", "高风险时询问"],
+  ["ask_all", "每次询问"]
 ];
 
 type PairingCode = { readonly code: string; readonly expiresAt: number };
@@ -93,10 +95,6 @@ function computerLabel(computer: ComputerView): string {
   return "离线";
 }
 
-function policyName(policy: ComputerPolicy): string {
-  return POLICIES.find(([key]) => key === policy)?.[1] ?? "";
-}
-
 /**
  * 设置：连给 Pupu 的账号、已经连上的电脑和它们的权限分级、成员、邀请码、手机浏览器和电脑 App、通行密钥、连的是哪个 Pupu。
  * 电脑上是居中的弹窗，窄窗口是从右边滑出的抽屉；里面都是一页一页往里点，左上角返回，Esc 退一层。
@@ -127,7 +125,7 @@ export function Settings({
   onRemoveConnector: (id: string) => Promise<void>;
   computers: readonly ComputerView[];
   onRevoke: (id: string) => Promise<void>;
-  onSetPolicy: (id: string, policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
+  onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
   devices: readonly DeviceView[];
   members: readonly MemberView[];
   /** 发请求的是谁（见 members.ts 的 `actorOf`），按钮灰不灰和接口的规则对得上；本机开发没设访问口令时是 null。 */
@@ -242,24 +240,34 @@ export function Settings({
   } else if (shown === "this") {
     body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
   } else if (shown === "computers") {
+    // 学 Grok Bot 的「电脑」页：「你的电脑」一行、「管理设备」每台一行，右边直接是分级的下拉。
+    const mine = computers.find((item) => item.id === thisComputer?.computerId);
+    const others = computers.filter((item) => item !== mine);
     body = (
       <>
+        {mine && (
+          <Group title="你的电脑">
+            <PolicyRow computer={mine} actor={actor} title="在这台电脑上执行" onSetPolicy={(policy) => onSetPolicy(mine.id, policy)} />
+          </Group>
+        )}
         {computers.length === 0 ? (
           <Note>还没有授权的电脑。</Note>
         ) : (
-          <Group>
-            {computers.map((item) => (
-              <LinkRow
-                key={item.id}
-                icon={<Dot online={item.online} />}
-                title={item.id === thisComputer?.computerId ? `${item.name} · 这台电脑` : item.name}
-                detail={[computerLabel(item), policyName(item.policy), item.ownerId ? emails.get(item.ownerId) : null]
-                  .filter(Boolean)
-                  .join(" · ")}
-                onPress={() => onPage({ computer: item.id })}
-              />
-            ))}
-          </Group>
+          others.length > 0 && (
+            <Group title="管理设备">
+              {others.map((item) => (
+                <PolicyRow
+                  key={item.id}
+                  computer={item}
+                  actor={actor}
+                  title={item.name}
+                  detail={[computerLabel(item), item.ownerId ? emails.get(item.ownerId) : null].filter(Boolean).join(" · ")}
+                  onOpen={() => onPage({ computer: item.id })}
+                  onSetPolicy={(policy) => onSetPolicy(item.id, policy)}
+                />
+              ))}
+            </Group>
+          )
         )}
         <Group title="连接新设备">{pairNew}</Group>
       </>
@@ -271,13 +279,11 @@ export function Settings({
         computer={computer}
         owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
         actor={actor}
-        confirmBy={confirmBy}
-        passkeys={passkeys}
         onRevoke={async () => {
           await onRevoke(computer.id);
           onPage("computers");
         }}
-        onSetPolicy={(policy, proof) => onSetPolicy(computer.id, policy, proof)}
+        onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
       />
     ) : (
       <Note>这台电脑已经吊销了。</Note>
@@ -708,13 +714,89 @@ function ServiceRow({ service, connectable }: { service: ConnectorService; conne
   );
 }
 
-/** 一台电脑的那一页：在不在线、什么时候先问你、能做什么，最下面是吊销。 */
+/** 一台电脑一行：名字、在不在线，右边是分级的下拉。点名字进那台电脑的一页（吊销在那里）。 */
+function PolicyRow({
+  computer,
+  actor,
+  title,
+  detail,
+  onOpen,
+  onSetPolicy
+}: {
+  computer: ComputerView;
+  actor: Actor | null | undefined;
+  title: string;
+  detail?: string;
+  onOpen?: () => void;
+  onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
+}) {
+  const row = useRowAction();
+  const label = (
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-body">{title}</span>
+      {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
+    </span>
+  );
+  return (
+    <div data-policy-row={computer.id}>
+      <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
+        {onOpen ? (
+          <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+            <span className="grid size-5 shrink-0 place-items-center">
+              <Dot online={computer.online} />
+            </span>
+            {label}
+          </button>
+        ) : (
+          label
+        )}
+        <PolicySelect computer={computer} actor={actor} sending={row.sending} onChange={(policy) => void row.run(() => onSetPolicy(policy))} />
+      </div>
+      <RowError error={row.error} />
+    </div>
+  );
+}
+
+/** 分级的下拉：系统自带的选择框，样子是一颗小胶囊。别人的电脑只能往严里改，放宽的那几项灰掉。 */
+function PolicySelect({
+  computer,
+  actor,
+  sending,
+  onChange
+}: {
+  computer: ComputerView;
+  actor: Actor | null | undefined;
+  sending: boolean;
+  onChange: (policy: ComputerPolicy) => void;
+}) {
+  return (
+    <span className="relative shrink-0">
+      <select
+        aria-label={`「${computer.name}」上什么时候先问你`}
+        value={computer.policy}
+        disabled={sending}
+        onChange={(event) => {
+          const next = event.target.value as ComputerPolicy;
+          if (next !== computer.policy) onChange(next);
+        }}
+        className="tap h-8 appearance-none rounded-full border border-separator bg-surface py-0 pr-7 pl-3 text-subheadline text-foreground"
+      >
+        {POLICIES.map(([policy, name]) => (
+          <option key={policy} value={policy} disabled={!mayChangePolicy(computer.policy, policy, actor, computer.ownerId)}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-muted" />
+    </span>
+  );
+}
+
+/** 一台电脑的那一页：在不在线、什么时候先问你，最下面是吊销。 */
 function ComputerDetail({
   computer,
   owner,
   actor,
-  confirmBy,
-  passkeys,
   onRevoke,
   onSetPolicy
 }: {
@@ -722,19 +804,10 @@ function ComputerDetail({
   /** 主人的邮箱。 */
   owner: string | null;
   actor: Actor | null | undefined;
-  confirmBy: ConfirmWhere;
-  passkeys: Passkeys | null;
   onRevoke: () => Promise<void>;
-  onSetPolicy: (policy: ComputerPolicy, proof?: AuthenticationResponseJSON) => Promise<void>;
+  onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
 }) {
   const row = useRowAction();
-  /** 往宽里改：主人用通行密钥确认过就能改（`mayChangePolicy` 的 proven），别人和有手机的人去手机上。 */
-  function howTo(policy: ComputerPolicy): "now" | "passkey" | "browser" | "phone" {
-    if (mayChangePolicy(computer.policy, policy, actor, computer.ownerId)) return "now";
-    const proven = actor?.memberId ?? null;
-    if (!passkeys || !mayChangePolicy(computer.policy, policy, actor, computer.ownerId, proven)) return "phone";
-    return confirmBy === "passkey" || confirmBy === "browser" ? confirmBy : "phone";
-  }
   return (
     <>
       <Group>
@@ -745,43 +818,24 @@ function ComputerDetail({
           </span>
         </div>
       </Group>
-      <Group
-        title="权限分级"
-        note="Pupu 在这台电脑上能跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。"
-      >
+      <Group title="什么时候先问你">
         <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="contents">
-          {POLICIES.map(([policy, label, hint]) => {
+          {POLICIES.map(([policy, label]) => {
             const selected = computer.policy === policy;
-            const how = howTo(policy);
-            const locked = how === "phone";
+            const allowed = mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
             return (
               <button
                 key={policy}
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                disabled={row.sending || locked}
+                disabled={row.sending || !allowed}
                 onClick={() => {
-                  if (selected) return;
-                  if (how === "browser") openInBrowser();
-                  else if (how === "passkey" && passkeys)
-                    void row.run(async () =>
-                      onSetPolicy(policy, await confirm({ kind: "policy", computerId: computer.id, policy }, passkeys))
-                    );
-                  else void row.run(() => onSetPolicy(policy));
+                  if (!selected) void row.run(() => onSetPolicy(policy));
                 }}
-                className={`flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4 ${
-                  locked ? "opacity-60" : ""
-                }`}
+                className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4 disabled:opacity-60"
               >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-body">
-                    {label}
-                    {locked && <span className="text-muted"> · 去主人的手机上改</span>}
-                    {how === "browser" && <span className="text-muted"> · 在浏览器里改</span>}
-                  </span>
-                  <span className="block text-subheadline text-muted">{hint}</span>
-                </span>
+                <span className="min-w-0 flex-1 text-body">{label}</span>
                 {selected && <CheckIcon className="shrink-0 text-[16px]" />}
               </button>
             );

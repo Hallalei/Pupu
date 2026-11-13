@@ -36,7 +36,7 @@ import {
 import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop } from "./bridge/desktop";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
-import { isComputerPolicy } from "./bridge/policy";
+import { isComputerPolicy, NEW_COMPUTER_POLICY } from "./bridge/policy";
 import {
   BRIDGE_PATH,
   BRIDGE_PING,
@@ -1140,7 +1140,12 @@ export class Pupu extends DurableObject<Env> {
     }
     const name = input.name.trim().slice(0, 80);
     if (input.kind === "computer") {
-      const row = this.computers.insert({ name: name || "电脑", ownerId: input.memberId, tokenHash: minted.hash });
+      const row = this.computers.insert({
+        name: name || "电脑",
+        ownerId: input.memberId,
+        tokenHash: minted.hash,
+        policy: NEW_COMPUTER_POLICY
+      });
       this.bridge.onChange();
       return { ok: true, id: row.id, name: row.name, token: minted.token };
     }
@@ -1267,19 +1272,13 @@ export class Pupu extends DurableObject<Env> {
     return true;
   }
 
-  /** 往宽里改只认手机，见 `mayChangePolicy`。 */
-  async setComputerPolicy(
-    id: string,
-    policy: string,
-    device: string | null = null,
-    proof: PasskeyProof | null = null
-  ): Promise<"ok" | "missing" | "phone_only"> {
+  /** 改分级：主人在哪个端都能改，不用再确认；别人只能往严里改。见 `mayChangePolicy`。 */
+  async setComputerPolicy(id: string, policy: string, device: string | null = null): Promise<"ok" | "missing" | "owner_only"> {
     await this.lifecycle.start();
     if (!isComputerPolicy(policy)) throw new Error("没有这个分级");
     const computer = this.computers.list().find((row) => row.id === id);
     if (!computer) return "missing";
-    const proven = await this.#proven(device, { kind: "policy", computerId: id, policy }, proof);
-    if (!mayChangePolicy(computer.policy, policy, this.#actor(device), computer.ownerId, proven)) return "phone_only";
+    if (!mayChangePolicy(computer.policy, policy, this.#actor(device), computer.ownerId)) return "owner_only";
     return this.gate.setPolicy(id, policy) ? "ok" : "missing";
   }
 
@@ -1892,16 +1891,12 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   }
   const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
   if (policy && method === "POST") {
-    const body = await readJson<{ policy?: string; proof?: unknown }>(request);
-    const result = await caller.pupu.setComputerPolicy(
-      decodeURIComponent(policy[1] ?? ""),
-      String(body.policy ?? ""),
-      caller.device,
-      proofOf(url, body.proof)
-    );
+    // 老客户端还会带 proof，不用了，忽略。
+    const body = await readJson<{ policy?: string }>(request);
+    const result = await caller.pupu.setComputerPolicy(decodeURIComponent(policy[1] ?? ""), String(body.policy ?? ""), caller.device);
     if (result === "missing") return Response.json({ error: "没有这台电脑" }, { status: 404 });
-    if (result === "phone_only") {
-      return Response.json({ error: "放宽权限要电脑主人亲手确认：在手机 App 上改，或者用通行密钥" }, { status: 403 });
+    if (result === "owner_only") {
+      return Response.json({ error: "别人的电脑只能往严里改，放宽要电脑主人自己改" }, { status: 403 });
     }
     return Response.json({ ok: true });
   }
