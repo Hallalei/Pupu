@@ -74,5 +74,6 @@ export function mayRead(from: AccessThread, space: SpaceAccess & { readonly id: 
   if (space.level === "L4") return false;
   if (isOpen(space.level)) return true;
   const audience = audienceOf(from);
-  return !audience.everyone && audience.members.every((member) => space.members.includes(member));
+  // 一个成员都没有的空间（最后一个人也被移出了）不算全部受众都看得到。
+  return !audience.everyone && audience.members.length > 0 && audience.members.every((member) => space.members.includes(member));
 }

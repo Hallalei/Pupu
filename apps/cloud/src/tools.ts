@@ -116,7 +116,7 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
       const from = actions.threadOf(origin);
       const refused = onlyInChat(from);
       if (refused || !from) return refused!;
-      // 交过去的事和报回来的结果都会留在两边，两边的受众都得看得到对方。
+      // 交过去的事和报回来的结果会留在这条聊天里，这条聊天的全部受众都得看得到那个空间。
       const found = store.getProject(args.project_id);
       const project = found && mayRead(from, found) ? found : undefined;
       if (!project) {

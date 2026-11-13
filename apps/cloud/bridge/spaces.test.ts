@@ -162,6 +162,10 @@ describe("谁能看什么", () => {
     assert.equal(mayRead(inSpace("L3", ["m1", "m4"]), target), false);
     assert.equal(mayRead(inSpace("L2"), target), false);
   });
+
+  test("成员都被移出的空间读不到别的 L3", () => {
+    assert.equal(mayRead(inSpace("L3", []), { ...space("L3"), id: "t" }), false);
+  });
 });
 
 describe("出口按会话的受众筛", () => {
