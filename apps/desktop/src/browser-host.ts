@@ -151,7 +151,8 @@ export class BrowserHost {
   /** 页面挂进 Pupu 主窗口给人接手，放在 bounds（窗口内容区的坐标）。已经挂在别的窗口里就先挪过来。 */
   attach(window: BrowserWindow, bounds: Rectangle): void {
     const view = this.#ensure();
-    if (this.#attached !== window) {
+    const first = this.#attached !== window;
+    if (first) {
       this.#host?.contentView.removeChildView(view);
       if (this.#attached && !this.#attached.isDestroyed()) this.#attached.contentView.removeChildView(view);
       window.contentView.addChildView(view);
@@ -161,9 +162,13 @@ export class BrowserHost {
       this.#options.log("Pupu 浏览器页面挂进主窗口，人来接手。");
     }
     view.setBounds(bounds);
-    // 空页面拿到焦点也收不到键盘（Min 的 focusView 也这么判断）。
-    if (view.webContents.getURL()) view.webContents.focus();
-    this.#stream(Number.POSITIVE_INFINITY);
+    if (first) {
+      // 只在刚挂上、主窗口本来就在前台时给页面焦点：webContents.focus() 在 macOS 上会把窗口和 App 拉到前台。
+      // 空页面拿到焦点也收不到键盘（Min 的 focusView 也这么判断）。
+      if (window.isFocused() && view.webContents.getURL()) view.webContents.focus();
+      // 和 0.2.4 一样，接手后再推一阵画面就停：人在登录时不把整个过程一直转出去。
+      this.#stream(Date.now() + STREAM_AFTER_MS);
+    }
   }
 
   /** 人关掉了放大视图（或主窗口没了）：页面回到宿主，接着在后台做。 */
@@ -182,9 +187,9 @@ export class BrowserHost {
     this.#stream(Date.now() + STREAM_AFTER_MS);
   }
 
-  /** 页面现在挂在哪个窗口里。测试和主进程收尾用。 */
+  /** 页面现在挂在哪个窗口里（窗口可能已经销毁了，主进程收尾时要比的就是它）。 */
   attachedTo(): BrowserWindow | null {
-    return this.#attached && !this.#attached.isDestroyed() ? this.#attached : null;
+    return this.#attached;
   }
 
   #stream(until: number): void {

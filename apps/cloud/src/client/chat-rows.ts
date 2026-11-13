@@ -410,8 +410,11 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
     const newest = position === cards.length - 1;
     // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
     const latest = card.steps.at(-1);
-    const handedOver = !running && newest && !card.closed && latest?.mark.op === "show" && latest.step.status === "done";
-    const task = browserTask(card.id, card.steps, card.plans, running && newest, context, handedOver);
+    const shown = latest?.mark.op === "show" && latest.step.status === "done";
+    const handedOver = !running && newest && !card.closed && shown;
+    // 交给人以后人回了话（说好了、取消了）：这件事停在交接上，不能说做完了，接着做的会另起一张卡。
+    const handedOff = card.closed && shown;
+    const task = browserTask(card.id, card.steps, card.plans, running && newest, context, handedOver, handedOff);
     result[card.index] = { id: card.id, gap: first.gap, kind: "browser", task };
   });
   return result;
@@ -423,7 +426,8 @@ function browserTask(
   plans: readonly Record<string, unknown>[],
   last: boolean,
   context: RowContext,
-  handedOver = false
+  handedOver = false,
+  handedOff = false
 ): BrowserTask {
   const plan = plans.at(-1);
   const planSteps: BrowserPlanStep[] = Array.isArray(plan?.steps)
@@ -452,6 +456,9 @@ function browserTask(
   } else if (last) {
     state = "live";
     status = latest ? browserDoing(latest.mark) : "正在想怎么做";
+  } else if (handedOff) {
+    state = "stopped";
+    status = "交给你接手了";
   } else if (latest?.step.status === "failed") {
     state = "failed";
     status = "没做完，最后一步出错了";

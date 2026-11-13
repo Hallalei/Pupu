@@ -401,14 +401,17 @@ nonisolated enum ChatRows {
         for (position, card) in cards.enumerated() {
             let newest = position == cards.count - 1
             // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
-            let handedOver = !running && newest && !card.closed && card.steps.last?.1.op == "show" && card.steps.last?.0.status == .done
-            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && newest, context: context, handedOver: handedOver)
+            let shown = card.steps.last?.1.op == "show" && card.steps.last?.0.status == .done
+            let handedOver = !running && newest && !card.closed && shown
+            // 交给人以后人回了话（说好了、取消了）：这件事停在交接上，不能说做完了，接着做的会另起一张卡。
+            let handedOff = card.closed && shown
+            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && newest, context: context, handedOver: handedOver, handedOff: handedOff)
             result[card.index] = ChatRow(id: card.id, kind: .browser(task), gap: result[card.index].gap)
         }
         return result
     }
 
-    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext, handedOver: Bool = false) -> BrowserTask {
+    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext, handedOver: Bool = false, handedOff: Bool = false) -> BrowserTask {
         let plan = plans.last
         let planSteps: [BrowserTask.PlanStep] = plan?["steps"]?.array?.compactMap { item in
             guard let text = item["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
@@ -430,6 +433,8 @@ nonisolated enum ChatRows {
             (state, status) = (.waiting, "等你在电脑上的 Pupu 里接手")
         } else if last {
             (state, status) = (.live, latest.map { browserDoing($0.1) } ?? "正在想怎么做")
+        } else if handedOff {
+            (state, status) = (.stopped, "交给你接手了")
         } else if latest?.0.status == .failed {
             (state, status) = (.failed, "没做完，最后一步出错了")
         } else if latest == nil || [.unfinished, .denied, .expired].contains(latest!.0.status) || planSteps.contains(where: { !$0.done }) {

@@ -590,6 +590,10 @@ async function openMain(): Promise<void> {
   window.once("ready-to-show", show);
   // 第一次加载就失败时可能等不到 ready-to-show。
   setTimeout(show, 3000);
+  // 关窗口前先把挂着的浏览器页面挪回后台：窗口销毁后再摘就晚了，页面会没地方挂、截不到画面。
+  window.on("close", () => {
+    if (browser?.attachedTo() === window) browser.detach();
+  });
   window.on("closed", () => {
     if (browser?.attachedTo() === window) browser.detach();
     if (mainWindow === window) mainWindow = null;

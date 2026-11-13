@@ -129,8 +129,10 @@ describe("浏览器任务卡片", () => {
     assert.equal(waiting!.status, "等你在电脑上的 Pupu 里接手");
     const [running] = tasks(rows(handed, true));
     assert.equal(running!.state, "live");
+    // 人回了话（说好了，或者点了「取消任务」替人说不做了）：停在交接上，不算做完。
     const [after] = tasks(rows([...handed, user("好了")], false));
-    assert.equal(after!.state, "done");
+    assert.equal(after!.state, "stopped");
+    assert.equal(after!.status, "交给你接手了");
     const [failed] = tasks(rows([handed[0]!, handed[1]!, handed[2]!, done("s1", "browser_show", true)], false));
     assert.notEqual(failed!.state, "waiting");
   });
