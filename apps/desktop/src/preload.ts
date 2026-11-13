@@ -30,6 +30,17 @@ if (origin && window.location.origin === origin) {
     openPrivacySettings: (pane) => ipcRenderer.invoke("pupu:open-privacy", pane) as Promise<void>,
     repair: () => ipcRenderer.invoke("pupu:repair") as Promise<void>,
     showBrowser: () => ipcRenderer.invoke("pupu:show-browser") as Promise<void>,
+    browserTakeover: () => ipcRenderer.invoke("pupu:browser-takeover-state") as Promise<boolean>,
+    onBrowserTakeover(listener) {
+      const handler = (_event: unknown, open: boolean) => listener(open === true);
+      ipcRenderer.on("pupu:browser-takeover", handler);
+      return () => {
+        ipcRenderer.removeListener("pupu:browser-takeover", handler);
+      };
+    },
+    attachBrowser: (rect) =>
+      ipcRenderer.invoke("pupu:browser-attach", { x: rect.x, y: rect.y, width: rect.width, height: rect.height }) as Promise<boolean>,
+    detachBrowser: () => ipcRenderer.invoke("pupu:browser-detach") as Promise<void>,
     chromeProfiles: () => ipcRenderer.invoke("pupu:chrome-profiles") as Promise<ChromeProfile[]>,
     importChrome: (profile) => ipcRenderer.invoke("pupu:import-chrome", profile) as Promise<ChromeImport>
   };

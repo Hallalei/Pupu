@@ -24,6 +24,8 @@ export type DesktopComputer = {
 export type DesktopSwitch = "allowCommands" | "allowScreen";
 export type PrivacyPane = "screen" | "accessibility";
 
+export type BrowserRect = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
 export type PupuDesktop = {
   readonly version: 1;
   /** 窗口没有系统标题栏，红绿灯浮在页面上，页面要让位、要留出能拖窗口的地方。老版本的 App 没有这一项。 */
@@ -37,8 +39,16 @@ export type PupuDesktop = {
   openPrivacySettings(pane: PrivacyPane): Promise<void>;
   /** 窗口的凭据失效了：打开 App 自己的配对窗口。 */
   repair(): Promise<void>;
-  /** 把 Pupu 浏览器窗口放到屏幕上，人来接手。0.2.4 以前的 App 没有。 */
+  /** 人来接手：在主窗口里打开放大视图，里面是 Pupu 浏览器的真实页面。0.2.4 以前的 App 没有。 */
   showBrowser?(): Promise<void>;
+  /** 现在要不要显示接手的放大视图。页面加载好时问一次，之后听 `onBrowserTakeover`。0.2.5 以前的 App 没有。 */
+  browserTakeover?(): Promise<boolean>;
+  /** 要不要显示接手的放大视图变了就回调。返回取消订阅的函数。0.2.5 以前的 App 没有。 */
+  onBrowserTakeover?(listener: (open: boolean) => void): () => void;
+  /** 把真实页面挂到这个位置上（CSS 像素，相对窗口内容区）。窗口大小变了再调一次。0.2.5 以前的 App 没有。 */
+  attachBrowser?(rect: BrowserRect): Promise<boolean>;
+  /** 关掉放大视图：页面回到后台，任务接着做。0.2.5 以前的 App 没有。 */
+  detachBrowser?(): Promise<void>;
   /** 列出这台电脑上 Chrome 的用户资料，导入前让人挑。0.2.4 以前的 App 没有。 */
   chromeProfiles?(): Promise<readonly ChromeProfile[]>;
   /**

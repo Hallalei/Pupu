@@ -3,7 +3,8 @@ import test, { describe } from "node:test";
 import type { ApprovalRow } from "../src/bridge/approvals.ts";
 import { Apns, PROVIDER_TOKEN_MS, apnsKeyFrom, signProviderToken, type ApnsPush, type ApnsResult } from "../src/push/apns.ts";
 import { APPROVAL_CATEGORY, ApprovalPusher } from "../src/push/approvals.ts";
-import { PushStore } from "../src/push/store.ts";
+import { PushStore, type PushTokenRow } from "../src/push/store.ts";
+import { pushTakeover } from "../src/push/takeover.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
 async function newKey(): Promise<{ pem: string; publicKey: CryptoKey }> {
@@ -341,5 +342,52 @@ describe("ApprovalPusher", () => {
     store.removeDevice("phone-a");
     assert.deepEqual([...store.deliveries("a1").keys()], ["phone-b"]);
     assert.deepEqual(store.tokens("alert").map((row) => row.deviceId), ["phone-b"]);
+  });
+});
+
+describe("接手提醒", () => {
+  const token = (deviceId: string, value: string) =>
+    ({ deviceId, token: value, env: "sandbox", type: "alert", updatedAt: 0 }) as unknown as PushTokenRow;
+
+  test("只推给这台电脑主人的手机，collapse id 用调用 id，没按钮", async () => {
+    const sent: ApnsPush[] = [];
+    const apns = { send: async (push: ApnsPush): Promise<ApnsResult> => (sent.push(push), { status: 200, reason: null, gone: false }) };
+    const count = await pushTakeover({
+      apns,
+      tokens: [token("mine", "t1"), token("other", "t2")],
+      to: (deviceId) => deviceId === "mine",
+      requestId: "call-1",
+      computerName: "mbpro",
+      now: 1_000_000,
+      remove: () => assert.fail("不该删"),
+      log: () => {}
+    });
+    assert.equal(count, 1);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]!.token, "t1");
+    assert.equal(sent[0]!.collapseId, "takeover-call-1");
+    const payload = sent[0]!.payload as { aps: { alert: { title: string }; category?: string }; approvalId?: string };
+    assert.equal(payload.aps.alert.title, "请在电脑上的 Pupu 里接手");
+    assert.equal(payload.aps.category, undefined);
+    assert.equal(payload.approvalId, undefined);
+  });
+
+  test("没配 APNs 什么都不推；token 失效就删掉", async () => {
+    assert.equal(
+      await pushTakeover({ apns: null, tokens: [token("mine", "t1")], to: () => true, requestId: "c", computerName: "m", now: 0, remove: () => {}, log: () => {} }),
+      0
+    );
+    const removed: string[] = [];
+    await pushTakeover({
+      apns: { send: async () => ({ status: 410, reason: "Unregistered", gone: true }) },
+      tokens: [token("mine", "t1")],
+      to: () => true,
+      requestId: "c",
+      computerName: "m",
+      now: 0,
+      remove: (value) => removed.push(value),
+      log: () => {}
+    });
+    assert.deepEqual(removed, ["t1"]);
   });
 });

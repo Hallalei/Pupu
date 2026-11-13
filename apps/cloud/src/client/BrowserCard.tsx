@@ -28,7 +28,7 @@ export function BrowserCard({
   frame: BrowserFrameView | null;
   /** 这一轮还在跑时，停掉它。 */
   onStop?: () => void;
-  /** 在做这件事的电脑就是眼前这台：把 Pupu 浏览器窗口放到屏幕上，人来接手。 */
+  /** 在做这件事的电脑就是眼前这台：在主窗口里打开接手的放大视图（真实页面），人来接手。 */
   onTakeOver?: () => void;
 }) {
   const [plan, setPlan] = useState(false);
@@ -148,7 +148,13 @@ export function BrowserCard({
             frame={frame}
             onClose={() => setLarge(false)}
             onStop={active ? onStop : undefined}
-            onTakeOver={onTakeOver}
+            onTakeOver={
+              onTakeOver &&
+              (() => {
+                setLarge(false);
+                onTakeOver();
+              })
+            }
           />,
           document.body
         )}

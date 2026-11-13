@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   const address = server.address();
   const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
 
-  const host = new BrowserHost({ log: (line) => log(`[主进程] ${line}`), background: true, downloads: path.join(out, "downloads") });
+  const host = new BrowserHost({ log: (line) => log(`[主进程] ${line}`), downloads: path.join(out, "downloads") });
   const child = utilityProcess.fork(path.join(__dirname, "bridge.mjs"), [origin], { serviceName: "Pupu Probe Bridge", stdio: "pipe" });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
   child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));

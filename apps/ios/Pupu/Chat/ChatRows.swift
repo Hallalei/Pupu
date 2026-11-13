@@ -369,6 +369,8 @@ nonisolated enum ChatRows {
             let id: String
             var steps: [(ToolStep, BrowserMark)] = []
             var plans: [JSON] = []
+            /// 后面有人说了话（或者报回、通知），这件事算过去了。
+            var closed = false
         }
         var result: [ChatRow] = []
         var cards: [Open] = []
@@ -389,19 +391,24 @@ nonisolated enum ChatRows {
                 continue
             }
             switch row.kind {
-            case .user, .other, .handoff, .notice, .report: open = nil
+            case .user, .other, .handoff, .notice, .report:
+                if let index = open { cards[index].closed = true }
+                open = nil
             default: break
             }
             result.append(row)
         }
         for (position, card) in cards.enumerated() {
-            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && position == cards.count - 1, context: context)
+            let newest = position == cards.count - 1
+            // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
+            let handedOver = !running && newest && !card.closed && card.steps.last?.1.op == "show" && card.steps.last?.0.status == .done
+            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && newest, context: context, handedOver: handedOver)
             result[card.index] = ChatRow(id: card.id, kind: .browser(task), gap: result[card.index].gap)
         }
         return result
     }
 
-    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext) -> BrowserTask {
+    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext, handedOver: Bool = false) -> BrowserTask {
         let plan = plans.last
         let planSteps: [BrowserTask.PlanStep] = plan?["steps"]?.array?.compactMap { item in
             guard let text = item["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
@@ -419,6 +426,8 @@ nonisolated enum ChatRows {
         } else if let waiting {
             let title = waiting.0.title.replacingOccurrences(of: #"^在「[^」]*」上|^在电脑上"#, with: "", options: .regularExpression)
             (state, status) = (.waiting, "等你批准：\(title)")
+        } else if handedOver {
+            (state, status) = (.waiting, "等你在电脑上的 Pupu 里接手")
         } else if last {
             (state, status) = (.live, latest.map { browserDoing($0.1) } ?? "正在想怎么做")
         } else if latest?.0.status == .failed {
@@ -458,7 +467,7 @@ nonisolated enum ChatRows {
         case "key": return "正在按键"
         case "scroll": return "正在翻看页面"
         case "back": return "正在回到上一页"
-        case "show": return "浏览器窗口已经放到电脑屏幕上"
+        case "show": return "等你在电脑上的 Pupu 里接手"
         case "download": return "正在下载文件"
         default: return "正在用浏览器"
         }
@@ -562,7 +571,7 @@ nonisolated struct ToolAction {
         case "browser_key": (icon, verb, object) = ("command", "在网页上按", " " + text("key"))
         case "browser_scroll": (icon, verb, object) = ("arrow.up.and.down", "滚动", "网页")
         case "browser_back": (icon, verb, object) = ("chevron.backward", "后退到", "上一页")
-        case "browser_show": (icon, verb, object) = ("macwindow", "把浏览器给人看", "")
+        case "browser_show": (icon, verb, object) = ("macwindow", "请人在电脑上接手", "")
         case "browser_download": (icon, verb, object) = ("arrow.down.circle", "下载", " " + Self.clip(text("url")))
         default: return nil
         }

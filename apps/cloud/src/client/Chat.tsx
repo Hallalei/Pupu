@@ -1,6 +1,7 @@
 import { Button, Dropdown, Label, Spinner } from "@heroui/react";
 import {
   useEffect,
+  useMemo,
   useLayoutEffect,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import { quotedMessage, type Sender } from "../messages";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
+import { offerBrowserCancel } from "./BrowserTakeover";
 import { buildRows, type BrowserTask, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
 import { Composer } from "./Composer";
 import { desktop, useDesktopComputer } from "./desktop";
@@ -101,9 +103,23 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
     }
     return cardFrames.current.get(task.id) ?? null;
   }
+  // 浏览器任务的「取消任务」：这一轮还在跑就停掉；已经停下来等人接手了，就替人说一句不做了。
+  // 卡片上的停止按钮和电脑上接手的放大视图里的「取消任务」都用它。
+  const browserActive = rows.some((row) => row.kind === "browser" && (row.task.state === "live" || row.task.state === "waiting"));
+  const { running, abort, submit } = pi;
+  const cancelBrowser = useMemo(
+    () =>
+      !browserActive
+        ? undefined
+        : running
+          ? abort
+          : () => void submit("不用继续了，取消这个浏览器任务。", crypto.randomUUID()).catch(() => undefined),
+    [browserActive, running, abort, submit]
+  );
+  useEffect(() => (cancelBrowser ? offerBrowserCancel(cancelBrowser) : undefined), [cancelBrowser]);
   const browser = {
     frameFor,
-    onStop: pi.running ? () => pi.abort() : undefined,
+    onStop: cancelBrowser,
     takeOver: (task: BrowserTask) => {
       const app = desktop();
       if (!app?.showBrowser || !here?.computerId || here.computerId !== task.computerId) return undefined;

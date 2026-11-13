@@ -117,6 +117,24 @@ describe("浏览器任务卡片", () => {
     assert.equal(task!.status, "已停下");
   });
 
+  test("最后一步请人接手、这一轮停了：等人在电脑上接手，人回话后这张卡不再等", () => {
+    const handed = [
+      assistant([tool("o1", "browser_open", { url: "https://a.test/login" })]),
+      done("o1", "browser_open"),
+      assistant([tool("s1", "browser_show", {})]),
+      done("s1", "browser_show")
+    ];
+    const [waiting] = tasks(rows(handed, false));
+    assert.equal(waiting!.state, "waiting");
+    assert.equal(waiting!.status, "等你在电脑上的 Pupu 里接手");
+    const [running] = tasks(rows(handed, true));
+    assert.equal(running!.state, "live");
+    const [after] = tasks(rows([...handed, user("好了")], false));
+    assert.equal(after!.state, "done");
+    const [failed] = tasks(rows([handed[0]!, handed[1]!, handed[2]!, done("s1", "browser_show", true)], false));
+    assert.notEqual(failed!.state, "waiting");
+  });
+
   test("用户发了新消息，下一段浏览器操作另起一张卡", () => {
     const list = rows(
       [

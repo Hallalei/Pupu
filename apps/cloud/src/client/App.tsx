@@ -6,6 +6,7 @@ import { actorOf } from "../members";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals, WaitingChip } from "./Approvals";
+import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
 import { useDesktopComputer } from "./desktop";
@@ -246,6 +247,7 @@ export function App() {
     <div className="flex h-dvh">
       <div className="sky" />
       <div className="window-drag" />
+      <BrowserTakeover />
       <Sidebar
         projects={projects}
         waiting={waiting}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, session, type Session, type WebContents } from "electron";
+import { app, BrowserWindow, nativeImage, session, WebContentsView, type Rectangle, type Session, type WebContents } from "electron";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -67,22 +67,35 @@ export type BrowserHostOptions = {
   readonly log: (line: string) => void;
   /** 有新的一帧画面。没有就不截。 */
   readonly onFrame?: (frame: BrowserFrameOut) => void;
-  /** 后台测试时 `show` 也只 showInactive，不抢前台。 */
-  readonly background: boolean;
+  /**
+   * 模型要人来接手（op show）：主进程打开主窗口、把页面挂进去。回一句给模型的话；做不到时 ok 是 false。
+   * 没给就是探针，只回说做不到。
+   */
+  readonly takeover?: () => Promise<{ readonly ok: boolean; readonly text: string }>;
   /** 下载落在哪。默认是 ~/Downloads/Pupu，探针换成临时目录。 */
   readonly downloads?: string;
 };
 
 type Debugger = Electron.Debugger;
 
+/** 页面平时在宿主窗口里的大小。 */
+const HOST_BOUNDS: Rectangle = { x: 0, y: 0, width: 1280, height: 860 };
+
 /**
- * Pupu 浏览器：一个独立的窗口，主进程用 webContents.debugger 走 CDP 驱动它，不开调试端口（docs/浏览器能力方案.md）。
- * 平时不显示；要人登录、过验证码时 `show` 才拿出来。窗口关了就丢，下一步再开一个，登录态在 partition 里留着。
+ * Pupu 浏览器：页面是一个 WebContentsView，主进程用 webContents.debugger 走 CDP 驱动它，不开调试端口（docs/浏览器能力方案.md）。
+ * 任何时候都不出现单独的浏览器窗口：平时挂在一个从不显示的宿主窗口里；人来接手时（登录、验证码）挪进 Pupu 主窗口，
+ * 盖住对话区，人直接点、直接输；关掉放大视图就挪回宿主，任务接着做。宿主窗口关了就丢，下一步再建，登录态在 partition 里留着。
+ * 挪视图、按网页里占位框的位置 setBounds 的做法参考了 Min 浏览器的 main/viewManager.js（Apache-2.0）和
+ * electron-browser-shell 的 packages/shell/browser/tabs.js（GPL-3.0，只看思路），代码是自己写的。
  * 快照、点击的做法参考 browser-use 的 browser_use/ax.py（MIT），自己写的，没搬代码。
  */
 export class BrowserHost {
   readonly #options: BrowserHostOptions;
-  #window: BrowserWindow | null = null;
+  /** 从不显示的宿主窗口和里面的页面。 */
+  #host: BrowserWindow | null = null;
+  #view: WebContentsView | null = null;
+  /** 页面现在挂在哪个窗口里给人接手。null 是在宿主里。 */
+  #attached: BrowserWindow | null = null;
   #queue: Promise<unknown> = Promise.resolve();
   /** 批过打开的本机或内网地址，按「主机:端口」记。页面自己跳到别的内网地址、同一台机器的别的端口，照样拦。 */
   readonly #allowedHosts = new Set<string>();
@@ -135,19 +148,45 @@ export class BrowserHost {
     return result.catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
   }
 
-  /** 把 Pupu 浏览器窗口放到屏幕上，人来接手。主窗口里点「在电脑上接手」走这里。 */
-  show(): void {
-    const window = this.#ensure();
-    // 后台测试时一律不显示：用户可能正远程用着这台电脑。
-    if (this.#options.background) this.#options.log("后台测试：不把 Pupu 浏览器窗口放到屏幕上。");
-    else {
-      window.show();
-      window.focus();
+  /** 页面挂进 Pupu 主窗口给人接手，放在 bounds（窗口内容区的坐标）。已经挂在别的窗口里就先挪过来。 */
+  attach(window: BrowserWindow, bounds: Rectangle): void {
+    const view = this.#ensure();
+    if (this.#attached !== window) {
+      this.#host?.contentView.removeChildView(view);
+      if (this.#attached && !this.#attached.isDestroyed()) this.#attached.contentView.removeChildView(view);
+      window.contentView.addChildView(view);
+      // 和放大视图占位框的圆角一样（网页的 --radius-bubble）。
+      view.setBorderRadius(24);
+      this.#attached = window;
+      this.#options.log("Pupu 浏览器页面挂进主窗口，人来接手。");
     }
+    view.setBounds(bounds);
+    // 空页面拿到焦点也收不到键盘（Min 的 focusView 也这么判断）。
+    if (view.webContents.getURL()) view.webContents.focus();
+    this.#stream(Number.POSITIVE_INFINITY);
+  }
+
+  /** 人关掉了放大视图（或主窗口没了）：页面回到宿主，接着在后台做。 */
+  detach(): void {
+    const view = this.#view;
+    const from = this.#attached;
+    this.#attached = null;
+    if (!view) return;
+    if (from && !from.isDestroyed()) from.contentView.removeChildView(view);
+    if (this.#host && !this.#host.isDestroyed()) {
+      this.#host.contentView.addChildView(view);
+      view.setBorderRadius(0);
+      view.setBounds(HOST_BOUNDS);
+    }
+    if (from) this.#options.log("Pupu 浏览器页面回到后台。");
     this.#stream(Date.now() + STREAM_AFTER_MS);
   }
 
-  /** 画面推到什么时候。到点了定时器自己停。 */
+  /** 页面现在挂在哪个窗口里。测试和主进程收尾用。 */
+  attachedTo(): BrowserWindow | null {
+    return this.#attached && !this.#attached.isDestroyed() ? this.#attached : null;
+  }
+
   #stream(until: number): void {
     if (!this.#options.onFrame) return;
     this.#streamUntil = until;
@@ -158,7 +197,7 @@ export class BrowserHost {
         this.#frameTimer = null;
         return;
       }
-      if (this.#capturing || !this.#window || this.#window.isDestroyed()) return;
+      if (this.#capturing || !this.#view || this.#view.webContents.isDestroyed()) return;
       this.#capturing = true;
       void this.#frame()
         .catch((error: unknown) => this.#options.log(`截画面失败：${error instanceof Error ? error.message : String(error)}`))
@@ -170,18 +209,24 @@ export class BrowserHost {
 
   /** 截一帧、涂掉敏感格子、发出去。敏感格子的位置算不出来，这一帧就不发。 */
   async #frame(): Promise<void> {
-    const contents = this.#window?.webContents;
+    const contents = this.#view?.webContents;
     if (!contents || contents.isDestroyed() || !contents.getURL()) return;
     const rects = await within(this.#sensitiveRects(), SENSITIVE_TIMEOUT_MS, null);
     if (!rects) {
       this.#note("这一帧没发：算不出敏感输入框的位置。");
       return;
     }
-    // 隐藏窗口上 CDP 的截图会一直等新帧；capturePage 的 stayHidden 让页面照常出帧又不显示窗口。
-    let image = await Promise.race([
-      contents.capturePage(undefined, { stayHidden: true }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), CAPTURE_TIMEOUT_MS))
-    ]);
+    // 页面在从不显示的宿主窗口里时，capturePage 报「Current display surface not available」；CDP 的截图照常出帧
+    // （probe/view-probe.ts 量过：宿主里、主窗口里、挪回宿主都截得到）。
+    const shot = await within(
+      this.#cdp("Page.captureScreenshot", { format: "png" }).then(
+        (value) => (value as { data?: string }).data ?? null,
+        () => null
+      ),
+      CAPTURE_TIMEOUT_MS,
+      null
+    );
+    let image = shot ? nativeImage.createFromBuffer(Buffer.from(shot, "base64")) : null;
     if (!image || image.isEmpty()) {
       this.#note("这一帧没截到。");
       return;
@@ -267,9 +312,20 @@ export class BrowserHost {
   stop(): void {
     if (this.#frameTimer) clearInterval(this.#frameTimer);
     this.#frameTimer = null;
-    const window = this.#window;
-    this.#window = null;
-    if (window && !window.isDestroyed()) window.destroy();
+    this.#discard();
+  }
+
+  /** 丢掉页面和宿主窗口；挂在主窗口里的先摘下来。 */
+  #discard(): void {
+    const view = this.#view;
+    const attached = this.#attached;
+    this.#attached = null;
+    if (view && attached && !attached.isDestroyed()) attached.contentView.removeChildView(view);
+    if (view && !view.webContents.isDestroyed()) view.webContents.close();
+    const host = this.#host;
+    this.#host = null;
+    this.#view = null;
+    if (host && !host.isDestroyed()) host.destroy();
   }
 
   async #perform(op: BrowserOp): Promise<BrowserResult> {
@@ -367,8 +423,9 @@ export class BrowserHost {
         return this.#look();
       }
       case "show": {
-        this.show();
-        return { ok: true, url: this.#contents().getURL(), text: "已经把 Pupu 浏览器放到这台电脑的屏幕上了。" };
+        const url = this.#contents().getURL();
+        const handed = this.#options.takeover ? await this.#options.takeover() : { ok: false, text: "这台电脑上没法打开接手的界面。" };
+        return handed.ok ? { ok: true, url, text: handed.text } : { ok: false, error: handed.text };
       }
     }
   }
@@ -526,32 +583,35 @@ export class BrowserHost {
     return this.#ensure().webContents;
   }
 
-  #ensure(): BrowserWindow {
-    if (this.#window && !this.#window.isDestroyed()) return this.#window;
-    const window = new BrowserWindow({
-      width: 1280,
-      height: 860,
-      title: "Pupu 浏览器",
-      show: false,
+  #ensure(): WebContentsView {
+    if (this.#view && this.#host && !this.#host.isDestroyed() && !this.#view.webContents.isDestroyed()) return this.#view;
+    this.#discard();
+    // 宿主窗口从来不 show：它只是让页面有地方挂。显示了就是出错了，记下来（测试看这一行）。
+    const host = new BrowserWindow({ ...HOST_BOUNDS, title: "Pupu 浏览器", show: false });
+    host.on("show", () => this.#options.log("出错：Pupu 浏览器的宿主窗口被显示了。"));
+    const view = new WebContentsView({
       webPreferences: {
         partition: BROWSER_PARTITION,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        // 窗口平时不显示，不节流才能照常渲染和响应输入。
+        // 页面平时不在屏幕上，不节流才能照常渲染和响应输入。
         backgroundThrottling: false,
         spellcheck: false,
         devTools: !app.isPackaged
       }
     });
-    guard(window.webContents, (url) => this.allowsNavigation(url));
-    window.on("closed", () => {
-      if (this.#window === window) this.#window = null;
+    view.setBounds(HOST_BOUNDS);
+    host.contentView.addChildView(view);
+    guard(view.webContents, (url) => this.allowsNavigation(url));
+    host.on("closed", () => {
+      if (this.#host === host) this.#discard();
     });
-    this.#window = window;
-    this.#options.log("Pupu 浏览器窗口已创建。");
-    return window;
+    this.#host = host;
+    this.#view = view;
+    this.#options.log("Pupu 浏览器页面已创建（后台，不显示窗口）。");
+    return view;
   }
 }
 

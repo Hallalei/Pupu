@@ -376,7 +376,14 @@ type BrowserMark = { readonly op: string; readonly args: Record<string, unknown>
  * 用户发了新消息、项目报回结果、系统通知，就算下一件事，另起一张。和 iOS 的 ChatRows.swift 一起改。
  */
 function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMark>, running: boolean, context: RowContext): Row[] {
-  type Open = { index: number; id: string; steps: { step: ToolStep; mark: BrowserMark }[]; plans: Record<string, unknown>[] };
+  type Open = {
+    index: number;
+    id: string;
+    steps: { step: ToolStep; mark: BrowserMark }[];
+    plans: Record<string, unknown>[];
+    /** 后面有人说了话（或者报回、通知），这件事算过去了。 */
+    closed: boolean;
+  };
   const result: Row[] = [];
   const cards: Open[] = [];
   let open: Open | null = null;
@@ -384,7 +391,7 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
     const mark = marks.get(row.id);
     if (mark) {
       if (!open) {
-        open = { index: result.length, id: `browser:${row.id.replace(/^(tool|plan):/, "")}`, steps: [], plans: [] };
+        open = { index: result.length, id: `browser:${row.id.replace(/^(tool|plan):/, "")}`, steps: [], plans: [], closed: false };
         cards.push(open);
         result.push(row);
       }
@@ -392,12 +399,19 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
       else if (row.kind === "tool") open.steps.push({ step: row.step, mark });
       continue;
     }
-    if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report") open = null;
+    if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report") {
+      if (open) open.closed = true;
+      open = null;
+    }
     result.push(row);
   }
   cards.forEach((card, position) => {
     const first = result[card.index]!;
-    const task = browserTask(card.id, card.steps, card.plans, running && position === cards.length - 1, context);
+    const newest = position === cards.length - 1;
+    // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
+    const latest = card.steps.at(-1);
+    const handedOver = !running && newest && !card.closed && latest?.mark.op === "show" && latest.step.status === "done";
+    const task = browserTask(card.id, card.steps, card.plans, running && newest, context, handedOver);
     result[card.index] = { id: card.id, gap: first.gap, kind: "browser", task };
   });
   return result;
@@ -408,7 +422,8 @@ function browserTask(
   steps: readonly { step: ToolStep; mark: BrowserMark }[],
   plans: readonly Record<string, unknown>[],
   last: boolean,
-  context: RowContext
+  context: RowContext,
+  handedOver = false
 ): BrowserTask {
   const plan = plans.at(-1);
   const planSteps: BrowserPlanStep[] = Array.isArray(plan?.steps)
@@ -431,6 +446,9 @@ function browserTask(
   } else if (waiting) {
     state = "waiting";
     status = `等你批准：${waiting.step.title.replace(/^在「[^」]*」上|^在电脑上/, "")}`;
+  } else if (handedOver) {
+    state = "waiting";
+    status = "等你在电脑上的 Pupu 里接手";
   } else if (last) {
     state = "live";
     status = latest ? browserDoing(latest.mark) : "正在想怎么做";
@@ -490,7 +508,7 @@ export function browserDoing(mark: BrowserMark): string {
     case "back":
       return "正在回到上一页";
     case "show":
-      return "浏览器窗口已经放到电脑屏幕上";
+      return "等你在电脑上的 Pupu 里接手";
     case "download":
       return "正在下载文件";
     default:
@@ -614,7 +632,7 @@ function describe(
     case "browser_back":
       return { icon: "cursor", verb: "后退到", object: "上一页" };
     case "browser_show":
-      return { icon: "screenshot", verb: "把浏览器给人看", object: "" };
+      return { icon: "screenshot", verb: "请人在电脑上接手", object: "" };
     case "browser_download":
       return { icon: "file", verb: "下载", object: ` ${clip(text("url"))}` };
     default:

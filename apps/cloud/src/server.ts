@@ -132,6 +132,7 @@ import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
 import { ApprovalPusher } from "./push/approvals";
 import { LivePusher, liveDue, type LiveInput } from "./push/live";
 import { PushStore, type PushTokenType } from "./push/store";
+import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
@@ -459,6 +460,18 @@ export class Pupu extends DurableObject<Env> {
       this.#browserSessions.delete(computerId);
     };
     this.bridge.onBrowserFrame = (computerId, frame) => this.#browserFrame(computerId, frame);
+    this.bridge.onTakeover = (computerId, requestId) => {
+      void pushTakeover({
+        apns: this.#apnsClient(),
+        tokens: this.push.tokens("alert"),
+        to: this.#phonesOf(computerId),
+        requestId,
+        computerName: this.#computerName(computerId),
+        now: Date.now(),
+        remove: (token) => this.push.remove(token),
+        log: (message) => console.warn(message)
+      }).catch((error: unknown) => console.warn(`接手提醒没推出去：${String(error)}`));
+    };
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
       this.sockets.broadcast({ type: "computers_changed" });

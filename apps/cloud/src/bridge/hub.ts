@@ -118,6 +118,8 @@ export class ComputerBridge {
   onDetached: (requestId: string, computerId: string, command: string) => void = () => {};
   /** 交出去的命令退出了。 */
   onFinished: (computerId: string, frame: Extract<UpFrame, { type: "finished" }>) => void = () => {};
+  /** 电脑上的 Pupu 已经在主窗口里打开了浏览器页面，等人接手（browser_show 做成了）。 */
+  onTakeover: (computerId: string, requestId: string) => void = () => {};
   /** 这个动作批过没有。批过的在 exec 帧里带上 approved，桥上的二次判断认它。 */
   approvedFor: (input: { requestId: string; computerId: string; action: Action }) => boolean = () => false;
 
@@ -319,7 +321,11 @@ export class ComputerBridge {
       if ((collected.kind === "detached" || collected.kind === "started") && input.action.kind === "run") {
         this.onDetached(input.requestId, computer.id, input.action.command);
       }
-      return outcomeOf(computer, collected, log);
+      const outcome = outcomeOf(computer, collected, log);
+      if (outcome.ok && input.action.kind === "browser" && input.action.op === "show") {
+        this.onTakeover(computer.id, input.requestId);
+      }
+      return outcome;
     } finally {
       this.#waiters.delete(input.requestId);
       this.#running.delete(input.requestId);

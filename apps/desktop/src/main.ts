@@ -151,7 +151,63 @@ const supervisor = new BridgeSupervisor(dist("bridge.mjs"), {
 });
 
 function newBrowser(): BrowserHost {
-  return new BrowserHost({ log, background, onFrame: (frame) => supervisor.browserFrame(frame) });
+  return new BrowserHost({ log, takeover: openTakeover, onFrame: (frame) => supervisor.browserFrame(frame) });
+}
+
+/**
+ * 人来接手：主窗口里盖住对话区的放大视图，里面是真实页面（WebContentsView 挂在主窗口里），不弹单独的窗口。
+ * 主进程记着要不要开：主窗口刚打开时页面还没加载，一次性的消息会丢，页面加载好后自己来问（`pupu:browser-takeover-state`）。
+ * 页面量好占位框再调 `pupu:browser-attach` 把真实页面挂上去；关掉时调 `pupu:browser-detach`，页面回到后台。
+ */
+let takeoverOpen = false;
+
+async function openTakeover(): Promise<{ ok: boolean; text: string }> {
+  if (!pairing.desktop) return { ok: false, text: "这台电脑上的 Pupu 还没登录，打不开接手的界面。" };
+  takeoverOpen = true;
+  await openMain();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    takeoverOpen = false;
+    return { ok: false, text: "这台电脑上的 Pupu 主窗口没打开。" };
+  }
+  sendTakeover();
+  log("要人接手：在主窗口里打开浏览器页面。");
+  return {
+    ok: true,
+    text: "已经在这台电脑的 Pupu 主窗口里打开了浏览器页面，电脑前的人可以直接在里面操作。等他说好了再继续。"
+  };
+}
+
+function sendTakeover(): void {
+  const contents = mainWindow?.webContents;
+  if (contents && sameOrigin(contents.getURL(), origin)) contents.send("pupu:browser-takeover", takeoverOpen);
+}
+
+/** 收起接手的界面：页面回到后台，任务接着做。主窗口关了、刷新了、渲染进程没了，都走这里，免得页面盖在对话上下不来。 */
+function closeTakeover(reason: string): void {
+  if (!takeoverOpen && !browser?.attachedTo()) return;
+  takeoverOpen = false;
+  browser?.detach();
+  log(`收起接手的界面：${reason}`);
+  sendTakeover();
+}
+
+function visibleWindows(): string {
+  const shown = BrowserWindow.getAllWindows().filter((window) => window.isVisible());
+  return shown.map((window) => `「${window.getTitle()}」${window === mainWindow ? "（主窗口）" : ""}`).join("、") || "没有";
+}
+
+/** 页面给的占位框，换成主窗口内容区里的整数坐标，超出的部分裁掉。 */
+function takeoverBounds(window: BrowserWindow, value: unknown): Electron.Rectangle | null {
+  const rect = (value ?? {}) as Record<string, unknown>;
+  const [x, y, width, height] = [rect.x, rect.y, rect.width, rect.height].map((n) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n) : NaN));
+  if ([x, y, width, height].some((n) => Number.isNaN(n))) return null;
+  const [contentWidth, contentHeight] = window.getContentSize();
+  const left = Math.max(0, Math.min(x!, contentWidth!));
+  const top = Math.max(0, Math.min(y!, contentHeight!));
+  const right = Math.max(left, Math.min(x! + width!, contentWidth!));
+  const bottom = Math.max(top, Math.min(y! + height!, contentHeight!));
+  if (right - left < 40 || bottom - top < 40) return null;
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /**
@@ -535,9 +591,23 @@ async function openMain(): Promise<void> {
   // 第一次加载就失败时可能等不到 ready-to-show。
   setTimeout(show, 3000);
   window.on("closed", () => {
+    if (browser?.attachedTo() === window) browser.detach();
     if (mainWindow === window) mainWindow = null;
+    takeoverOpen = false;
     updateDock();
   });
+  // 主窗口的页面换了、刷新了、崩了：挂在上面的浏览器页面先摘下来，不然它盖在对话上，关闭按钮却没了。
+  // 要不要接手（takeoverOpen）不变：新页面加载好会来问，再挂回去；主窗口第一次加载也走这里。
+  const unhook = (reason: string) => {
+    if (browser?.attachedTo() !== window) return;
+    browser.detach();
+    log(`先把浏览器页面摘下来：${reason}`);
+  };
+  window.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) unhook("主窗口的页面换了");
+  });
+  window.webContents.on("render-process-gone", () => unhook("主窗口的页面崩了"));
+  // 换成离线页也是主框架导航，上面 did-start-navigation 会把接手的界面收起来。
   const showOffline = () =>
     void window.loadFile(dist("offline.html"), { query: { url: `${origin}/`, host: new URL(origin).host } });
   window.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
@@ -672,10 +742,32 @@ function registerIpc(): void {
     if (!url) throw new Error("没有这个设置页。");
     await shell.openExternal(url);
   });
-  ipcMain.handle("pupu:show-browser", (event) => {
+  // 「在电脑上接手」：和模型的 browser_show 走同一条路，在主窗口里打开放大视图。
+  ipcMain.handle("pupu:show-browser", async (event) => {
     fromMain(event);
     browser ??= newBrowser();
-    browser.show();
+    await openTakeover();
+  });
+  ipcMain.handle("pupu:browser-takeover-state", (event) => {
+    fromMain(event);
+    return takeoverOpen;
+  });
+  ipcMain.handle("pupu:browser-attach", (event, rect: unknown) => {
+    fromMain(event);
+    const window = mainWindow;
+    if (!window || !takeoverOpen) return false;
+    const bounds = takeoverBounds(window, rect);
+    if (!bounds) throw new Error("放浏览器页面的位置不对。");
+    browser ??= newBrowser();
+    const first = browser.attachedTo() !== window;
+    browser.attach(window, bounds);
+    // 排查用：挂上时屏幕上有哪些窗口。只该有 Pupu 主窗口，Pupu 浏览器不该单独出现。
+    if (first) log(`屏幕上的窗口：${visibleWindows()}`);
+    return true;
+  });
+  ipcMain.handle("pupu:browser-detach", (event) => {
+    fromMain(event);
+    closeTakeover("人关掉了");
   });
   ipcMain.handle("pupu:chrome-profiles", async (event) => {
     fromMain(event);
