@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
+import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals, WaitingChip } from "./Approvals";
@@ -100,6 +101,7 @@ export function App() {
     reports,
     chats,
     passkeys,
+    pupuAvatar,
     loaded,
     error,
     unauthorized,
@@ -281,6 +283,7 @@ export function App() {
               canSwitch={canSwitch}
               unread={lines.unread}
               onOpenLine={openLine}
+              avatar={pupuAvatar}
             />
             <button
               type="button"
@@ -288,7 +291,11 @@ export function App() {
               onClick={() => setSettings("root")}
               className="glass lift tap grid size-bar place-items-center rounded-full text-subheadline font-semibold"
             >
-              我
+              <MemberAvatar
+                name="我"
+                src={members.find((member) => member.current)?.avatar ?? null}
+                className="size-[calc(100%-4px)]"
+              />
             </button>
           </div>
           <div className="h-2" />
@@ -369,6 +376,7 @@ export function App() {
           await refresh();
         }}
         confirmBy={confirmBy}
+        pupuAvatar={pupuAvatar}
         passkeys={passkeys}
         onPasskeysChanged={refresh}
         onRemoveMember={async (id) => {
@@ -397,7 +405,8 @@ function SectionSwitch({
   line,
   canSwitch,
   unread,
-  onOpenLine
+  onOpenLine,
+  avatar
 }: {
   section: Section;
   onSection: (section: Section) => void;
@@ -405,6 +414,8 @@ function SectionSwitch({
   canSwitch: boolean;
   unread: Record<LineKey, boolean>;
   onOpenLine: (line: LineKey) => void;
+  /** Pupu 换过的头像，没换过是 null。 */
+  avatar: string | null;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLElement | null>(null);
@@ -435,11 +446,7 @@ function SectionSwitch({
                 }}
                 className="pressable relative flex h-bar-inner items-center gap-1.5 pr-3 pl-1"
               >
-                <img
-                  src="/pupu-avatar.png"
-                  alt=""
-                  className="size-6.5 rounded-full [image-rendering:pixelated] pointer-fine:size-6"
-                />
+                <MemberAvatar name="Pupu" src={avatar ?? PUPU_AVATAR} className="size-6.5 pointer-fine:size-6" />
                 {LINE_NAMES[line]}
                 {fresh.length > 0 && (
                   <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />

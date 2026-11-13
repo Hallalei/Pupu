@@ -198,10 +198,14 @@ nonisolated struct Member: Decodable, Sendable, Hashable {
     let role: String
     /// 第一次登录的时间。邀请了还没登录过是 nil。
     let joinedAt: Double?
+    /// 换过的头像，相对这个 Pupu 的地址（见云端 avatars.ts）。没换过、旧版云端不给是 nil，显示名字的第一个字。
+    let avatar: String?
     /// 这台手机是他的。
     let current: Bool
 
     var isCreator: Bool { role == "creator" }
+    /// 显示的名字，没有就用邮箱 @ 前面那段，和云端 memberName 一样。
+    var displayName: String { name ?? email.split(separator: "@").first.map(String.init) ?? email }
 
     var label: String {
         if isCreator { return "创建者" }
@@ -366,4 +370,15 @@ nonisolated struct PupuState: Decodable, Sendable {
     let connectors: Connectors?
     /// 旧版云端不给。
     let reports: [ReportCard]?
+    /// 能选的预设头像。旧版云端不给。
+    let avatarPresets: [AvatarPreset]?
+    /// Pupu 换过的头像地址，没换过或旧版云端是 nil。
+    let pupuAvatar: String?
+}
+
+/// 预设头像：Pupu 衍生的像素猫。`url` 相对这个 Pupu 的地址。
+nonisolated struct AvatarPreset: Decodable, Sendable, Hashable {
+    let id: String
+    let name: String
+    let url: String
 }

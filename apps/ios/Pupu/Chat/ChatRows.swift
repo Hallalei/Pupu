@@ -7,8 +7,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         /// 我发的消息；quote 是开头引用的那段。
         case user(body: String, quote: String?)
-        /// 别人发的消息。
-        case other(body: String, quote: String?, sender: Sender)
+        /// 别人发的消息。avatar 是他现在的头像（按成员 id 从名单里查），换了头像旧消息也跟着换。
+        case other(body: String, quote: String?, sender: Sender, avatar: String?)
         /// Pupu 的正文，Markdown。
         case assistant(String)
         /// Pupu 还没出字：一个只有三个点的气泡。
@@ -141,7 +141,12 @@ nonisolated enum ChatRows {
                 } else {
                     let split = SpecialMessage.splitQuote(text)
                     let kind: ChatRow.Kind = if let sender = otherSender(message, context: context) {
-                        .other(body: split.body, quote: split.quote, sender: sender)
+                        .other(
+                            body: split.body,
+                            quote: split.quote,
+                            sender: sender,
+                            avatar: context.members.first { $0.id == sender.id }?.avatar
+                        )
                     } else {
                         .user(body: split.body, quote: split.quote)
                     }

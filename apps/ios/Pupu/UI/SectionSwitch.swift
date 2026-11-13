@@ -60,6 +60,9 @@ final class SectionSwitch: UIControl {
             (index == Self.chatIndex ? chat : self).addSubview(label)
         }
         addSubview(chat)
+        avatar.clipsToBounds = true
+        avatar.layer.cornerRadius = 13
+        avatar.layer.magnificationFilter = .nearest
         chat.addSubview(avatar)
         dot.backgroundColor = Theme.danger
         dot.layer.cornerRadius = 5
@@ -95,6 +98,12 @@ final class SectionSwitch: UIControl {
         labels[Self.chatIndex].frame = CGRect(x: avatar.frame.maxX + 6, y: 0, width: 36, height: chat.bounds.height)
         indicator.frame = frame(of: selectedIndex)
         indicator.layer.cornerRadius = indicator.bounds.height / 2
+    }
+
+    /// 换 Pupu 的头像。像素画放大按格子来，照片照常平滑。
+    func setAvatar(_ image: UIImage?, pixelArt: Bool) {
+        avatar.image = image
+        avatar.layer.magnificationFilter = pixelArt ? .nearest : .linear
     }
 
     func select(_ index: Int, animated: Bool) {

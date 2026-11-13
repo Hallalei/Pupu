@@ -5,6 +5,8 @@ import UIKit
 /// 项目名胶囊盖在内容上，不挤内容。
 /// 一个主界面只属于一个身份：换了 Pupu 或者重新配对，RootViewController 整个换一个新的。
 final class ShellViewController: UIViewController {
+    private let settingsButton = UIBarButtonItem()
+    private var avatarToken: NSObjectProtocol?
     private enum Section: Int {
         case chat, projects
     }
@@ -92,9 +94,12 @@ final class ShellViewController: UIViewController {
         segments.chatMenu = { [weak self] in self?.laneMenu() }
         navigationItem.titleView = segments
 
-        let settings = UIBarButtonItem(title: "我", primaryAction: UIAction { [weak self] _ in self?.openSettings() })
-        settings.accessibilityLabel = "设置"
-        navigationItem.rightBarButtonItem = settings
+        settingsButton.primaryAction = UIAction(title: "我") { [weak self] _ in self?.openSettings() }
+        settingsButton.accessibilityLabel = "设置"
+        navigationItem.rightBarButtonItem = settingsButton
+        avatarToken = NotificationCenter.default.addObserver(forName: Avatars.loaded, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateMe() }
+        }
         projectList.accessibilityLabel = "全部项目"
 
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -141,7 +146,23 @@ final class ShellViewController: UIViewController {
         switcher.topInset = height
     }
 
+    /// 右上角的「我」：换过头像的显示头像。
+    private func updateMe() {
+        let pupu = Avatars.shared.pupu()
+        segments.setAvatar(pupu.image, pixelArt: pupu.pixelArt)
+        let path = Store.shared.members.first(where: \.current)?.avatar
+        guard let image = Avatars.shared.image(path) else {
+            settingsButton.image = nil
+            settingsButton.title = "我"
+            return
+        }
+        settingsButton.title = nil
+        settingsButton.image = Avatars.round(image, letter: "我", size: 30, pixelArt: Avatars.isPixelArt(path))
+            .withRenderingMode(.alwaysOriginal)
+    }
+
     private func storeChanged() {
+        updateMe()
         approvals.update(Store.shared.approvals)
         updateDesktop()
         if Store.shared.chats[lane] == nil { setLane(.main) }
@@ -187,7 +208,8 @@ final class ShellViewController: UIViewController {
         return UIMenu(children: Lane.allCases.map { item in
             UIAction(
                 title: item.title,
-                image: UIImage(named: "pupu-avatar")?.withRenderingMode(.alwaysOriginal),
+                image: Avatars.round(Avatars.shared.pupu().image, letter: "P", size: 26, pixelArt: Avatars.shared.pupu().pixelArt)
+                    .withRenderingMode(.alwaysOriginal),
                 state: item == lane ? .on : .off
             ) { [weak self] _ in
                 UISelectionFeedbackGenerator().selectionChanged()

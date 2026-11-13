@@ -101,6 +101,9 @@ final class UserCell: ChatCell {
 final class OtherCell: ChatCell {
     private let avatar = SurfaceView(.strong, radius: Theme.Size.avatar / 2)
     private let initial = UILabel(style: .footnote)
+    private let picture = UIImageView()
+    private var avatarPath: String?
+    private var avatarToken: NSObjectProtocol?
     private let bubble = SurfaceView(.user, radius: Theme.Radius.bubble)
     private let name = UILabel(style: .footnote)
     private let label = UILabel(style: .message, lines: 0)
@@ -112,6 +115,19 @@ final class OtherCell: ChatCell {
         initial.textAlignment = .center
         avatar.contentView.addSubview(initial)
         initial.pin(to: avatar.contentView)
+        picture.contentMode = .scaleAspectFill
+        picture.clipsToBounds = true
+        picture.layer.cornerRadius = Theme.Size.avatar / 2
+        avatar.contentView.addSubview(picture)
+        picture.pin(to: avatar.contentView)
+        // 头像图拿到了再补上：列表不用为了一张图整个重画。
+        avatarToken = NotificationCenter.default.addObserver(forName: Avatars.loaded, object: nil, queue: .main) { [weak self] note in
+            let path = note.object as? String
+            MainActor.assumeIsolated {
+                guard let self, let path, path == self.avatarPath else { return }
+                self.showAvatar()
+            }
+        }
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: Theme.Size.avatar),
             avatar.heightAnchor.constraint(equalToConstant: Theme.Size.avatar)
@@ -139,15 +155,26 @@ final class OtherCell: ChatCell {
 
     override var bubbleView: UIView? { bubble }
 
-    func configure(body: String, quote text: String?, sender: Sender, width: CGFloat) {
+    func configure(body: String, quote text: String?, sender: Sender, avatar path: String?, width: CGFloat) {
         let column = width - Theme.Size.avatar - Theme.Space.s2
         initial.text = sender.name.first.map { String($0).uppercased() }
+        avatarPath = path
+        showAvatar()
         name.text = sender.name
         label.attributedText = NSAttributedString(string: body, attributes: Theme.messageAttributes())
         label.preferredMaxLayoutWidth = column - Bubble.horizontal
         quote.isHidden = text == nil
         quote.configure(text.map(Markdown.plainText) ?? "", width: column)
         accessibilityLabel = (text.map { "回复「\($0)」。" } ?? "") + "\(sender.name)：\(body)"
+    }
+
+    /// 有图盖在首字上面，没图（没换过、还没拿到）露出首字。
+    private func showAvatar() {
+        let image = Avatars.shared.image(avatarPath)
+        picture.image = image
+        picture.isHidden = image == nil
+        picture.layer.magnificationFilter = Avatars.isPixelArt(avatarPath) ? .nearest : .linear
+        initial.isHidden = image != nil
     }
 }
 
