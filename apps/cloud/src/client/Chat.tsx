@@ -20,7 +20,16 @@ import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
 import { offerBrowserCancel } from "./BrowserTakeover";
-import { buildRows, type BrowserTask, type ChatRow, type StepIcon, type StepStatus, type ToolStep } from "./chat-rows";
+import {
+  buildRows,
+  stepText,
+  type BrowserTask,
+  type ChatRow,
+  type ComputerTask,
+  type StepIcon,
+  type StepStatus,
+  type ToolStep
+} from "./chat-rows";
 import { Composer } from "./Composer";
 import { desktop, useDesktopComputer } from "./desktop";
 import { begin, IDLE, restoreDraft, settle, type Outbox } from "./outbox";
@@ -28,6 +37,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CloseIcon,
+  ComputerIcon,
   CopyIcon,
   CursorIcon,
   FileIcon,
@@ -36,7 +46,6 @@ import {
   PencilIcon,
   ReplyIcon,
   ScreenshotIcon,
-  StepsIcon,
   TerminalIcon
 } from "./icons";
 import { usePiSession } from "./use-pi-session";
@@ -450,17 +459,8 @@ function Row({
       return <ProjectTag name={row.name} projectId={row.projectId} context={context} />;
     case "tool":
       return <ToolCard step={row.step} onToggle={() => onToggle(row.id)} />;
-    case "tool-group":
-      return (
-        <StepCard
-          icon={<StepsIcon />}
-          title={row.title}
-          status={row.status}
-          failures={row.failures}
-          expanded={row.expanded}
-          onToggle={() => onToggle(row.id)}
-        />
-      );
+    case "computer":
+      return <ComputerCard task={row.task} onToggle={onToggle} />;
     case "notice":
       return (
         <div className="flex justify-center">
@@ -674,6 +674,115 @@ function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
         </div>
       )}
     </StepCard>
+  );
+}
+
+/**
+ * 电脑任务卡：在哪台电脑上、在做什么、状态；带回过截图就显示最近的画面，点「步骤」看每一步。
+ * 样子学浏览器卡片和原型里的子会话卡，iOS 的 ComputerCardCell 是同一个样子，两边一起改。
+ * 「接手」是打开远程桌面，只有手机上有看远程桌面的地方，网页和电脑 App 上不放。
+ */
+function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: string) => void }) {
+  const active = task.state === "live" || task.state === "waiting";
+  return (
+    <div
+      data-computer-card={task.computerId ?? ""}
+      data-state={task.state}
+      className="strong flex w-full max-w-[420px] flex-col overflow-hidden rounded-bubble"
+    >
+      <div className="flex items-center gap-2 px-3.5 pt-2.5 pb-2">
+        <ComputerIcon className="shrink-0 text-[17px] pointer-fine:text-[15px]" />
+        <span className="min-w-0 flex-1 truncate text-subheadline font-semibold">
+          {task.computer ? `在「${task.computer}」上` : "在电脑上"}
+        </span>
+        <ComputerStatus task={task} />
+      </div>
+      {task.screen && (
+        <img
+          src={`data:${task.screen.mimeType};base64,${task.screen.data}`}
+          alt={`「${task.computer ?? "电脑"}」上的画面`}
+          className={`mx-3.5 max-h-56 rounded-tag object-cover object-top outline outline-1 -outline-offset-1 outline-black/5 ${active ? "" : "opacity-80"}`}
+        />
+      )}
+      <div className="flex items-center gap-2 px-3.5 pt-2 pb-2.5">
+        <span className="min-w-0 flex-1 truncate text-footnote text-muted">{task.latest}</span>
+        <button
+          type="button"
+          aria-expanded={task.expanded}
+          onClick={() => onToggle(task.id)}
+          className="tap flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface-inset px-3 text-footnote font-semibold pointer-fine:h-7"
+        >
+          步骤
+          <ChevronDownIcon className={`text-[11px] ${task.expanded ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+      {task.expanded && (
+        <ol aria-label="步骤" className="flex flex-col border-t border-separator">
+          {task.steps.map((step) => (
+            <StepLine key={step.callId} step={step} onToggle={() => onToggle(`tool:${step.callId}`)} />
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function ComputerStatus({ task }: { task: ComputerTask }) {
+  switch (task.state) {
+    case "live":
+      return (
+        <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted">
+          <Spinner size="sm" aria-hidden="true" className="size-3.5" />
+          {task.status}
+        </span>
+      );
+    case "waiting":
+      return (
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+          {task.status}
+        </span>
+      );
+    case "failed":
+      return <span className="shrink-0 text-caption text-danger-ink">{task.status}</span>;
+    default:
+      return <span className="shrink-0 text-caption text-muted">{task.status}</span>;
+  }
+}
+
+/** 卡片里的一步：一行，有输出的点开看输出。 */
+function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
+  const header = (
+    <>
+      <span className="shrink-0 text-[15px] text-muted pointer-fine:text-[13px]">{STEP_ICONS[step.icon]}</span>
+      <span className="min-w-0 flex-1 text-left text-footnote break-words">{stepText(step)}</span>
+      <StepStatusMark status={step.status} failures={0} />
+    </>
+  );
+  return (
+    <li className="flex flex-col">
+      {step.output ? (
+        <button
+          type="button"
+          aria-expanded={step.expanded}
+          onClick={onToggle}
+          className="flex min-h-9 w-full items-center gap-2 px-3.5 py-2 hover:bg-foreground/4"
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="flex min-h-9 items-center gap-2 px-3.5 py-2">{header}</div>
+      )}
+      {step.expanded && step.output && (
+        <pre className="mx-3.5 mb-2.5 max-h-58 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
+          {step.output}
+        </pre>
+      )}
+      {step.expanded && step.outputPath && (
+        <div className="mx-3.5 mb-2.5 text-caption break-all text-muted">
+          完整输出在 <span className="font-mono">{step.outputPath}</span>
+        </div>
+      )}
+    </li>
   );
 }
 

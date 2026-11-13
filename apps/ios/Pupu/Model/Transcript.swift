@@ -8,7 +8,14 @@ nonisolated enum Part: Equatable, Sendable {
     case thinking(String)
     case image
     case toolCall(id: String, name: String, arguments: JSON)
-    case toolResult(id: String, name: String, text: String, details: JSON?, error: Bool)
+    /// image 是结果里最后一张截图（base64 和类型），电脑任务卡上显示。
+    case toolResult(id: String, name: String, text: String, details: JSON?, error: Bool, image: StepImage? = nil)
+}
+
+/// 一张截图：base64 的数据和类型。
+nonisolated struct StepImage: Equatable, Sendable {
+    let data: String
+    let mimeType: String
 }
 
 /// 发这条消息的成员。名字是发的时候的名字，和云端 src/messages.ts 的 Sender 一样。
@@ -71,6 +78,10 @@ nonisolated enum Transcript {
                 .compactMap { $0["type"]?.string == "text" ? $0["text"]?.string : nil }
                 .joined(separator: "\n")
             let details = message["details"]
+            let image = (message["content"]?.array ?? []).last { $0["type"]?.string == "image" }.flatMap { block -> StepImage? in
+                guard let data = block["data"]?.string else { return nil }
+                return StepImage(data: data, mimeType: block["mimeType"]?.string ?? "image/jpeg")
+            }
             return Message(
                 id: id,
                 role: .tool,
@@ -80,7 +91,8 @@ nonisolated enum Transcript {
                         name: message["toolName"]?.string ?? "",
                         text: text,
                         details: details,
-                        error: message["isError"]?.bool ?? false
+                        error: message["isError"]?.bool ?? false,
+                        image: image
                     )
                 ],
                 timestamp: timestamp

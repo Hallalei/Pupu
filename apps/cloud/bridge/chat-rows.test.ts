@@ -62,11 +62,10 @@ function statuses(
     computers: options.computers ?? [MAC],
     approvals: options.approvals ?? [],
     members: [],
-    // 连着三步以上会合成一组，展开它才看得到每一步。
-    toggled: new Set(messages.flatMap((message) => message.parts.flatMap((part) => (part.type === "tool-call" ? [`group:${part.id}`] : []))))
+    toggled: new Set()
   };
   return buildRows({ ...EMPTY_VIEW, messages, running: options.running }, context).flatMap((row) =>
-    row.kind === "tool" ? [row.step.status] : []
+    row.kind === "computer" ? row.task.steps.map((step) => step.status) : []
   );
 }
 
@@ -137,4 +136,76 @@ test("系统消息画成居中的一行，只放第一句", () => {
     rows.map((row) => (row.kind === "notice" ? row.text : row.kind)),
     ["「mbpro」上放到后台的命令跑完了，退出码 0："]
   );
+});
+
+describe("电脑任务卡", () => {
+  const context: RowContext = { projectTags: false, projects: new Map(), computers: [MAC], approvals: [], members: [], toggled: new Set() };
+  const shot = (id: string, data: string): TranscriptMessage => ({
+    id: `r-${id}`,
+    role: "tool",
+    timestamp: 2,
+    parts: [
+      {
+        type: "tool-result",
+        id,
+        name: "computer_look",
+        content: [
+          { type: "text", text: "看了" },
+          { type: "image", data, mimeType: "image/jpeg" }
+        ],
+        error: false
+      }
+    ]
+  });
+  const look = (id: string): TranscriptMessage => ({
+    id: `a-${id}`,
+    role: "assistant",
+    timestamp: 1,
+    parts: [{ type: "tool-call", id, name: "computer_look", arguments: { computer_id: "mac" } }]
+  });
+  const say = (id: string, text: string, role: "user" | "assistant"): TranscriptMessage => ({
+    id,
+    role,
+    timestamp: 3,
+    parts: [{ type: "text", text }]
+  });
+  const cards = (messages: TranscriptMessage[], running = false) =>
+    buildRows({ ...EMPTY_VIEW, messages, running }, context).flatMap((row) => (row.kind === "computer" ? [row.task] : []));
+
+  test("一轮里在同一台电脑上的几步合成一张卡，中间的话照常显示，带最近的画面", () => {
+    const rows = buildRows(
+      {
+        ...EMPTY_VIEW,
+        messages: [look("l1"), shot("l1", "first"), say("t1", "看到了，接着跑测试", "assistant"), call("c1"), result("c1", "全过了", false), look("l2"), shot("l2", "second")],
+        running: false
+      },
+      context
+    );
+    assert.deepEqual(
+      rows.map((row) => row.kind),
+      ["computer", "assistant"]
+    );
+    const task = rows[0]!.kind === "computer" ? rows[0]!.task : null;
+    assert.equal(task?.computer, "mbpro");
+    assert.equal(task?.computerId, "mac");
+    assert.equal(task?.steps.length, 3);
+    assert.equal(task?.state, "done");
+    assert.equal(task?.status, "用完了 · 3 步");
+    assert.equal(task?.latest, "看了窗口");
+    assert.equal(task?.screen?.data, "second");
+  });
+
+  test("用户说了话就另起一张", () => {
+    assert.equal(cards([call("c1"), result("c1", "ok", false), say("u1", "再跑一次", "user"), call("c2"), result("c2", "ok", false)]).length, 2);
+  });
+
+  test("一步也是一张卡；这一轮还在跑时是正在做，最后一步出错是出错了并默认展开", () => {
+    const [live] = cards([call("c1")], true);
+    assert.equal(live?.state, "live");
+    assert.equal(live?.status, "正在做");
+    assert.equal(live?.screen, null);
+    const [failed] = cards([call("c1"), result("c1", "找不到 npm", true)]);
+    assert.equal(failed?.state, "failed");
+    assert.equal(failed?.expanded, true);
+  });
 });
