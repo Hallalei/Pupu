@@ -26,6 +26,8 @@ id 发出去以后别改：成员存的是 id，改了他的头像就回到名�
 
 见 `apps/cloud/src/avatars.ts`：预设是静态文件；上传的由客户端裁成方形缩到 256（网页 WebP，iOS JPEG），云端只验文件头、方不方、边长和大小，存进这个 Pupu 的 SQLite。
 
+Pupu 自己的头像也用这一套，只有创建者能换（设置里的「Pupu 的头像」）。没换过用自带的 `/pupu-avatar.png`，所以各端没换过时和以前一样。
+
 ## 参考了谁
 
 - 头像地址带上换的时间，换了地址就变、可以长缓存：[immich](https://github.com/immich-app/immich) 的 `getProfileImageUrl`（`profileChangedAt`）。

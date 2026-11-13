@@ -64,6 +64,8 @@ final class SettingsViewController: UICollectionViewController {
     nonisolated private enum Item: Hashable, Sendable {
         /// avatar 是自己的头像地址；member 是 false 时（不是成员）点不进去换头像。
         case profile(title: String, detail: String, avatar: String?, member: Bool)
+        /// Pupu 自己的头像，创建者才有这一行。值是换过的地址，只用来在换了之后重画。
+        case pupuAvatar(String?)
         case link(Page, summary: String?)
         case account(Connectors.Account, owner: String?)
         case service(Connectors.Service, busy: Bool)
@@ -222,6 +224,8 @@ final class SettingsViewController: UICollectionViewController {
         let online = store.computers.filter(\.online).count
         let computers = store.computers.isEmpty ? "没有" : online > 0 ? "\(online) 台在线" : "都离线"
         var first: [Item] = [.link(.accounts, summary: accounts), .link(.computers, summary: computers)]
+        // 创建者能换 Pupu 的头像。没开 Google 登录（没有成员）时，云端把没主人的设备都当创建者，见 members.ts 的 actorOf。
+        if me?.isCreator == true || store.members.isEmpty { first.insert(.pupuAvatar(store.pupuAvatar), at: 0) }
         // 没开 Google 登录、还没有创建者时没有成员，不显示这一行。
         if !store.members.isEmpty { first.append(.link(.members, summary: "\(store.members.count) 人")) }
         if let invites { first.append(.link(.invites, summary: "还能生成 \(invites.left) 个")) }
@@ -383,6 +387,15 @@ final class SettingsViewController: UICollectionViewController {
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(
                 top: Theme.Space.s3, leading: Theme.Space.s4, bottom: Theme.Space.s3, trailing: Theme.Space.s4
             )
+        case .pupuAvatar:
+            content = UIListContentConfiguration.cell()
+            content.textProperties.font = Theme.font(.body)
+            content.textProperties.color = Theme.ink
+            content.text = "Pupu 的头像"
+            let pupu = Avatars.shared.pupu()
+            content.image = Avatars.round(pupu.image, letter: "P", size: 28, pixelArt: pupu.pixelArt)
+            content.imageProperties.maximumSize = CGSize(width: 28, height: 28)
+            cell.accessories = [.disclosureIndicator()]
         case .link(let target, let summary):
             content = UIListContentConfiguration.cell()
             content.textProperties.font = Theme.font(.body)
@@ -562,7 +575,7 @@ final class SettingsViewController: UICollectionViewController {
         var snapshot = source.snapshot()
         let items = snapshot.itemIdentifiers.filter {
             switch $0 {
-            case .profile, .member: true
+            case .profile, .member, .pupuAvatar: true
             default: false
             }
         }
@@ -576,7 +589,7 @@ final class SettingsViewController: UICollectionViewController {
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
         case .profile(_, _, _, let member): member
-        case .link, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .link, .pupuAvatar, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
         case .inviteCode(let invite): invite.usedBy == nil
         case .newInvite(let left, let busy): left > 0 && !busy
         default: false
@@ -588,6 +601,8 @@ final class SettingsViewController: UICollectionViewController {
         switch source.itemIdentifier(for: indexPath) {
         case .profile:
             navigationController?.pushViewController(AvatarPickerViewController(), animated: true)
+        case .pupuAvatar:
+            navigationController?.pushViewController(AvatarPickerViewController(target: .pupu), animated: true)
         case .link(let target, _):
             navigationController?.pushViewController(SettingsViewController(page: target), animated: true)
         case .computer(let computer):

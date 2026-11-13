@@ -36,13 +36,59 @@ export function MemberAvatar({ name, src, className }: { name: string; src: stri
   );
 }
 
-/** 预设是像素画，放大缩小都按格子来；上传的照片照常平滑。 */
+/** Pupu 没换过头像时用的图。 */
+export const PUPU_AVATAR = "/pupu-avatar.png";
+
+/** 预设和 Pupu 自带的是像素画，放大缩小都按格子来；上传的照片照常平滑。 */
 function isPixelArt(src: string): boolean {
-  return src.startsWith("/avatars/");
+  return src.startsWith("/avatars/") || src === PUPU_AVATAR;
 }
 
-/** 设置里的「头像」页：挑一个预设，或者上传一张裁成方形。 */
-export function AvatarPage({ me }: { me: MemberView }) {
+/** 设置里的「头像」页：自己的。 */
+export function MyAvatarPage({ me }: { me: MemberView }) {
+  return (
+    <AvatarPage
+      name={me.name}
+      current={me.avatar}
+      resetLabel="用名字的第一个字"
+      onPreset={api.setAvatar}
+      onUpload={api.uploadAvatar}
+    />
+  );
+}
+
+/** 设置里的「Pupu 的头像」页，创建者才有。没换过用自带的。 */
+export function PupuAvatarPage({ current }: { current: string | null }) {
+  return (
+    <AvatarPage
+      name="Pupu"
+      current={current}
+      fallback={PUPU_AVATAR}
+      resetLabel="用原来的"
+      onPreset={api.setPupuAvatar}
+      onUpload={api.uploadPupuAvatar}
+    />
+  );
+}
+
+/** 挑一个预设，或者上传一张裁成方形。 */
+function AvatarPage({
+  name,
+  current,
+  fallback = null,
+  resetLabel,
+  onPreset,
+  onUpload
+}: {
+  name: string;
+  /** 换过的头像地址，没换过是 null。 */
+  current: string | null;
+  /** 没换过时显示的图；没有就显示名字的第一个字。 */
+  fallback?: string | null;
+  resetLabel: string;
+  onPreset: (preset: string | null) => Promise<unknown>;
+  onUpload: (image: Blob) => Promise<unknown>;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +119,7 @@ export function AvatarPage({ me }: { me: MemberView }) {
           setError(null);
         }}
         onDone={async (image) => {
-          if (await run("upload", () => api.uploadAvatar(image))) setFile(null);
+          if (await run("upload", () => onUpload(image))) setFile(null);
         }}
         onBroken={() => {
           setFile(null);
@@ -86,12 +132,12 @@ export function AvatarPage({ me }: { me: MemberView }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex justify-center pt-2">
-        <MemberAvatar name={me.name} src={me.avatar} className="size-24 bg-foreground text-[40px] text-background" />
+        <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-foreground text-[40px] text-background" />
       </div>
       <div className="grid grid-cols-4 gap-3 rounded-row bg-surface p-4" role="radiogroup" aria-label="预设头像">
         {AVATAR_PRESETS.map((preset) => {
           const url = `/avatars/${preset.id}.png`;
-          const selected = me.avatar === url;
+          const selected = current === url;
           return (
             <button
               key={preset.id}
@@ -100,7 +146,7 @@ export function AvatarPage({ me }: { me: MemberView }) {
               aria-checked={selected}
               aria-label={preset.name}
               disabled={busy !== null}
-              onClick={() => void run(preset.id, () => api.setAvatar(preset.id))}
+              onClick={() => void run(preset.id, () => onPreset(preset.id))}
               className={`aspect-square overflow-hidden rounded-full ring-offset-2 ring-offset-surface transition hover:opacity-85 ${
                 selected ? "ring-2 ring-foreground" : ""
               } ${busy === preset.id ? "animate-pulse" : ""}`}
@@ -119,14 +165,14 @@ export function AvatarPage({ me }: { me: MemberView }) {
         >
           上传照片
         </button>
-        {me.avatar && (
+        {current && (
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => void run("reset", () => api.setAvatar(null))}
+            onClick={() => void run("reset", () => onPreset(null))}
             className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-foreground/4"
           >
-            用名字的第一个字
+            {resetLabel}
           </button>
         )}
       </div>

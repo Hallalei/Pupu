@@ -25,6 +25,8 @@ final class Store {
         var reports: [ReportCard] = []
         /// 能选的预设头像。
         var avatarPresets: [AvatarPreset] = []
+        /// Pupu 换过的头像地址，nil 用自带的。
+        var pupuAvatar: String?
         var error: String?
         var loaded = false
     }
@@ -136,6 +138,7 @@ final class Store {
                     activity: state.activity ?? [],
                     reports: state.reports ?? [],
                     avatarPresets: state.avatarPresets ?? [],
+                    pupuAvatar: state.pupuAvatar,
                     error: nil,
                     loaded: true
                 )

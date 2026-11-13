@@ -37,6 +37,13 @@ final class Avatars {
         path?.hasPrefix("/avatars/") == true
     }
 
+    /// Pupu 现在的头像：换过的拿到了用换过的，没换过（或者还在拿）用自带的。
+    func pupu() -> (image: UIImage?, pixelArt: Bool) {
+        let path = Store.shared.pupuAvatar
+        if let image = image(path) { return (image, Self.isPixelArt(path)) }
+        return (UIImage(named: "pupu-avatar"), true)
+    }
+
     /// 圆形头像：有图画图，没图画名字的第一个字。设置页的列表格子用。
     static func round(_ image: UIImage?, letter: String, size: CGFloat, pixelArt: Bool, fill: UIColor = Theme.action, ink: UIColor = Theme.onAction) -> UIImage {
         let bounds = CGRect(x: 0, y: 0, width: size, height: size)
@@ -65,8 +72,10 @@ final class Avatars {
     }
 }
 
-/// 换自己的头像：上面是现在的样子，中间一格一格的预设，下面从相册选一张（系统自带的方形裁剪），或者换回名字的第一个字。
+/// 换头像：上面是现在的样子，中间一格一格的预设，下面从相册选一张（系统自带的方形裁剪），或者换回默认的。
+/// 自己的默认是名字的第一个字；Pupu 的（创建者才能换）默认是自带的那张。
 final class AvatarPickerViewController: UIViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    private let target: AvatarTarget
     private let preview = UIImageView()
     private let grid = UIStackView()
     private let actions = UIStackView()
@@ -75,9 +84,16 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
     private var loadedToken: NSObjectProtocol?
     private var busy = false
 
+    init(target: AvatarTarget = .me) {
+        self.target = target
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "头像"
+        title = target == .pupu ? "Pupu 的头像" : "头像"
         view.backgroundColor = .systemGroupedBackground
         navigationItem.largeTitleDisplayMode = .always
 
@@ -166,13 +182,20 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
 
     private func render() {
         let me = Store.shared.members.first(where: \.current)
+        let current = target == .pupu ? Store.shared.pupuAvatar : me?.avatar
         if buttons.count != Store.shared.avatarPresets.count { buildGrid() }
-        let image = Avatars.shared.image(me?.avatar)
-        preview.layer.magnificationFilter = Avatars.isPixelArt(me?.avatar) ? .nearest : .linear
-        preview.image = image ?? Avatars.round(nil, letter: Avatars.letter(me?.name ?? me?.email ?? "我"), size: 96, pixelArt: false)
+        if target == .pupu {
+            let pupu = Avatars.shared.pupu()
+            preview.layer.magnificationFilter = pupu.pixelArt ? .nearest : .linear
+            preview.image = pupu.image
+        } else {
+            preview.layer.magnificationFilter = Avatars.isPixelArt(current) ? .nearest : .linear
+            preview.image = Avatars.shared.image(current)
+                ?? Avatars.round(nil, letter: Avatars.letter(me?.name ?? me?.email ?? "我"), size: 96, pixelArt: false)
+        }
         for item in buttons {
             item.view.setImage(Avatars.shared.image(item.url), for: .normal)
-            let selected = me?.avatar == item.url
+            let selected = current == item.url
             item.view.accessibilityTraits = selected ? [.button, .selected] : .button
             item.view.layer.borderWidth = selected ? 3 : 0
             item.view.layer.borderColor = Theme.ink.cgColor
@@ -180,9 +203,9 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
         }
         actions.arrangedSubviews.forEach { $0.removeFromSuperview() }
         actions.addArrangedSubview(row("从相册选") { [weak self] in self?.pickPhoto() })
-        if me?.avatar != nil {
+        if current != nil {
             actions.addArrangedSubview(divider())
-            actions.addArrangedSubview(row("用名字的第一个字") { [weak self] in self?.choose(nil) })
+            actions.addArrangedSubview(row(target == .pupu ? "用原来的" : "用名字的第一个字") { [weak self] in self?.choose(nil) })
         }
     }
 
@@ -210,7 +233,8 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
     }
 
     private func choose(_ preset: String?) {
-        run { api in try await api.setAvatar(preset: preset) }
+        let target = target
+        run { api in try await api.setAvatar(preset: preset, of: target) }
     }
 
     private func pickPhoto() {
@@ -225,7 +249,8 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
         picker.dismiss(animated: true)
         guard let picked = (info[.editedImage] ?? info[.originalImage]) as? UIImage,
               let data = Self.squareJPEG(picked) else { return }
-        run { api in try await api.uploadAvatar(data, type: "image/jpeg") }
+        let target = target
+        run { api in try await api.uploadAvatar(data, type: "image/jpeg", of: target) }
     }
 
     /// 裁成正中的正方形（系统裁剪框已经是方的，这一步兜底），缩到 256，存成 JPEG。云端只验不转码。

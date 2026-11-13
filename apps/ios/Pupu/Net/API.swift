@@ -140,14 +140,14 @@ nonisolated struct API: Sendable {
     private struct Failure: Decodable { let error: String }
 
     /// 换自己的头像：一个预设的 id，或者 nil 换回名字的第一个字。只能换自己的（云端 avatars.ts）。
-    func setAvatar(preset: String?) async throws {
+    func setAvatar(preset: String?, of target: AvatarTarget = .me) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["preset": preset.map { $0 as Any } ?? NSNull()])
-        let _: Done = try await send("api/me/avatar", method: "POST", raw: body, type: "application/json")
+        let _: Done = try await send(target.path, method: "POST", raw: body, type: "application/json")
     }
 
     /// 上传自己的头像：已经裁成方形、缩到 256 的 JPEG。云端只验不转码。
-    func uploadAvatar(_ data: Data, type: String) async throws {
-        let _: Done = try await send("api/me/avatar", method: "PUT", raw: data, type: type)
+    func uploadAvatar(_ data: Data, type: String, of target: AvatarTarget = .me) async throws {
+        let _: Done = try await send(target.path, method: "PUT", raw: data, type: type)
     }
 
     private func send<T: Decodable>(_ path: String, method: String = "GET", body: [String: String]? = nil) async throws -> T {
@@ -180,5 +180,18 @@ nonisolated struct API: Sendable {
             throw APIError(message: "请求失败：\(status)")
         }
         return try JSONDecoder().decode(T.self, from: data)
+    }
+}
+
+/// 换谁的头像：自己的，还是 Pupu 的（只有创建者能换）。
+nonisolated enum AvatarTarget: Sendable {
+    case me
+    case pupu
+
+    var path: String {
+        switch self {
+        case .me: "api/me/avatar"
+        case .pupu: "api/pupu/avatar"
+        }
     }
 }

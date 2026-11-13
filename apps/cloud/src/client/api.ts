@@ -120,6 +120,11 @@ export const api = {
   /** 上传自己的头像：先裁成正方形缩小（见 Avatar.tsx 的 `cropToSquare`），云端只验不转码。 */
   uploadAvatar: (image: Blob) =>
     request<{ ok: true }>("/api/me/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
+  /** Pupu 自己的头像，只有创建者能换。null 换回自带的。 */
+  setPupuAvatar: (preset: string | null) =>
+    request<{ ok: true }>("/api/pupu/avatar", { method: "POST", body: JSON.stringify({ preset }) }),
+  uploadPupuAvatar: (image: Blob) =>
+    request<{ ok: true }>("/api/pupu/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>
@@ -144,6 +149,7 @@ export function usePupuState() {
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
   const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
+  const [pupuAvatar, setPupuAvatar] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -168,6 +174,7 @@ export function usePupuState() {
         setReports(state.reports ?? []);
         setChats(state.chats ?? NO_CHATS);
         setPasskeys(state.passkeys ?? null);
+        setPupuAvatar(state.pupuAvatar ?? null);
         setLoaded(true);
       }
       if (use.activity) setActivity(state.activity);
@@ -223,6 +230,7 @@ export function usePupuState() {
     reports,
     chats,
     passkeys,
+    pupuAvatar,
     error,
     unauthorized,
     loaded,

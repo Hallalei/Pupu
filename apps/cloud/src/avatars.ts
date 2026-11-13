@@ -19,6 +19,9 @@ const MAX_SIDE = 512;
 /** 256 的 PNG 照片最多一百多 KB；webp、jpeg 二三十 KB。 */
 export const MAX_AVATAR_BYTES = 256 * 1024;
 
+/** 换谁的：自己的，还是 Pupu 的。 */
+export type AvatarTarget = "me" | "pupu";
+
 export type AvatarType = "image/png" | "image/jpeg" | "image/webp";
 
 export type StoredAvatar = { readonly type: AvatarType; readonly bytes: Uint8Array<ArrayBuffer>; readonly updatedAt: number };
@@ -48,6 +51,20 @@ export function avatarUrl(memberId: string, value: string | null): string | null
   if (!choice) return null;
   if (choice.kind === "preset") return `/avatars/${choice.id}.png`;
   return `/api/members/${encodeURIComponent(memberId)}/avatar?v=${choice.at}`;
+}
+
+/**
+ * Pupu 自己的头像也用同一套：选择记在 meta 的 `PUPU_AVATAR_META`，上传的图存在同一张表、键是 `PUPU_AVATAR_KEY`
+ * （成员 id 是 UUID，撞不上）。只有创建者能换。null 是没换过，各端用自带的 /pupu-avatar.png。
+ */
+export const PUPU_AVATAR_META = "pupu.avatar";
+export const PUPU_AVATAR_KEY = "pupu";
+
+export function pupuAvatarUrl(value: string | null): string | null {
+  const choice = parseChoice(value);
+  if (!choice) return null;
+  if (choice.kind === "preset") return `/avatars/${choice.id}.png`;
+  return `/api/pupu/avatar?v=${choice.at}`;
 }
 
 /** 认得的图片：看文件头，不信请求说的类型。 */

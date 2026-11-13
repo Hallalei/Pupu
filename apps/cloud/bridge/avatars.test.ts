@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import { AVATAR_PRESETS } from "../src/avatar-presets.ts";
-import { AvatarStore, avatarUrl, checkUpload, formatChoice, imageInfo, isPreset, MAX_AVATAR_BYTES, parseChoice } from "../src/avatars.ts";
+import { AvatarStore, avatarUrl, pupuAvatarUrl, checkUpload, formatChoice, imageInfo, isPreset, MAX_AVATAR_BYTES, parseChoice } from "../src/avatars.ts";
 import { MemberStore, memberView } from "../src/members.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
@@ -87,6 +87,11 @@ describe("头像的值和地址", () => {
     assert.equal(avatarUrl("m1", formatChoice({ kind: "upload", at: NOW })), `/api/members/m1/avatar?v=${NOW}`);
     assert.equal(avatarUrl("m1", null), null);
     assert.equal(avatarUrl("m1", "upload:abc"), null);
+    // Pupu 自己的：空字符串（换回原来的）和 null 一样，都是用自带的。
+    assert.equal(pupuAvatarUrl("preset:black"), "/avatars/black.png");
+    assert.equal(pupuAvatarUrl(formatChoice({ kind: "upload", at: NOW })), `/api/pupu/avatar?v=${NOW}`);
+    assert.equal(pupuAvatarUrl(""), null);
+    assert.equal(pupuAvatarUrl(null), null);
   });
 });
 

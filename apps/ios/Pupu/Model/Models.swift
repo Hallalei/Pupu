@@ -370,6 +370,8 @@ nonisolated struct PupuState: Decodable, Sendable {
     let reports: [ReportCard]?
     /// 能选的预设头像。旧版云端不给。
     let avatarPresets: [AvatarPreset]?
+    /// Pupu 换过的头像地址，没换过或旧版云端是 nil。
+    let pupuAvatar: String?
 }
 
 /// 预设头像：Pupu 衍生的像素猫。`url` 相对这个 Pupu 的地址。

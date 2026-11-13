@@ -18,7 +18,7 @@ import {
   type MemberView
 } from "../members";
 import { ago } from "./ago";
-import { AvatarPage, MemberAvatar } from "./Avatar";
+import { MemberAvatar, MyAvatarPage, PUPU_AVATAR, PupuAvatarPage } from "./Avatar";
 import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
@@ -57,6 +57,7 @@ export type SettingsPage =
   | "computers"
   | "members"
   | "avatar"
+  | "pupuAvatar"
   | "invites"
   | "devices"
   | "passkeys"
@@ -70,6 +71,7 @@ const TITLES: Record<Exclude<SettingsPage, object>, string> = {
   computers: "电脑",
   members: "成员",
   avatar: "头像",
+  pupuAvatar: "Pupu 的头像",
   invites: "邀请码",
   devices: "设备",
   passkeys: "通行密钥",
@@ -121,7 +123,8 @@ export function Settings({
   onCreatePairingCode,
   confirmBy,
   passkeys,
-  onPasskeysChanged
+  onPasskeysChanged,
+  pupuAvatar
 }: {
   /** 开着的那一页，关着是 null。 */
   page: SettingsPage | null;
@@ -143,6 +146,8 @@ export function Settings({
   confirmBy: ConfirmWhere;
   passkeys: Passkeys | null;
   onPasskeysChanged: () => Promise<void>;
+  /** Pupu 换过的头像，没换过是 null。 */
+  pupuAvatar: string | null;
 }) {
   const isOpen = page !== null;
   const thisComputer = useDesktopComputer();
@@ -185,6 +190,19 @@ export function Settings({
             .join(" · ")}
         />
         <Group>
+          {actor?.role === "creator" && (
+            <LinkRow
+              icon={
+                <img
+                  src={pupuAvatar ?? PUPU_AVATAR}
+                  alt=""
+                  className={`size-6 rounded-full ${pupuAvatar?.startsWith("/api/") ? "" : "[image-rendering:pixelated]"}`}
+                />
+              }
+              title="Pupu 的头像"
+              onPress={() => onPage("pupuAvatar")}
+            />
+          )}
           <LinkRow
             icon={<LinkIcon />}
             title="账户"
@@ -300,7 +318,10 @@ export function Settings({
     );
   } else if (shown === "avatar") {
     const me = members.find((member) => member.current);
-    body = me ? <AvatarPage me={me} /> : <Note>用 Google 登录之后才能换头像。</Note>;
+    body = me ? <MyAvatarPage me={me} /> : <Note>用 Google 登录之后才能换头像。</Note>;
+  } else if (shown === "pupuAvatar") {
+    body =
+      actor?.role === "creator" ? <PupuAvatarPage current={pupuAvatar} /> : <Note>只有创建者能换 Pupu 的头像。</Note>;
   } else if (shown === "invites") {
     body = invites.list ? <Invites list={invites.list} onChanged={invites.load} /> : <Note>这个 Pupu 不发邀请码。</Note>;
   } else if (shown === "devices") {

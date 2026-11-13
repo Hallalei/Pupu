@@ -130,6 +130,10 @@ import {
   formatChoice,
   isPreset,
   MAX_AVATAR_BYTES,
+  PUPU_AVATAR_KEY,
+  PUPU_AVATAR_META,
+  pupuAvatarUrl,
+  type AvatarTarget,
   type StoredAvatar,
   type UploadCheck
 } from "./avatars";
@@ -191,6 +195,8 @@ export type PupuState = {
   readonly chats: ChatsView;
   /** 成员能选的预设头像，`url` 相对这个 Pupu 的网址。 */
   readonly avatarPresets: readonly { readonly id: string; readonly name: string; readonly url: string }[];
+  /** Pupu 自己的头像，相对地址。null 是没换过，用各端自带的。 */
+  readonly pupuAvatar: string | null;
   /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
   readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
 };
@@ -205,6 +211,7 @@ type Minted = { readonly token: string; readonly hash: string };
 
 const NOT_MEMBER = "你已经不在这个 Pupu 的成员名单上了。";
 const AVATAR_NOT_MEMBER = "用 Google 登录之后才能换头像";
+const AVATAR_CREATOR_ONLY = "只有创建者能换 Pupu 的头像";
 
 /**
  * 一个用户的 Pupu：一个 Durable Object，里面跑 pi-durable。
@@ -855,6 +862,7 @@ export class Pupu extends DurableObject<Env> {
       reports: this.#reportCards(own),
       chats: this.threads.chats(own),
       avatarPresets: AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
+      pupuAvatar: pupuAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null),
       passkeys:
         viewer === null
           ? null
@@ -1371,30 +1379,57 @@ export class Pupu extends DurableObject<Env> {
   }
 
   /**
-   * 换自己的头像：选一个预设，或者 null 换回名字的第一个字。换的是发请求的设备的主人，见 avatars.ts。
-   * 不是成员（本机开发没带凭据、设备不属于谁）换不了。
+   * 换头像：`me` 是发请求的设备的主人自己（见 avatars.ts），`pupu` 是 Pupu 自己的，只有创建者能换。
+   * 选一个预设，或者 null 换回默认（成员是名字的第一个字，Pupu 是自带的图）。
    */
-  async setAvatar(device: string | null, preset: string | null): Promise<"ok" | "not_member" | "invalid"> {
-    const memberId = this.#viewer(device);
-    if (memberId === null) return "not_member";
+  async setAvatar(
+    device: string | null,
+    preset: string | null,
+    target: AvatarTarget = "me"
+  ): Promise<"ok" | "not_member" | "creator_only" | "invalid"> {
+    const key = this.#avatarKey(device, target);
+    if (key === "not_member" || key === "creator_only") return key;
     if (preset !== null && !isPreset(preset)) return "invalid";
-    this.members.setAvatar(memberId, preset === null ? null : formatChoice({ kind: "preset", id: preset }));
-    this.avatars.remove(memberId);
+    this.#saveAvatarChoice(target, key, preset === null ? null : formatChoice({ kind: "preset", id: preset }));
+    this.avatars.remove(key);
     this.#devicesChanged();
     return "ok";
   }
 
-  /** 上传自己的头像。客户端已经裁成方形缩小了，这边只验，规则见 avatars.ts 的 `checkUpload`。 */
-  async uploadAvatar(device: string | null, bytes: Uint8Array): Promise<UploadCheck | { ok: false; error: "not_member" }> {
-    const memberId = this.#viewer(device);
-    if (memberId === null) return { ok: false, error: "not_member" };
+  /** 上传头像。客户端已经裁成方形缩小了，这边只验，规则见 avatars.ts 的 `checkUpload`。 */
+  async uploadAvatar(
+    device: string | null,
+    bytes: Uint8Array,
+    target: AvatarTarget = "me"
+  ): Promise<UploadCheck | { ok: false; error: "not_member" | "creator_only" }> {
+    const key = this.#avatarKey(device, target);
+    if (key === "not_member" || key === "creator_only") return { ok: false, error: key };
     const check = checkUpload(bytes);
     if (!check.ok) return check;
     const now = Date.now();
-    this.avatars.put(memberId, check.type, bytes, now);
-    this.members.setAvatar(memberId, formatChoice({ kind: "upload", at: now }));
+    this.avatars.put(key, check.type, bytes, now);
+    this.#saveAvatarChoice(target, key, formatChoice({ kind: "upload", at: now }));
     this.#devicesChanged();
     return check;
+  }
+
+  /** 换谁的头像：成员 id，或者 Pupu 自己的键。 */
+  #avatarKey(device: string | null, target: AvatarTarget): string | "not_member" | "creator_only" {
+    if (target === "pupu") {
+      const actor = this.#actor(device);
+      return actor?.role === "creator" ? PUPU_AVATAR_KEY : "creator_only";
+    }
+    return this.#viewer(device) ?? "not_member";
+  }
+
+  #saveAvatarChoice(target: AvatarTarget, key: string, value: string | null): void {
+    if (target === "pupu") this.store.setMeta(PUPU_AVATAR_META, value ?? "");
+    else this.members.setAvatar(key, value);
+  }
+
+  /** Pupu 自己上传的头像。同一个 Pupu 的设备都能看。 */
+  async pupuAvatar(): Promise<StoredAvatar | null> {
+    return this.avatars.get(PUPU_AVATAR_KEY) ?? null;
   }
 
   /** 一个成员上传的头像。同一个 Pupu 的设备都能看。 */
@@ -1987,29 +2022,32 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     }
     return Response.json({ ok: true });
   }
-  if (pathname === "/api/me/avatar" && method === "POST") {
+  const avatarTarget = pathname === "/api/me/avatar" ? "me" : pathname === "/api/pupu/avatar" ? "pupu" : null;
+  const avatarDenied = (error: string) =>
+    Response.json({ error: error === "creator_only" ? AVATAR_CREATOR_ONLY : AVATAR_NOT_MEMBER }, { status: 403 });
+  if (avatarTarget && method === "POST") {
     const body = await readJson<{ preset?: unknown }>(request);
     if (body.preset !== null && typeof body.preset !== "string") {
       return Response.json({ error: "preset 是预设头像的 id，或者 null" }, { status: 400 });
     }
-    const result = await caller.pupu.setAvatar(caller.device, body.preset);
-    if (result === "not_member") return Response.json({ error: AVATAR_NOT_MEMBER }, { status: 403 });
+    const result = await caller.pupu.setAvatar(caller.device, body.preset, avatarTarget);
+    if (result === "not_member" || result === "creator_only") return avatarDenied(result);
     if (result === "invalid") return Response.json({ error: "没有这个预设头像" }, { status: 400 });
     return Response.json({ ok: true });
   }
-  if (pathname === "/api/me/avatar" && method === "PUT") {
+  if (avatarTarget && method === "PUT") {
     const declared = Number(request.headers.get("Content-Length") ?? "0");
     if (declared > MAX_AVATAR_BYTES) return Response.json({ error: "图片太大" }, { status: 413 });
     const bytes = new Uint8Array(await request.arrayBuffer());
     if (bytes.length > MAX_AVATAR_BYTES) return Response.json({ error: "图片太大" }, { status: 413 });
-    const result = await caller.pupu.uploadAvatar(caller.device, bytes);
-    if (!result.ok && result.error === "not_member") return Response.json({ error: AVATAR_NOT_MEMBER }, { status: 403 });
+    const result = await caller.pupu.uploadAvatar(caller.device, bytes, avatarTarget);
+    if (!result.ok && (result.error === "not_member" || result.error === "creator_only")) return avatarDenied(result.error);
     if (!result.ok) return Response.json({ error: result.error }, { status: 400 });
     return Response.json({ ok: true });
   }
   const avatar = pathname.match(/^\/api\/members\/([^/]+)\/avatar$/);
-  if (avatar && method === "GET") {
-    const stored = await caller.pupu.avatarOf(decodeURIComponent(avatar[1] ?? ""));
+  if ((avatar || avatarTarget === "pupu") && method === "GET") {
+    const stored = avatar ? await caller.pupu.avatarOf(decodeURIComponent(avatar[1] ?? "")) : await caller.pupu.pupuAvatar();
     if (!stored) return new Response(null, { status: 404 });
     return new Response(stored.bytes, {
       headers: {

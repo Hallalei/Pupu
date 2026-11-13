@@ -148,6 +148,8 @@ final class ShellViewController: UIViewController {
 
     /// 右上角的「我」：换过头像的显示头像。
     private func updateMe() {
+        let pupu = Avatars.shared.pupu()
+        segments.setAvatar(pupu.image, pixelArt: pupu.pixelArt)
         let path = Store.shared.members.first(where: \.current)?.avatar
         guard let image = Avatars.shared.image(path) else {
             settingsButton.image = nil
@@ -206,7 +208,8 @@ final class ShellViewController: UIViewController {
         return UIMenu(children: Lane.allCases.map { item in
             UIAction(
                 title: item.title,
-                image: UIImage(named: "pupu-avatar")?.withRenderingMode(.alwaysOriginal),
+                image: Avatars.round(Avatars.shared.pupu().image, letter: "P", size: 26, pixelArt: Avatars.shared.pupu().pixelArt)
+                    .withRenderingMode(.alwaysOriginal),
                 state: item == lane ? .on : .off
             ) { [weak self] _ in
                 UISelectionFeedbackGenerator().selectionChanged()
