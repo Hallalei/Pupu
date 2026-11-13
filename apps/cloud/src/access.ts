@@ -19,7 +19,7 @@ export type SpaceAccess = { readonly level: Level; readonly members: readonly st
 export type AccessThread =
   | { readonly kind: "main" }
   | { readonly kind: "private"; readonly memberId: string }
-  | { readonly kind: "project"; readonly project: SpaceAccess & { readonly id: string } };
+  | { readonly kind: "project" | "child"; readonly project: SpaceAccess & { readonly id: string } };
 
 /** 会话的受众：`everyone` 是全组织，否则是一张名单。 */
 export type Audience = { readonly everyone: true } | { readonly everyone: false; readonly members: readonly string[] };
@@ -37,6 +37,7 @@ export function audienceOf(thread: AccessThread): Audience {
     case "private":
       return { everyone: false, members: [thread.memberId] };
     case "project":
+    case "child":
       return isOpen(thread.project.level) ? EVERYONE : { everyone: false, members: thread.project.members };
   }
 }
@@ -70,7 +71,7 @@ export function maySeeSpace(space: SpaceAccess, viewer: string | null): boolean 
  * 读到的东西会留在 `from` 里，所以 `from` 的全部受众都得能看 `space`。L4 只有它自己的会话能读。
  */
 export function mayRead(from: AccessThread, space: SpaceAccess & { readonly id: string }): boolean {
-  if (from.kind === "project" && from.project.id === space.id) return true;
+  if ((from.kind === "project" || from.kind === "child") && from.project.id === space.id) return true;
   if (space.level === "L4") return false;
   if (isOpen(space.level)) return true;
   const audience = audienceOf(from);

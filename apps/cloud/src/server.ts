@@ -5,7 +5,9 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
 import { isRetryableAssistantError } from "@earendil-works/pi-ai/utils/retry";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, GenerationTask, Harness, hook, ToolTask } from "@earendil-works/pi-durable";
+import { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { routeAgentRequest } from "agents";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle, type LifecycleJobContext } from "agents/lifecycle";
@@ -144,7 +146,7 @@ import {
   type UploadCheck
 } from "./avatars";
 import { REVOKED_CLOSE_CODE, type ServerMessage } from "./protocol";
-import type { Project } from "./projects";
+import type { Project, SpaceMode } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
 import { asksUser, failureSummary, reportCards, ReportStore, type ReportCard } from "./reports";
@@ -156,7 +158,8 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
-import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow } from "./threads";
+import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
+import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
 import { createPupuTools } from "./tools";
 
 /**
@@ -233,7 +236,12 @@ export class Pupu extends DurableObject<Env> {
   /** 这是不是第一个 Pupu。按 Durable Object 的 id 认，不靠 meta 里记的名字：第一个 Pupu 从来不记。 */
   readonly #root = this.ctx.id.equals(this.env.Pupu.idFromName(ROOT_PUPU));
   readonly store = new ProjectStore(this.ctx.storage.sql);
-  readonly threads = new ThreadStore(this.ctx.storage.sql, this.store);
+  readonly children = new SpaceSessionStore(this.ctx.storage.sql);
+  readonly threads = new ThreadStore(this.ctx.storage.sql, this.store, (session) => {
+    const child = this.children.bySession(session);
+    const project = child && this.store.getProject(child.projectId);
+    return project && { project, title: child.title };
+  });
   readonly reports = new ReportStore(this.ctx.storage.sql);
   readonly computers = new ComputerStore(this.ctx.storage.sql);
   readonly devices = new DeviceStore(this.ctx.storage.sql);
@@ -347,19 +355,15 @@ export class Pupu extends DurableObject<Env> {
                 (memberId) => {
                   const member = this.members.byId(memberId);
                   return member ? memberName(member) : "这位成员";
-                }
+                },
+                thread.kind === "project" ? this.children.ofProject(thread.project.id) : []
               );
             }
           }
         ],
         tools: [
-          ...createPupuTools({
-            store: this.store,
-            threadOf: (session) => this.threads.of(session),
-            createProject: (input) => this.#createProject(input),
-            handOff: (project, task, operationId, origin) =>
-              this.#handOff(project, task, operationId, origin)
-          }),
+          ...this.#pupuTools,
+          ...this.#delegationTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -368,6 +372,9 @@ export class Pupu extends DurableObject<Env> {
             beforeTool: (call, api, context) => {
               const session = String(api.conversationId);
               this.#callSessions.remember(call.id, session);
+              // 空间主会话只做委派：先拦，被拦的调用不会生成审批卡。
+              const blocked = mayCall(this.threads.of(session), call.name);
+              if (blocked) return blocked;
               return this.gate.beforeTool({ ...call, session }, context.abortSignal);
             }
           }),
@@ -387,15 +394,20 @@ export class Pupu extends DurableObject<Env> {
               const reply = answer.content
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n");
-              const progressed = this.store.recordReply(session, reply);
-              const reported = this.reports.settle(
-                session,
-                this.#askedAt.get(session) ?? Date.now(),
-                asksUser(reply) ? "asking" : "done",
-                progressLine(reply),
-                Date.now()
-              );
               const thread = this.threads.of(session);
+              if (thread?.kind === "child") this.#reportToSpace(thread, reply);
+              const progressed = this.store.recordReply(session, reply);
+              // 协调模式的主会话派完活就会回一句「派出去了」，这时从聊天转来的事还没做完，等子会话都回报了再报。
+              const waiting = reportsWait(thread, this.children);
+              const reported =
+                !waiting &&
+                this.reports.settle(
+                  session,
+                  this.#askedAt.get(session) ?? Date.now(),
+                  asksUser(reply) ? "asking" : "done",
+                  progressLine(reply),
+                  Date.now()
+                );
               const replied = Boolean(reply.trim()) && (thread?.kind === "main" || thread?.kind === "private");
               if (replied) this.threads.recordReply(thread, Date.now());
               if (progressed || reported || replied) this.#changed();
@@ -645,8 +657,10 @@ export class Pupu extends DurableObject<Env> {
       pending: this.approvals.pending(Date.now()).filter((row) => sees(row.session, row.computerId)),
       projectOf: (callId) => {
         const session = this.#sessionOfCall(callId);
-        const project = session ? this.store.projectBySession(session) : undefined;
-        return project ? { id: project.id, name: project.name } : null;
+        const thread = session ? this.threads.of(session) : undefined;
+        return thread?.kind === "project" || thread?.kind === "child"
+          ? { id: thread.project.id, name: thread.project.name }
+          : null;
       }
     });
   }
@@ -1713,6 +1727,67 @@ export class Pupu extends DurableObject<Env> {
     return project;
   }
 
+  readonly #pupuTools = createPupuTools({
+    store: this.store,
+    threadOf: (session) => this.threads.of(session),
+    createProject: (input) => this.#createProject(input),
+    handOff: (project, task, operationId, origin) => this.#handOff(project, task, operationId, origin)
+  });
+
+  /** 空间的密级、成员、模式走 pi 的写队列，见 projects.ts 的 `SpaceWriter`。 */
+  readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
+
+  /** 委派工具。`deferred`，只有切成协调模式的主会话会被提供，见 delegation.ts。 */
+  readonly #delegationTools = createDelegationTools({
+    threadOf: (session) => this.threads.of(session),
+    children: this.children,
+    createSession: async () => (await this.harness.sessions.create()).id,
+    submit: async (session, text, operationId) => {
+      await this.harness.session(session).submit(text, { whenBusy: "followUp", operationId });
+    },
+    stop: (session) => this.harness.session(session).abort(),
+    now: () => Date.now(),
+    changed: () => this.#changed()
+  });
+
+  /**
+   * 子会话回完一轮，把结果送回空间的主会话。人直接在子会话里说的也报。
+   * 用这一轮的提问时间去重，重启后重放不会报两次。不在钩子里等提交：钩子可能在 pi 的事务里。
+   */
+  #reportToSpace(thread: Extract<Thread, { kind: "child" }>, reply: string): void {
+    this.children.markIdle(thread.session);
+    const run = this.#askedAt.get(thread.session) ?? Date.now();
+    this.ctx.waitUntil(
+      this.harness
+        .session(thread.project.session)
+        .submit(childReport(thread.title, reply), {
+          whenBusy: "followUp",
+          operationId: `child-report:${thread.session}:${run}`
+        })
+        .catch((error) => console.warn("子会话回报失败", error))
+    );
+  }
+
+  /**
+   * 把空间切成协调模式：主会话只留委派工具。这一版只给本机开发用（见 `/api/projects/:id/mode`），线上没有入口。
+   */
+  async setSpaceMode(projectId: string, mode: SpaceMode): Promise<boolean> {
+    await this.lifecycle.start();
+    const project = this.store.getProject(projectId);
+    if (!project) return false;
+    await this.store.setMode(this.#sqlWriter, projectId, mode, Date.now());
+    const pi = await this.harness.pi();
+    const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
+    if (!conversation) return false;
+    const tools = [...this.#pupuTools, ...this.#delegationTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
+    await conversation.configure(
+      mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } },
+      BACKGROUND_CONTEXT
+    );
+    this.#changed();
+    return true;
+  }
+
   /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。`origin` 是来自哪条聊天，报告卡回到那里。 */
   async #handOff(
     project: Project,
@@ -2229,6 +2304,15 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
       requestId: crypto.randomUUID()
     });
     return Response.json(result);
+  }
+  // 协调模式这一版还不开放，只有本机开发能切，用来验证委派。
+  const mode = pathname.match(/^\/api\/projects\/([^/]+)\/mode$/);
+  if (mode && method === "POST" && isLocal(request)) {
+    const body = await readJson<{ mode?: string }>(request);
+    const next = body.mode === "coordinator" ? "coordinator" : "direct";
+    const ok = await caller.pupu.setSpaceMode(decodeURIComponent(mode[1] ?? ""), next);
+    if (!ok) return Response.json({ error: "没有这个项目" }, { status: 404 });
+    return Response.json({ ok: true, mode: next });
   }
   const seen = pathname.match(/^\/api\/projects\/([^/]+)\/seen$/);
   if (seen && method === "POST") {

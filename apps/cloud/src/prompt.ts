@@ -2,6 +2,7 @@ import type { ComputerView } from "./bridge/protocol";
 import { describeComputers } from "./bridge/status.ts";
 import { HANDOFF_MARK, NOTICE_MARK } from "./messages.ts";
 import { mayRead } from "./access.ts";
+import type { SpaceChild } from "./delegation.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 import { STATUS_LABELS, statusOf, type ReportStore } from "./reports.ts";
 import type { ChatThread, Thread } from "./threads.ts";
@@ -99,6 +100,51 @@ ${QUOTES}
 ${STYLE}`;
 }
 
+function coordinatorPrompt(project: Project, children: readonly SpaceChild[]): string {
+  const list = children.length
+    ? children
+        .map((child) => `- ${child.title}（id: ${child.session}）：${child.busySince === null ? "空着" : "正在做"}`)
+        .join("\n")
+    : "- 还没有";
+  return `你是 Pupu，一个团体共用的 Agent，常驻在云端。这里是空间「${project.name}」的主会话。
+
+空间目标：${project.goal}
+${project.background ? `背景：${project.background}\n` : ""}
+${PEOPLE}
+
+你在这里只做两件事：把要做的事派给子会话，收子会话的回报，再向人汇报。
+- 你不能自己动电脑、跑命令、读写文件，这些工具在这里不可用。要做的事一律用 delegate 派出去，一件事一个子会话，写清楚要求。
+- 同一件事要补充或改方向，用 message_child 发给原来那个子会话，不要另开一个。
+- 派完马上告诉人派出去了，不用等。子会话做完，结果会以 ${NOTICE_MARK} 开头的消息回到这里；收到后用一两句话告诉人结果，要人拿主意的放在最后一句。
+- 人也可能直接进子会话说话，那时的结果同样会报到这里。
+
+这个空间的子会话：
+${list}
+
+${QUOTES}
+
+${STYLE}`;
+}
+
+function childPrompt(project: Project, title: string, computers: readonly ComputerView[]): string {
+  return `你是 Pupu，一个团体共用的 Agent，常驻在云端。这里是空间「${project.name}」的一个子会话，只负责一件事：「${title}」。
+
+空间目标：${project.goal}
+${PEOPLE}
+
+${COMPUTERS}
+
+${describeComputers(computers)}
+
+以 ${HANDOFF_MARK} 开头的消息，是空间的主会话派给你的事，直接动手做。人也可能直接在这里跟你说话。
+每一轮做完，回复的第一句写清结果：做成了什么，没做成什么。这段回复会原样报给空间的主会话，写给它看得懂。要人拿主意时，把问题放在最后一句。
+只做这件事，不派别的子会话，也不建项目、不转交项目。
+
+${QUOTES}
+
+${STYLE}`;
+}
+
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -162,11 +208,16 @@ export function renderPrompt(
   reports: ReportStore,
   computers: readonly ComputerView[],
   accounts: readonly string[],
-  nameOf: (memberId: string) => string
+  nameOf: (memberId: string) => string,
+  children: readonly SpaceChild[] = []
 ): string {
   const body =
-    thread.kind === "project"
-      ? projectPrompt(thread.project, computers)
+    thread.kind === "child"
+      ? childPrompt(thread.project, thread.title, computers)
+      : thread.kind === "project"
+      ? thread.project.mode === "coordinator"
+        ? coordinatorPrompt(thread.project, children)
+        : projectPrompt(thread.project, computers)
       : `${chatPrompt(thread, nameOf)}\n\n${currentState(thread, store, reports)}\n\n${describeComputers(computers)}`;
   return `${body}\n\n${describeConnectors(accounts)}\n\n今天是 ${today()}（UTC）。`;
 }

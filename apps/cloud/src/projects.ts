@@ -25,12 +25,18 @@ export type Project = {
   readonly ownerId: string | null;
   /** 空间成员。L2、L1 全组织可见，这张名单只在 L3、L4 决定谁能看。 */
   readonly members: readonly string[];
+  /** `direct`：主会话自己动手，和以前的项目一样。`coordinator`：主会话只委派和汇报，见 delegation.ts。 */
+  readonly mode: SpaceMode;
 };
 
+export type SpaceMode = "direct" | "coordinator";
+
 /** 写空间的密级和成员，走 pi 的同一个写队列（`DurableObjectSqliteDatabase`），不会被卷进 pi 正开着的事务。 */
+type SpaceValue = string | number | null;
+
 export type SpaceWriter = {
-  run(sql: string, ...params: SqlStorageValue[]): Promise<unknown>;
-  transaction<T>(callback: (tx: { run(sql: string, ...params: SqlStorageValue[]): Promise<unknown> }) => Promise<T>): Promise<T>;
+  run(sql: string, ...params: SpaceValue[]): Promise<unknown>;
+  transaction<T>(callback: (tx: { run(sql: string, ...params: SpaceValue[]): Promise<unknown> }) => Promise<T>): Promise<T>;
 };
 
 const LEVELS: readonly Level[] = ["L1", "L2", "L3", "L4"];
@@ -84,7 +90,8 @@ function toProject(row: Row): Project {
     updatedAt: Number(row.updated_at),
     level: levelOf(row.level ?? null),
     ownerId: row.owner_id === null || row.owner_id === undefined ? null : String(row.owner_id),
-    members: row.members ? String(row.members).split(",").sort() : []
+    members: row.members ? String(row.members).split(",").sort() : [],
+    mode: row.mode === "coordinator" ? "coordinator" : "direct"
   };
 }
 
@@ -119,6 +126,9 @@ export class ProjectStore {
       }
       if (!columns.some((column) => column.name === "owner_id")) {
         this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN owner_id TEXT");
+      }
+      if (!columns.some((column) => column.name === "mode")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN mode TEXT NOT NULL DEFAULT 'direct'");
       }
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_project_members (
         project_id TEXT NOT NULL,
@@ -275,5 +285,11 @@ export class ProjectStore {
   async setLevel(writer: SpaceWriter, projectId: string, level: Level, now: number): Promise<void> {
     this.#db();
     await writer.run("UPDATE pupu_projects SET level = ?, updated_at = ? WHERE id = ?", level, now, projectId);
+  }
+
+  /** 切换主会话的模式。这一版没有接到任何入口。 */
+  async setMode(writer: SpaceWriter, projectId: string, mode: SpaceMode, now: number): Promise<void> {
+    this.#db();
+    await writer.run("UPDATE pupu_projects SET mode = ?, updated_at = ? WHERE id = ?", mode, now, projectId);
   }
 }

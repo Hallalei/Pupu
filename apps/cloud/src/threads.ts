@@ -12,9 +12,14 @@ export const MAIN_SESSION = "1";
 export type Thread =
   | { readonly kind: "main"; readonly session: string }
   | { readonly kind: "private"; readonly session: string; readonly memberId: string }
-  | { readonly kind: "project"; readonly session: string; readonly project: Project };
+  | { readonly kind: "project"; readonly session: string; readonly project: Project }
+  /** 空间的子会话：主会话派来的一件事，见 delegation.ts。受众和它的空间一样。 */
+  | { readonly kind: "child"; readonly session: string; readonly project: Project; readonly title: string };
 
-export type ChatThread = Exclude<Thread, { kind: "project" }>;
+export type ChatThread = Exclude<Thread, { kind: "project" | "child" }>;
+
+/** 子会话属于哪个空间。 */
+export type ChildLookup = (session: string) => { readonly project: Project; readonly title: string } | undefined;
 
 export type PrivateChatRow = {
   readonly memberId: string;
@@ -61,13 +66,19 @@ function toRow(row: Row): PrivateChatRow {
 export class ThreadStore {
   readonly #sql: SqlStorage;
   readonly #projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">;
+  readonly #childOf: ChildLookup;
   /** 正在建的私聊。建会话要等，同一个人的两个请求不能各建一个。 */
   readonly #creating = new Map<string, Promise<PrivateChatRow>>();
   #ready = false;
 
-  constructor(sql: SqlStorage, projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">) {
+  constructor(
+    sql: SqlStorage,
+    projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">,
+    childOf: ChildLookup = () => undefined
+  ) {
     this.#sql = sql;
     this.#projects = projects;
+    this.#childOf = childOf;
   }
 
   #db(): SqlStorage {
@@ -88,7 +99,9 @@ export class ThreadStore {
     const [row] = this.#db().exec("SELECT member_id FROM pupu_private_chats WHERE session = ?", session).toArray();
     if (row) return { kind: "private", session, memberId: String(row.member_id) };
     const project = this.#projects.projectBySession(session);
-    return project ? { kind: "project", session, project } : undefined;
+    if (project) return { kind: "project", session, project };
+    const child = this.#childOf(session);
+    return child ? { kind: "child", session, project: child.project, title: child.title } : undefined;
   }
 
   byMember(memberId: string): PrivateChatRow | undefined {

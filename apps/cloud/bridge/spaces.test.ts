@@ -12,7 +12,7 @@ const NOW = 1_800_000_000_000;
 
 /** 测试里没有 pi 的队列，直接写。 */
 function writer(sql: SqlStorage): SpaceWriter {
-  const run = async (query: string, ...params: SqlStorageValue[]) => sql.exec(query, ...params);
+  const run = async (query: string, ...params: (string | number | null)[]) => sql.exec(query, ...params);
   return { run, transaction: (callback) => callback({ run }) };
 }
 
@@ -66,7 +66,8 @@ describe("老数据迁移", () => {
       updatedAt: 2,
       level: "L2",
       ownerId: null,
-      members: []
+      members: [],
+      mode: "direct"
     });
   });
 
