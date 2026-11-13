@@ -40,7 +40,7 @@ if (origin && window.location.origin === origin) {
     },
     attachBrowser: (rect) =>
       ipcRenderer.invoke("pupu:browser-attach", { x: rect.x, y: rect.y, width: rect.width, height: rect.height }) as Promise<boolean>,
-    detachBrowser: () => ipcRenderer.invoke("pupu:browser-detach") as Promise<void>,
+    detachBrowser: (handback) => ipcRenderer.invoke("pupu:browser-detach", handback === true) as Promise<void>,
     chromeProfiles: () => ipcRenderer.invoke("pupu:chrome-profiles") as Promise<ChromeProfile[]>,
     importChrome: (profile) => ipcRenderer.invoke("pupu:import-chrome", profile) as Promise<ChromeImport>
   };

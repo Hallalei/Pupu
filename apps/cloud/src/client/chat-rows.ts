@@ -2,7 +2,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import { blockedOutcome, blockedReason } from "../bridge/blocked.ts";
 import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
-import { parseHandoff, parseNotice, parseQuote, type Sender } from "../messages.ts";
+import { BROWSER_CANCEL_TEXT, parseHandoff, parseNotice, parseQuote, type Sender } from "../messages.ts";
 import type { Project } from "../projects";
 import type { SessionView, TranscriptMessage, TranscriptPart } from "../protocol";
 import type { ReportCard } from "../reports";
@@ -39,9 +39,14 @@ export type BrowserPlanStep = { readonly text: string; readonly done: boolean };
 
 /**
  * live：正在做（这一轮还在跑，它是最后一个浏览器任务）。waiting：停在一步等批。
- * done：做完了。stopped：这一轮停了、没给结果。failed：最后一步出错了，这一轮也结束了。
+ * handover：交给人了（登录、验证码），这一轮停着等人接手，人还没回话。卡片留着画面和「接手」按钮。
+ * done：做完了。stopped：这一轮停了、没给结果，状态那行说清是取消了、中断了还是在等人回话。
+ * failed：最后一步出错了，这一轮也结束了。
  */
-export type BrowserTaskState = "live" | "waiting" | "done" | "stopped" | "failed";
+export type BrowserTaskState = "live" | "waiting" | "handover" | "done" | "stopped" | "failed";
+
+/** 计划里还没勾的这类步骤，说明 Pupu 停下来是在等人接手。 */
+const HANDOVER_STEP = /登录|登入|验证码|扫码|接手|交给你|等你/;
 
 /**
  * 一段连着的浏览器操作，画成一张卡片：实时画面、状态、计划、做完后的一句结果。学的是 Hark。
@@ -180,6 +185,12 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
       });
       if (message.error?.trim()) {
         own.push({ id: `${message.id}#error`, kind: "error", text: modelErrorText(message.error) });
+      }
+      // 这一轮被人停掉了（卡片上的停止、「取消任务」）：浏览器卡片据此显示「已停下」。这一行合卡片时就去掉了。
+      if (message.stopReason === "aborted") {
+        const id = `aborted:${message.id}`;
+        browserMarks.set(id, { op: "aborted", args: {} });
+        own.push({ id, kind: "assistant", text: "" });
       }
     }
     rows.push(...own.map((row, index) => ({ ...row, gap: index === 0 ? 12 : 8 }) as Row));
@@ -383,6 +394,8 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
     plans: Record<string, unknown>[];
     /** 后面有人说了话（或者报回、通知），这件事算过去了。 */
     closed: boolean;
+    /** 人点了「取消任务」：这一轮被停掉了，或者替人说了不做了。 */
+    cancelled: boolean;
   };
   const result: Row[] = [];
   const cards: Open[] = [];
@@ -391,16 +404,28 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
     const mark = marks.get(row.id);
     if (mark) {
       if (!open) {
-        open = { index: result.length, id: `browser:${row.id.replace(/^(tool|plan):/, "")}`, steps: [], plans: [], closed: false };
+        if (mark.op === "aborted") continue;
+        open = {
+          index: result.length,
+          id: `browser:${row.id.replace(/^(tool|plan):/, "")}`,
+          steps: [],
+          plans: [],
+          closed: false,
+          cancelled: false
+        };
         cards.push(open);
         result.push(row);
       }
-      if (mark.op === "plan") open.plans.push(mark.args);
+      if (mark.op === "aborted") open.cancelled = true;
+      else if (mark.op === "plan") open.plans.push(mark.args);
       else if (row.kind === "tool") open.steps.push({ step: row.step, mark });
       continue;
     }
     if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report") {
-      if (open) open.closed = true;
+      if (open) {
+        open.closed = true;
+        if (row.kind === "user" && row.body.trim() === BROWSER_CANCEL_TEXT) open.cancelled = true;
+      }
       open = null;
     }
     result.push(row);
@@ -408,13 +433,12 @@ function browserCards(rows: readonly Row[], marks: ReadonlyMap<string, BrowserMa
   cards.forEach((card, position) => {
     const first = result[card.index]!;
     const newest = position === cards.length - 1;
-    // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
-    const latest = card.steps.at(-1);
-    const shown = latest?.mark.op === "show" && latest.step.status === "done";
-    const handedOver = !running && newest && !card.closed && shown;
-    // 交给人以后人回了话（说好了、取消了）：这件事停在交接上，不能说做完了，接着做的会另起一张卡。
-    const handedOff = card.closed && shown;
-    const task = browserTask(card.id, card.steps, card.plans, running && newest, context, handedOver, handedOff);
+    const task = browserTask(card.id, card.steps, card.plans, context, {
+      live: running && newest,
+      // 人还没回话、这一轮也停了：交给人的话就是在等人接手。
+      awaiting: !running && newest && !card.closed,
+      cancelled: card.cancelled
+    });
     result[card.index] = { id: card.id, gap: first.gap, kind: "browser", task };
   });
   return result;
@@ -424,10 +448,15 @@ function browserTask(
   id: string,
   steps: readonly { step: ToolStep; mark: BrowserMark }[],
   plans: readonly Record<string, unknown>[],
-  last: boolean,
   context: RowContext,
-  handedOver = false,
-  handedOff = false
+  flags: {
+    /** 这一轮还在跑，这是最后一张卡。 */
+    readonly live: boolean;
+    /** 这一轮停了，后面还没人说话。 */
+    readonly awaiting: boolean;
+    /** 人点了「取消任务」。 */
+    readonly cancelled: boolean;
+  }
 ): BrowserTask {
   const plan = plans.at(-1);
   const planSteps: BrowserPlanStep[] = Array.isArray(plan?.steps)
@@ -442,6 +471,12 @@ function browserTask(
   const computer = context.computers.find((item) => item.name === computerName || item.id === computerName);
   const latest = steps.at(-1);
   const waiting = steps.find(({ step }) => step.status === "waiting");
+  // 交给人了：调过 browser_show，或者计划里还没勾的一步是「等你登录」这类。
+  const handedOver =
+    steps.some(({ step, mark }) => mark.op === "show" && step.status === "done") ||
+    planSteps.some((step) => !step.done && HANDOVER_STEP.test(step.text));
+  const interrupted =
+    latest !== undefined && (latest.step.status === "unfinished" || latest.step.status === "denied" || latest.step.status === "expired");
   let state: BrowserTaskState;
   let status: string;
   if (resultText) {
@@ -450,28 +485,24 @@ function browserTask(
   } else if (waiting) {
     state = "waiting";
     status = `等你批准：${waiting.step.title.replace(/^在「[^」]*」上|^在电脑上/, "")}`;
-  } else if (handedOver) {
-    state = "waiting";
-    status = "等你在电脑上的 Pupu 里接手";
-  } else if (last) {
+  } else if (flags.live) {
     state = "live";
     status = latest ? browserDoing(latest.mark) : "正在想怎么做";
-  } else if (handedOff) {
+  } else if (flags.cancelled || interrupted) {
+    // 「已停下」只给真取消了、真中断了的。
     state = "stopped";
-    status = "交给你接手了";
+    status = "已停下";
   } else if (latest?.step.status === "failed") {
     state = "failed";
     status = "没做完，最后一步出错了";
-  } else if (
-    !latest ||
-    latest.step.status === "unfinished" ||
-    latest.step.status === "denied" ||
-    latest.step.status === "expired" ||
-    // 停在两步之间（比如点了「取消任务」）：最后一步本身做完了，但计划还没勾完、也没给结果，不能说做完了。
-    planSteps.some((step) => !step.done)
-  ) {
+  } else if (handedOver) {
+    // 人还没回话就是在等人接手；回过话了（说好了，或者接手完自动叫醒了），接着做的另起一张卡。
+    state = flags.awaiting ? "handover" : "stopped";
+    status = flags.awaiting ? "等你接手" : "交给你接手了";
+  } else if (!latest || planSteps.some((step) => !step.done)) {
+    // 这一轮自己停在半路（多半是在问人），不是取消。
     state = "stopped";
-    status = "已停下";
+    status = "等你回话";
   } else {
     state = "done";
     status = "做完了";

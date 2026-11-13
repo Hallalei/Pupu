@@ -216,6 +216,8 @@ export type UpFrame =
   | { readonly type: "output"; readonly requestId: string; readonly text: string }
   /** 用户在电脑的菜单栏上收回了屏幕控制。 */
   | { readonly type: "takeback" }
+  /** 电脑前的人在 Pupu 主窗口里接手完浏览器（登录、验证码），点了「收起」。云端叫醒等着的那条对话。0.2.5 起。 */
+  | { readonly type: "browser-handback" }
   /** 有没有人在用这台电脑：键盘鼠标最近动过。变了才发，连上时发一次。 */
   | { readonly type: "presence"; readonly active: boolean }
   /**
@@ -421,6 +423,8 @@ export function parseUpFrame(raw: string): UpFrame | OutdatedHello | null {
       return requestId ? { type: "cancelled", requestId } : null;
     case "browser-frame":
       return parseBrowserFrame(value);
+    case "browser-handback":
+      return { type: "browser-handback" };
     case "error":
       return requestId && typeof value.message === "string"
         ? { type: "error", requestId, message: value.message }

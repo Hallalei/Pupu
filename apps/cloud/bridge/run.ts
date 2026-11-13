@@ -42,6 +42,8 @@ export type RunningBridge = {
   fromCapture(event: CaptureEvent): void;
   /** Pupu 浏览器的一帧画面，转给云端。没连上就丢掉，不攒。 */
   browserFrame(frame: Omit<BrowserFrame, "type">): void;
+  /** 电脑前的人接手完浏览器、收起了放大视图。 */
+  browserHandback(): void;
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
@@ -227,6 +229,9 @@ export function runBridge(options: RunOptions): RunningBridge {
     fromCapture: (event) => remote.fromCapture(event),
     browserFrame: (frame) => {
       current?.send({ type: "browser-frame", ...frame });
+    },
+    browserHandback: () => {
+      current?.send({ type: "browser-handback" });
     },
     stop() {
       if (stopped) return;

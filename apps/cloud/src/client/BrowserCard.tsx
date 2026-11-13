@@ -34,7 +34,14 @@ export function BrowserCard({
   const [plan, setPlan] = useState(false);
   const [large, setLarge] = useState(false);
   const active = task.state === "live" || task.state === "waiting";
-  const finished = !active;
+  /** 交给人了，等人接手：没有转圈，画面留着，多一个「接手」。 */
+  const holding = task.state === "handover";
+  const finished = !active && !holding;
+  // 「接手」：电脑 App 上（做这件事的就是这台电脑）打开主窗口里的放大视图，能直接操作；网页和手机上放大看实时画面。
+  const takeOver = () => {
+    if (onTakeOver) onTakeOver();
+    else setLarge(true);
+  };
 
   useEffect(() => {
     if (!large) return;
@@ -87,7 +94,16 @@ export function BrowserCard({
       >
         <ExpandIcon />
       </button>
-      {active && onStop && (
+      {holding && (
+        <button
+          type="button"
+          onClick={takeOver}
+          className="tap flex h-8 shrink-0 items-center rounded-full bg-white px-3 text-footnote font-semibold whitespace-nowrap text-black"
+        >
+          接手
+        </button>
+      )}
+      {(active || holding) && onStop && (
         <button
           type="button"
           aria-label="停止"
@@ -136,7 +152,7 @@ export function BrowserCard({
           </div>
         )}
       </div>
-      {active && (
+      {(active || holding) && (
         <span className="soft rounded-full px-3 py-1 text-footnote text-muted" role="status">
           {task.status}
         </span>
@@ -147,7 +163,7 @@ export function BrowserCard({
             task={task}
             frame={frame}
             onClose={() => setLarge(false)}
-            onStop={active ? onStop : undefined}
+            onStop={active || holding ? onStop : undefined}
             onTakeOver={
               onTakeOver &&
               (() => {

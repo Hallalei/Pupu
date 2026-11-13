@@ -118,6 +118,8 @@ export class ComputerBridge {
   onDetached: (requestId: string, computerId: string, command: string) => void = () => {};
   /** 交出去的命令退出了。 */
   onFinished: (computerId: string, frame: Extract<UpFrame, { type: "finished" }>) => void = () => {};
+  /** 电脑前的人接手完了，收起了放大视图。 */
+  onHandback: (computerId: string) => void = () => {};
   /** 电脑上的 Pupu 已经在主窗口里打开了浏览器页面，等人接手（browser_show 做成了）。 */
   onTakeover: (computerId: string, requestId: string) => void = () => {};
   /** 这个动作批过没有。批过的在 exec 帧里带上 approved，桥上的二次判断认它。 */
@@ -183,6 +185,11 @@ export class ComputerBridge {
     if (frame.type === "takeback") {
       const link = readLink(socket);
       if (link?.ready) this.onTakeback(link.computerId);
+      return;
+    }
+    if (frame.type === "browser-handback") {
+      const link = readLink(socket);
+      if (link?.ready && link.browser) this.onHandback(link.computerId);
       return;
     }
     if (frame.type === "browser-frame") {

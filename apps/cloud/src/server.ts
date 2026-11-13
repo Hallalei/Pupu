@@ -122,7 +122,7 @@ import {
   type Purpose,
   type RelyingParty
 } from "./passkeys";
-import { handoffMessage, noticeMessage, type Sender } from "./messages";
+import { handbackNotice, handoffMessage, noticeMessage, type Sender } from "./messages";
 import { REVOKED_CLOSE_CODE, type ServerMessage } from "./protocol";
 import type { Project } from "./projects";
 import { progressLine, ProjectStore } from "./projects";
@@ -280,6 +280,10 @@ export class Pupu extends DurableObject<Env> {
   #sentActivity = "";
   /** 每台电脑最近一次浏览器调用在哪个会话里，浏览器画面按它决定发给谁。只在内存里。 */
   readonly #browserSessions = new Map<string, string>();
+  /** 交给人接手、还在等人接手完的电脑 → 哪条对话在等。人收起放大视图时叫醒它；Pupu 又动了浏览器就不等了。只在内存里。 */
+  readonly #handovers = new Map<string, string>();
+  /** 每台电脑最后一帧浏览器画面，刚连上、刚切过来的设备先拿到它，卡片不空着。只在内存里，不存。 */
+  readonly #lastFrames = new Map<string, ServerMessage>();
   /**
    * 每个项目会话正在答的那条用户消息是什么时候的。这之前转交的事归这一轮报，之后的还排在队里。
    * 只在内存里：DO 重启后 pi 重发请求，会再经过 beforeRequest。
@@ -426,7 +430,8 @@ export class Pupu extends DurableObject<Env> {
         onMessage: (socket, message) => this.desktop.onMessage(socket, message),
         onClose: (socket) => this.desktop.onClose(socket)
       }
-    ]
+    ],
+    (session, device) => this.#framesFor(session, device)
   );
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
@@ -458,9 +463,14 @@ export class Pupu extends DurableObject<Env> {
     this.bridge.onGone = (computerId) => {
       this.desktop.bridgeGone(computerId);
       this.#browserSessions.delete(computerId);
+      this.#handovers.delete(computerId);
+      this.#lastFrames.delete(computerId);
     };
     this.bridge.onBrowserFrame = (computerId, frame) => this.#browserFrame(computerId, frame);
+    this.bridge.onHandback = (computerId) => this.#handedBack(computerId);
     this.bridge.onTakeover = (computerId, requestId) => {
+      const session = this.#sessionOfCall(requestId);
+      if (session) this.#handovers.set(computerId, session);
       void pushTakeover({
         apns: this.#apnsClient(),
         tokens: this.push.tokens("alert"),
@@ -608,13 +618,24 @@ export class Pupu extends DurableObject<Env> {
       title: frame.title,
       at: frame.at
     };
+    this.#lastFrames.set(computerId, message);
     this.sockets.broadcastBy((device) => (this.#seenBy(this.#viewer(device))(session, computerId) ? message : null));
+  }
+
+  /** 刚打开这条对话的设备先拿到各台电脑最后一帧（只给这条对话的、这个人看得到的），卡片不用等下一帧。 */
+  #framesFor(session: string, device: string | null): ServerMessage[] {
+    const sees = this.#seenBy(this.#viewer(device));
+    return [...this.#lastFrames.entries()].flatMap(([computerId, message]) =>
+      message.type === "browser_frame" && message.session === session && sees(session, computerId) ? [message] : []
+    );
   }
 
   /** 浏览器调用一开始就记下它在哪个会话：一步做得快，第一帧到的时候调用可能已经结束了。 */
   #noteBrowserCalls(): void {
     for (const call of this.bridge.running()) {
       if (call.action.kind !== "browser") continue;
+      // Pupu 自己又动了浏览器（人在对话里说过好了），不用再等人收起放大视图。
+      if (call.action.op !== "show") this.#handovers.delete(call.computerId);
       const session = this.#sessionOfCall(call.callId);
       if (session) this.#browserSessions.set(call.computerId, session);
     }
@@ -1289,6 +1310,17 @@ export class Pupu extends DurableObject<Env> {
     if (sessions.length === 0) return;
     const text = `「${this.#computerName(computerId)}」连上了。刚才因为电脑不在线没做成的事，现在可以接着做；已经不需要了就不用做。`;
     for (const session of sessions) this.#notifyLater(session, text);
+  }
+
+  /**
+   * 电脑前的人接手完浏览器（登录、过验证码），在 Pupu 主窗口里收起了放大视图。等着的那条对话自己接着做，
+   * 人不用再回来说一声。只叫醒一次：没在等（Pupu 没交给人、或者已经接着做了）就不管。
+   */
+  #handedBack(computerId: string): void {
+    const session = this.#handovers.get(computerId);
+    if (!session) return;
+    this.#handovers.delete(computerId);
+    this.#notifyLater(session, handbackNotice(this.#computerName(computerId)));
   }
 
   #computerName(computerId: string): string {

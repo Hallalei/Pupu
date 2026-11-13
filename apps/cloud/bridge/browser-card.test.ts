@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { ApprovalView } from "../src/bridge/approvals.ts";
 import { parseUpFrame, type ComputerView } from "../src/bridge/protocol.ts";
+import { BROWSER_CANCEL_TEXT, handbackNotice } from "../src/messages.ts";
 import { buildRows, type BrowserTask, type ChatRow, type RowContext } from "../src/client/chat-rows.ts";
 import type { TranscriptMessage } from "../src/protocol.ts";
 import { EMPTY_VIEW } from "../src/view.ts";
@@ -101,20 +102,62 @@ describe("浏览器任务卡片", () => {
     assert.equal(list.at(-1)!.kind, "assistant");
   });
 
-  test("取消任务后：最后一步做完了，但计划没勾完、没给结果，算停下，不算做完", () => {
-    const list = rows(
-      [
-        user("做 12 轮"),
-        assistant([{ type: "tool-call", id: "p1", name: "browser_plan", arguments: { steps: [{ text: "第 1 轮", done: true }, { text: "第 2 轮" }] } }]),
-        done("p1", "browser_plan"),
-        assistant([tool("l1", "browser_look", {})]),
-        done("l1", "browser_look")
-      ],
-      false
-    );
+  test("计划没勾完、没给结果：没人取消就是等你回话；被停掉了（这一轮 aborted）才是已停下", () => {
+    const base = [
+      user("做 12 轮"),
+      assistant([{ type: "tool-call", id: "p1", name: "browser_plan", arguments: { steps: [{ text: "第 1 轮", done: true }, { text: "第 2 轮" }] } }]),
+      done("p1", "browser_plan"),
+      assistant([tool("l1", "browser_look", {})]),
+      done("l1", "browser_look")
+    ];
+    const [paused] = tasks(rows(base, false));
+    assert.equal(paused!.state, "stopped");
+    assert.equal(paused!.status, "等你回话");
+    clock += 1;
+    const aborted: TranscriptMessage = { id: `a${clock}`, role: "assistant", timestamp: clock, parts: [], stopReason: "aborted" };
+    const list = rows([...base, aborted], false);
     const [task] = tasks(list);
-    assert.equal(task!.state, "stopped");
     assert.equal(task!.status, "已停下");
+    // 停掉的那一行合进卡片，不单独显示。
+    assert.ok(!list.some((row) => row.id === `aborted:${aborted.id}`));
+  });
+
+  test("点了「取消任务」替人发的那句：卡片算已停下", () => {
+    const [task] = tasks(
+      rows(
+        [
+          assistant([tool("o1", "browser_open", { url: "https://a.test/login" })]),
+          done("o1", "browser_open"),
+          assistant([tool("s1", "browser_show", {})]),
+          done("s1", "browser_show"),
+          user(BROWSER_CANCEL_TEXT)
+        ],
+        false
+      )
+    );
+    assert.equal(task!.status, "已停下");
+  });
+
+  test("计划里还没勾的一步是等你登录：没调 browser_show 也算交给人，等你接手", () => {
+    const [task] = tasks(
+      rows(
+        [
+          assistant([{ type: "tool-call", id: "p1", name: "browser_plan", arguments: { steps: [{ text: "打开后台", done: true }, { text: "等你登录" }] } }]),
+          done("p1", "browser_plan"),
+          assistant([tool("o1", "browser_open", { url: "https://a.test/login" })]),
+          done("o1", "browser_open")
+        ],
+        false
+      )
+    );
+    assert.equal(task!.state, "handover");
+    assert.equal(task!.status, "等你接手");
+  });
+
+  test("接手完收起放大视图：叫醒对话的那句只在界面上显示第一行", () => {
+    const text = handbackNotice("mbpro");
+    assert.match(text.split("\n")[0]!, /「mbpro」前的人在 Pupu 里接手完浏览器/);
+    assert.deepEqual(parseUpFrame(JSON.stringify({ type: "browser-handback" })), { type: "browser-handback" });
   });
 
   test("最后一步请人接手、这一轮停了：等人在电脑上接手，人回话后这张卡不再等", () => {
@@ -125,8 +168,8 @@ describe("浏览器任务卡片", () => {
       done("s1", "browser_show")
     ];
     const [waiting] = tasks(rows(handed, false));
-    assert.equal(waiting!.state, "waiting");
-    assert.equal(waiting!.status, "等你在电脑上的 Pupu 里接手");
+    assert.equal(waiting!.state, "handover");
+    assert.equal(waiting!.status, "等你接手");
     const [running] = tasks(rows(handed, true));
     assert.equal(running!.state, "live");
     // 人回了话（说好了，或者点了「取消任务」替人说不做了）：停在交接上，不算做完。
@@ -134,7 +177,7 @@ describe("浏览器任务卡片", () => {
     assert.equal(after!.state, "stopped");
     assert.equal(after!.status, "交给你接手了");
     const [failed] = tasks(rows([handed[0]!, handed[1]!, handed[2]!, done("s1", "browser_show", true)], false));
-    assert.notEqual(failed!.state, "waiting");
+    assert.notEqual(failed!.state, "handover");
   });
 
   test("用户发了新消息，下一段浏览器操作另起一张卡", () => {

@@ -75,6 +75,7 @@ export class PiSessionSockets {
   /** 每条连接第几次订阅，见 `#watch`。 */
   readonly #watchTurns = new WeakMap<WebSocket, number>();
 
+  readonly #greeting: (session: PiSessionId, device: string | null) => readonly ServerMessage[];
   constructor(
     harness: PiHarness,
     getWebSockets: (tag?: string) => WebSocket[],
@@ -87,8 +88,11 @@ export class PiSessionSockets {
     mayOpen: (session: PiSessionId, device: string | null) => boolean,
     /** 用户把这个会话停下了。`at` 是停下的时间，这之前提交的都不做了。 */
     onAbort: (session: PiSessionId, at: number) => void,
-    routes: readonly BridgeSocketHandlers[] = []
+    routes: readonly BridgeSocketHandlers[] = [],
+    /** 刚连上时先发的几帧，比如每台电脑最后一帧浏览器画面。 */
+    greeting: (session: PiSessionId, device: string | null) => readonly ServerMessage[] = () => []
   ) {
+    this.#greeting = greeting;
     this.#harness = harness;
     this.#getWebSockets = getWebSockets;
     this.#getTags = getTags;
@@ -181,6 +185,7 @@ export class PiSessionSockets {
   async #onConnect(connection: Connection, ctx: ConnectionContext) {
     const session = sessionFromRequest(ctx.request);
     send(connection, { type: "hello", session });
+    for (const message of this.#greeting(session, deviceOfTags(connection.tags))) send(connection, message);
     await this.#watch(connection, session);
   }
 

@@ -14,7 +14,7 @@ import type { ComputerActivity } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
-import { quotedMessage, type Sender } from "../messages";
+import { BROWSER_CANCEL_TEXT, quotedMessage, type Sender } from "../messages";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
@@ -88,12 +88,11 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
 
   const rows = buildRows(pi, { ...context, toggled });
   const here = useDesktopComputer();
-  /** 每张浏览器卡片最后看到的画面：做完了还留着，刷新页面就没了。 */
-  const cardFrames = useRef(new Map<string, BrowserFrameView>());
+  const cardFrames = CARD_FRAMES;
   const lastCard = [...rows].reverse().find((row) => row.kind === "browser")?.id;
   function frameFor(task: BrowserTask): BrowserFrameView | null {
     // 最后一张卡做完得快，第一帧可能晚到：做完后到的画面也收下，收起的卡片上留着最后的样子。
-    if (task.state === "live" || task.state === "waiting" || (task.id === lastCard && !cardFrames.current.has(task.id))) {
+    if (task.state === "live" || task.state === "waiting" || task.state === "handover" || (task.id === lastCard && !cardFrames.current.has(task.id))) {
       const live = task.computerId
         ? pi.frames.get(task.computerId)
         : pi.frames.size === 1
@@ -105,7 +104,9 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   }
   // 浏览器任务的「取消任务」：这一轮还在跑就停掉；已经停下来等人接手了，就替人说一句不做了。
   // 卡片上的停止按钮和电脑上接手的放大视图里的「取消任务」都用它。
-  const browserActive = rows.some((row) => row.kind === "browser" && (row.task.state === "live" || row.task.state === "waiting"));
+  const browserActive = rows.some(
+    (row) => row.kind === "browser" && (row.task.state === "live" || row.task.state === "waiting" || row.task.state === "handover")
+  );
   const { running, abort, submit } = pi;
   const cancelBrowser = useMemo(
     () =>
@@ -113,7 +114,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
         ? undefined
         : running
           ? abort
-          : () => void submit("不用继续了，取消这个浏览器任务。", crypto.randomUUID()).catch(() => undefined),
+          : () => void submit(BROWSER_CANCEL_TEXT, crypto.randomUUID()).catch(() => undefined),
     [browserActive, running, abort, submit]
   );
   useEffect(() => (cancelBrowser ? offerBrowserCancel(cancelBrowser) : undefined), [cancelBrowser]);
@@ -389,6 +390,12 @@ export function usePressMenu(onMenu: (anchor: HTMLElement, point?: MenuPoint) =>
     }
   };
 }
+
+/**
+ * 每张浏览器卡片最后看到的画面：做完了还留着。放在模块里，切到别的对话再切回来也还在；刷新页面就没了
+ * （云端会先补发每台电脑最后一帧，见 server.ts 的 #framesFor）。
+ */
+const CARD_FRAMES = { current: new Map<string, BrowserFrameView>() };
 
 type MenuPoint = { readonly x: number; readonly y: number };
 type MenuOpener = (anchor: HTMLElement, text: string, point?: MenuPoint) => void;

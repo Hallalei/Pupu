@@ -50,8 +50,9 @@ nonisolated struct ToolStep: Equatable, Sendable {
 
 /// 浏览器任务卡片。和网页的 chat-rows.ts 里的 BrowserTask 是同一套规则，两边一起改。
 nonisolated struct BrowserTask: Equatable, Sendable {
-    /// live：正在做。waiting：停在一步等批。done：做完了。stopped：这一轮停了、没给结果。failed：最后一步出错了。
-    enum State: Equatable, Sendable { case live, waiting, done, stopped, failed }
+    /// live：正在做。waiting：停在一步等批。handover：交给人了、在等人接手（画面留着，有「接手」）。
+    /// done：做完了。stopped：这一轮停了、没给结果。failed：最后一步出错了。
+    enum State: Equatable, Sendable { case live, waiting, handover, done, stopped, failed }
     struct PlanStep: Equatable, Sendable {
         let text: String
         let done: Bool
@@ -68,6 +69,8 @@ nonisolated struct BrowserTask: Equatable, Sendable {
     let steps: [ToolStep]
 
     var active: Bool { state == .live || state == .waiting }
+    /// 交给人了、在等人接手：没有转圈，画面留着，多一个「接手」。
+    var holding: Bool { state == .handover }
 }
 
 /// 连着好几步，合成一组。
@@ -177,6 +180,12 @@ nonisolated enum ChatRows {
                 }
                 if let error = message.error, !error.isBlank {
                     own.append(ChatRow(id: "\(message.id)#error", kind: .error(modelErrorText(error))))
+                }
+                // 这一轮被人停掉了（卡片上的停止、「取消任务」）：浏览器卡片据此显示「已停下」。这一行合卡片时就去掉了。
+                if message.stopReason == "aborted" {
+                    let abortedId = "aborted:\(message.id)"
+                    marks[abortedId] = BrowserMark(op: "aborted", arguments: .null)
+                    own.append(ChatRow(id: abortedId, kind: .assistant("")))
                 }
             case .tool:
                 break
@@ -371,6 +380,8 @@ nonisolated enum ChatRows {
             var plans: [JSON] = []
             /// 后面有人说了话（或者报回、通知），这件事算过去了。
             var closed = false
+            /// 人点了「取消任务」：这一轮被停掉了，或者替人说了不做了。
+            var cancelled = false
         }
         var result: [ChatRow] = []
         var cards: [Open] = []
@@ -378,12 +389,15 @@ nonisolated enum ChatRows {
         for row in rows {
             if let mark = marks[row.id] {
                 if open == nil {
+                    if mark.op == "aborted" { continue }
                     let raw = row.id.hasPrefix("tool:") ? String(row.id.dropFirst(5)) : row.id.hasPrefix("plan:") ? String(row.id.dropFirst(5)) : row.id
                     cards.append(Open(index: result.count, id: "browser:\(raw)"))
                     open = cards.count - 1
                     result.append(row)
                 }
-                if mark.op == "plan" {
+                if mark.op == "aborted" {
+                    cards[open!].cancelled = true
+                } else if mark.op == "plan" {
                     cards[open!].plans.append(mark.arguments)
                 } else if case .tool(let step) = row.kind {
                     cards[open!].steps.append((step, mark))
@@ -392,7 +406,12 @@ nonisolated enum ChatRows {
             }
             switch row.kind {
             case .user, .other, .handoff, .notice, .report:
-                if let index = open { cards[index].closed = true }
+                if let index = open {
+                    cards[index].closed = true
+                    if case .user(let body, _) = row.kind, body.trimmingCharacters(in: .whitespacesAndNewlines) == browserCancelText {
+                        cards[index].cancelled = true
+                    }
+                }
                 open = nil
             default: break
             }
@@ -400,18 +419,27 @@ nonisolated enum ChatRows {
         }
         for (position, card) in cards.enumerated() {
             let newest = position == cards.count - 1
-            // 最后一步是请人接手（browser_show 做成了），这一轮停下了、人还没回话：在等人接手，不算做完。
-            let shown = card.steps.last?.1.op == "show" && card.steps.last?.0.status == .done
-            let handedOver = !running && newest && !card.closed && shown
-            // 交给人以后人回了话（说好了、取消了）：这件事停在交接上，不能说做完了，接着做的会另起一张卡。
-            let handedOff = card.closed && shown
-            let task = browserTask(id: card.id, steps: card.steps, plans: card.plans, last: running && newest, context: context, handedOver: handedOver, handedOff: handedOff)
+            let task = browserTask(
+                id: card.id,
+                steps: card.steps,
+                plans: card.plans,
+                last: running && newest,
+                context: context,
+                // 人还没回话、这一轮也停了：交给人的话就是在等人接手。
+                awaiting: !running && newest && !card.closed,
+                cancelled: card.cancelled
+            )
             result[card.index] = ChatRow(id: card.id, kind: .browser(task), gap: result[card.index].gap)
         }
         return result
     }
 
-    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext, handedOver: Bool = false, handedOff: Bool = false) -> BrowserTask {
+    /// 人在卡片或放大视图里点了「取消任务」、这一轮已经停着时，替人发的这句话。和 messages.ts 的 BROWSER_CANCEL_TEXT 一样。
+    static let browserCancelText = "不用继续了，取消这个浏览器任务。"
+    /// 计划里还没勾的一步是这类，就算交给人了。和 chat-rows.ts 的 HANDOVER_STEP 一样。
+    private static let handoverWords = ["登录", "登入", "验证码", "扫码", "接手", "交给你", "等你"]
+
+    private static func browserTask(id: String, steps: [(ToolStep, BrowserMark)], plans: [JSON], last: Bool, context: ChatContext, awaiting: Bool = false, cancelled: Bool = false) -> BrowserTask {
         let plan = plans.last
         let planSteps: [BrowserTask.PlanStep] = plan?["steps"]?.array?.compactMap { item in
             guard let text = item["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
@@ -422,6 +450,10 @@ nonisolated enum ChatRows {
         let computer = context.computers.first { $0.name == computerName || $0.id == computerName }
         let latest = steps.last
         let waiting = steps.first { $0.0.status == .waiting }
+        // 交给人了：调过 browser_show，或者计划里还没勾的一步是「等你登录」这类。
+        let handedOver = steps.contains { $0.1.op == "show" && $0.0.status == .done }
+            || planSteps.contains { step in !step.done && handoverWords.contains { step.text.contains($0) } }
+        let interrupted = latest.map { [.unfinished, .denied, .expired].contains($0.0.status) } ?? false
         let state: BrowserTask.State
         let status: String
         if resultText != nil {
@@ -429,17 +461,19 @@ nonisolated enum ChatRows {
         } else if let waiting {
             let title = waiting.0.title.replacingOccurrences(of: #"^在「[^」]*」上|^在电脑上"#, with: "", options: .regularExpression)
             (state, status) = (.waiting, "等你批准：\(title)")
-        } else if handedOver {
-            (state, status) = (.waiting, "等你在电脑上的 Pupu 里接手")
         } else if last {
             (state, status) = (.live, latest.map { browserDoing($0.1) } ?? "正在想怎么做")
-        } else if handedOff {
-            (state, status) = (.stopped, "交给你接手了")
+        } else if cancelled || interrupted {
+            // 「已停下」只给真取消了、真中断了的。
+            (state, status) = (.stopped, "已停下")
         } else if latest?.0.status == .failed {
             (state, status) = (.failed, "没做完，最后一步出错了")
-        } else if latest == nil || [.unfinished, .denied, .expired].contains(latest!.0.status) || planSteps.contains(where: { !$0.done }) {
-            // 停在两步之间（比如点了「取消任务」）：计划还没勾完、也没给结果，不能说做完了。
-            (state, status) = (.stopped, "已停下")
+        } else if handedOver {
+            // 人还没回话就是在等人接手；回过话了（说好了，或者接手完自动叫醒了），接着做的另起一张卡。
+            (state, status) = awaiting ? (.handover, "等你接手") : (.stopped, "交给你接手了")
+        } else if latest == nil || planSteps.contains(where: { !$0.done }) {
+            // 这一轮自己停在半路（多半是在问人），不是取消。
+            (state, status) = (.stopped, "等你回话")
         } else {
             (state, status) = (.done, "做完了")
         }

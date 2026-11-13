@@ -11,6 +11,7 @@ final class BrowserCardCell: ChatCell {
     private let planButton = BrowserCardCell.darkButton(title: "计划", image: "sparkles")
     private let expandButton = BrowserCardCell.darkButton(image: "arrow.up.left.and.arrow.down.right")
     private let stopButton = BrowserCardCell.darkButton(image: "xmark")
+    private let takeOverButton = BrowserCardCell.lightButton(title: "接手")
     private let resultPill = UIView()
     private let resultMark = UIImageView()
     private let resultLabel = UILabel(style: .footnote, color: .white)
@@ -29,6 +30,8 @@ final class BrowserCardCell: ChatCell {
 
     var onStop: (() -> Void)?
     var onExpand: (() -> Void)?
+    /// 交给人了，点「接手」：手机上没法直接操作那台电脑的页面，放大看实时画面。
+    var onTakeOver: (() -> Void)?
     var onTogglePlan: (() -> Void)?
 
     override init(frame: CGRect) {
@@ -53,13 +56,14 @@ final class BrowserCardCell: ChatCell {
         spinnerBox.translatesAutoresizingMaskIntoConstraints = false
         frameBox.addSubview(spinnerBox)
 
-        let buttons = UIStackView(arrangedSubviews: [planButton, expandButton, stopButton])
+        let buttons = UIStackView(arrangedSubviews: [planButton, expandButton, takeOverButton, stopButton])
         buttons.spacing = 6
         buttons.translatesAutoresizingMaskIntoConstraints = false
         frameBox.addSubview(buttons)
         planButton.addAction(UIAction { [weak self] _ in self?.onTogglePlan?() }, for: .primaryActionTriggered)
         expandButton.addAction(UIAction { [weak self] _ in self?.onExpand?() }, for: .primaryActionTriggered)
         stopButton.addAction(UIAction { [weak self] _ in self?.onStop?() }, for: .primaryActionTriggered)
+        takeOverButton.addAction(UIAction { [weak self] _ in self?.onTakeOver?() }, for: .primaryActionTriggered)
         expandButton.accessibilityLabel = "放大"
         stopButton.accessibilityLabel = "停止"
 
@@ -137,7 +141,7 @@ final class BrowserCardCell: ChatCell {
     override var bubbleView: UIView? { frameBox }
 
     func configure(task: BrowserTask, frame: UIImage?, planOpen: Bool, width cardWidth: CGFloat, canStop: Bool) {
-        let finished = !task.active
+        let finished = !task.active && !task.holding
         let resultText = task.result ?? (task.state == .done ? "浏览器里的事做完了" : task.status)
         let showFrame = !(finished && frame == nil)
         frameBox.isHidden = !showFrame
@@ -154,14 +158,15 @@ final class BrowserCardCell: ChatCell {
         spinnerBox.isHidden = !task.active
         if task.active { spinner.startAnimating() } else { spinner.stopAnimating() }
         planButton.isHidden = task.plan.isEmpty
-        stopButton.isHidden = !(task.active && canStop)
+        stopButton.isHidden = !((task.active || task.holding) && canStop)
+        takeOverButton.isHidden = !task.holding
         resultPill.isHidden = !finished
         resultLabel.text = resultText
         resultMark.tintColor = task.state == .done ? UIColor.systemGreen : UIColor.white.withAlphaComponent(0.7)
         resultMark.image = UIImage(systemName: task.state == .done ? "checkmark" : "circle.fill")
         planList.isHidden = !planOpen || task.plan.isEmpty
         planList.configure(task.plan)
-        statusPill.isHidden = !task.active
+        statusPill.isHidden = !(task.active || task.holding)
         statusLabel.text = task.status
 
         compactMark.image = UIImage(systemName: task.state == .done ? "checkmark" : "circle.fill")
@@ -174,6 +179,22 @@ final class BrowserCardCell: ChatCell {
         isAccessibilityElement = false
         frameBox.isAccessibilityElement = true
         frameBox.accessibilityLabel = "浏览器画面，\(finished ? resultText : task.status)"
+    }
+
+    /// 白底黑字的主操作，比如「接手」。
+    static func lightButton(title: String) -> UIButton {
+        let button = darkButton(title: title, image: "")
+        var config = button.configuration
+        config?.image = nil
+        config?.baseBackgroundColor = .white
+        config?.baseForegroundColor = .black
+        config?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = Theme.font(.footnote, weight: .semibold)
+            return attributes
+        }
+        button.configuration = config
+        return button
     }
 
     static func darkButton(title: String? = nil, image: String) -> UIButton {
@@ -277,7 +298,7 @@ final class BrowserLargeViewController: UIViewController {
         close.accessibilityLabel = "收起"
         close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
         let cancel = BrowserCardCell.darkButton(title: "取消任务", image: "stop.fill")
-        cancel.isHidden = onStop == nil || !task.active
+        cancel.isHidden = onStop == nil || !(task.active || task.holding)
         cancel.addAction(UIAction { [weak self] _ in
             self?.onStop?()
             self?.dismiss(animated: true)

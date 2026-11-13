@@ -70,6 +70,10 @@ export class BridgeSupervisor {
     this.#send({ type: "browser-frame", frame });
   }
 
+  browserHandback(): void {
+    this.#send({ type: "browser-handback" });
+  }
+
   /** 让桥停掉命令、断开连接再退出；等不到就直接杀。 */
   async stop(): Promise<void> {
     this.#stopping = true;

@@ -87,6 +87,8 @@ port.on("message", (event) => {
     receiveBrowserReply(message);
   } else if (message.type === "browser-frame") {
     bridge?.browserFrame(message.frame);
+  } else if (message.type === "browser-handback") {
+    bridge?.browserHandback();
   } else if (message.type === "stop") {
     void stop();
   }

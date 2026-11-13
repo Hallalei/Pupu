@@ -48,7 +48,7 @@ export type PupuDesktop = {
   /** 把真实页面挂到这个位置上（CSS 像素，相对窗口内容区）。窗口大小变了再调一次。0.2.5 以前的 App 没有。 */
   attachBrowser?(rect: BrowserRect): Promise<boolean>;
   /** 关掉放大视图：页面回到后台，任务接着做。0.2.5 以前的 App 没有。 */
-  detachBrowser?(): Promise<void>;
+  detachBrowser?(handback?: boolean): Promise<void>;
   /** 列出这台电脑上 Chrome 的用户资料，导入前让人挑。0.2.4 以前的 App 没有。 */
   chromeProfiles?(): Promise<readonly ChromeProfile[]>;
   /**

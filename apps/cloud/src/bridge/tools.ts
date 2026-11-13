@@ -367,7 +367,7 @@ export function createComputerTools(bridge: ComputerBridge): ToolRegistration[] 
     computerTool("browser_back", "Pupu 浏览器后退到上一页。", {}),
     computerTool(
       "browser_show",
-      "请电脑前的人接手 Pupu 浏览器：在这台电脑的 Pupu 主窗口里打开当前页面，人可以直接点、直接输，同时给他的手机推一条提醒。遇到登录、验证码、确认付款时用它交给用户，在对话里说清要他做什么，等他回话再继续。",
+      "请电脑前的人接手 Pupu 浏览器：在这台电脑的 Pupu 主窗口里打开当前页面，人可以直接点、直接输，同时给他的手机推一条提醒。遇到登录、验证码、确认付款时用它交给用户，在对话里说清要他做什么，然后停下等：他收起放大视图后会有一条系统消息叫你接着做，他在对话里回话也一样。",
       {}
     ),
     computerTool("browser_download", "用 Pupu 浏览器下载一个文件，存到这台电脑的 下载/Pupu 文件夹，回文件路径。要先批准。", {

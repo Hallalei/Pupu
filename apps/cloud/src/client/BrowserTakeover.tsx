@@ -60,7 +60,8 @@ export function BrowserTakeover() {
 
 function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
   const slot = useRef<HTMLDivElement>(null);
-  const close = () => void desktop()?.detachBrowser?.();
+  /** 人接手完了：收起，Pupu 自己接着做。 */
+  const close = () => void desktop()?.detachBrowser?.(true);
 
   // 占位框在哪、多大，告诉电脑 App；窗口一变就再说一次。
   useLayoutEffect(() => {
@@ -111,7 +112,7 @@ function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
             type="button"
             onClick={() => {
               cancel();
-              close();
+              void desktop()?.detachBrowser?.(false);
             }}
             className="glass tap h-10 rounded-full px-4 text-subheadline"
           >

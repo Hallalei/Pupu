@@ -94,3 +94,16 @@ export function sentInput(input: UserInput, sender: Sender): { content: UserInpu
     entry: { kind: SENT_ENTRY, data: { sender, input } as unknown as InputEntry["data"] }
   };
 }
+
+/**
+ * 电脑前的人在 Pupu 主窗口里接手完浏览器、收起了放大视图时，叫醒对话的那句系统消息。界面上只显示第一行。
+ */
+export function handbackNotice(computer: string): string {
+  return [
+    `「${computer}」前的人在 Pupu 里接手完浏览器，收起了放大视图。`,
+    "接着做刚才的浏览器任务：先看一眼页面现在的样子（比如是不是已经登录了），再往下做。没登录成功就说清楚，再交给他一次；已经不需要了就不用做。"
+  ].join("\n");
+}
+
+/** 人在卡片或电脑上接手的放大视图里点了「取消任务」、这一轮已经停着时，替人发的这句话。卡片认它算「已停下」。 */
+export const BROWSER_CANCEL_TEXT = "不用继续了，取消这个浏览器任务。";

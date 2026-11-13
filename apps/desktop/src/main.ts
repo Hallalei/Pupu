@@ -182,11 +182,18 @@ function sendTakeover(): void {
   if (contents && sameOrigin(contents.getURL(), origin)) contents.send("pupu:browser-takeover", takeoverOpen);
 }
 
-/** 收起接手的界面：页面回到后台，任务接着做。主窗口关了、刷新了、渲染进程没了，都走这里，免得页面盖在对话上下不来。 */
-function closeTakeover(reason: string): void {
+/**
+ * 收起接手的界面：页面回到后台，任务接着做。主窗口关了、刷新了、渲染进程没了，都走这里，免得页面盖在对话上下不来。
+ * `handback` 是人接手完了点的「收起」：告诉云端，等着的对话自己接着做，人不用再回来说一声；点「取消任务」收起的不算。
+ */
+function closeTakeover(reason: string, handback = false): void {
   if (!takeoverOpen && !browser?.attachedTo()) return;
   takeoverOpen = false;
   browser?.detach();
+  if (handback) {
+    browser?.handedBack();
+    supervisor.browserHandback();
+  }
   log(`收起接手的界面：${reason}`);
   sendTakeover();
 }
@@ -769,9 +776,10 @@ function registerIpc(): void {
     if (first) log(`屏幕上的窗口：${visibleWindows()}`);
     return true;
   });
-  ipcMain.handle("pupu:browser-detach", (event) => {
+  ipcMain.handle("pupu:browser-detach", (event, handback: unknown) => {
     fromMain(event);
-    closeTakeover("人关掉了");
+    if (handback === true) closeTakeover("人接手完了，叫 Pupu 接着做", true);
+    else closeTakeover("人关掉了");
   });
   ipcMain.handle("pupu:chrome-profiles", async (event) => {
     fromMain(event);

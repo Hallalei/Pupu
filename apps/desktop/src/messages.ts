@@ -24,6 +24,8 @@ export type ToBridge =
   | BrowserReply
   /** Pupu 浏览器的一帧画面（敏感格子已经涂掉），桥转给云端。 */
   | { readonly type: "browser-frame"; readonly frame: Omit<BrowserFrame, "type"> }
+  /** 电脑前的人接手完浏览器，收起了放大视图。桥转给云端，云端叫醒等着的对话。 */
+  | { readonly type: "browser-handback" }
   | { readonly type: "stop" };
 
 export type FromBridge =

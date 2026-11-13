@@ -48,6 +48,8 @@ export type BrowserFrameOut = {
 
 /** 每这么久截一帧（约 1.4 帧每秒）。 */
 const FRAME_EVERY_MS = 700;
+/** 交给人接手以后，人还没收起放大视图、Pupu 也没再动浏览器时，画面最多再推这么久，卡片不空着。 */
+const HANDOVER_STREAM_MS = 10 * 60_000;
 /** 最后一步做完之后再推这么久的画面：模型在想下一步时，卡片上还看得到页面。 */
 const STREAM_AFTER_MS = 20_000;
 /** 画面没变就不重发，但至少隔这么久发一次，刚打开卡片的人也能拿到画面。 */
@@ -104,6 +106,8 @@ export class BrowserHost {
   /** 带 sensitive 填过的控件，画面上一直涂掉。换页后编号失效，取不到位置的自然跳过。 */
   readonly #sensitiveRefs = new Set<number>();
   #streamUntil = 0;
+  /** 交给人接手后一直推到这个时候（见 HANDOVER_STREAM_MS）。人收起了、Pupu 又动了浏览器就清零。 */
+  #holdUntil = 0;
   #frameTimer: ReturnType<typeof setInterval> | null = null;
   #capturing = false;
   #lastFrame: { jpeg: string; at: number } | null = null;
@@ -136,6 +140,8 @@ export class BrowserHost {
 
   /** 一次只做一步，按到达顺序。做的时候和做完之后一阵子推画面。 */
   run(op: BrowserOp): Promise<BrowserResult> {
+    // Pupu 又自己动浏览器了：不再按「等人接手」一直推画面。
+    if (op.op !== "show") this.#holdUntil = 0;
     if (op.op === "type" && op.sensitive && typeof op.ref === "number") this.#sensitiveRefs.add(op.ref);
     this.#stream(Number.POSITIVE_INFINITY);
     // 每一步比桥早 2 秒放弃：某个 CDP 调用卡死时，后面的步骤不会一直排在它后面，直到重启 App。
@@ -187,6 +193,11 @@ export class BrowserHost {
     this.#stream(Date.now() + STREAM_AFTER_MS);
   }
 
+  /** 人接手完了（在放大视图里点了收起）：不用再按「等人接手」推画面，再推一小会儿就停。 */
+  handedBack(): void {
+    this.#holdUntil = 0;
+  }
+
   /** 页面现在挂在哪个窗口里（窗口可能已经销毁了，主进程收尾时要比的就是它）。 */
   attachedTo(): BrowserWindow | null {
     return this.#attached;
@@ -197,7 +208,7 @@ export class BrowserHost {
     this.#streamUntil = until;
     if (this.#frameTimer) return;
     this.#frameTimer = setInterval(() => {
-      if (Date.now() > this.#streamUntil) {
+      if (Date.now() > Math.max(this.#streamUntil, this.#holdUntil)) {
         if (this.#frameTimer) clearInterval(this.#frameTimer);
         this.#frameTimer = null;
         return;
@@ -430,6 +441,7 @@ export class BrowserHost {
       case "show": {
         const url = this.#contents().getURL();
         const handed = this.#options.takeover ? await this.#options.takeover() : { ok: false, text: "这台电脑上没法打开接手的界面。" };
+        if (handed.ok) this.#holdUntil = Date.now() + HANDOVER_STREAM_MS;
         return handed.ok ? { ok: true, url, text: handed.text } : { ok: false, error: handed.text };
       }
     }

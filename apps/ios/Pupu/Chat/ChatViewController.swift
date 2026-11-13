@@ -381,7 +381,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             if case .browser = rowsByID[id]?.kind { return true }
             return false
         }
-        if task.active || (task.id == last && cardFrames[task.id] == nil) {
+        if task.active || task.holding || (task.id == last && cardFrames[task.id] == nil) {
             let live = task.computerId.flatMap { frames[$0] } ?? (frames.count == 1 ? frames.values.first : nil)
             if let live { cardFrames[task.id] = live.image }
         }
@@ -526,8 +526,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .browser(let task):
             guard let cell = cell as? BrowserCardCell else { return }
             let image = frameFor(task)
-            cell.configure(task: task, frame: image, planOpen: planOpen.contains(id), width: bubbleWidth / Theme.Size.bubbleMax, canStop: state.running)
-            cell.onStop = { [weak self] in self?.socket?.abort() }
+            cell.configure(task: task, frame: image, planOpen: planOpen.contains(id), width: bubbleWidth / Theme.Size.bubbleMax, canStop: state.running || task.holding)
+            cell.onStop = { [weak self] in self?.stopBrowser() }
             cell.onTogglePlan = { [weak self] in
                 guard let self else { return }
                 if self.planOpen.contains(id) { self.planOpen.remove(id) } else { self.planOpen.insert(id) }
@@ -535,17 +535,19 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
                 snapshot.reconfigureItems([id])
                 self.source.apply(snapshot, animatingDifferences: false)
             }
-            cell.onExpand = { [weak self] in
+            let expand = { [weak self] in
                 guard let self else { return }
                 let controller = BrowserLargeViewController(
                     task: task,
                     frame: image,
-                    onStop: self.state.running ? { [weak self] in self?.socket?.abort() } : nil
+                    onStop: self.state.running || task.holding ? { [weak self] in self?.stopBrowser() } : nil
                 )
                 self.large = controller
                 self.largeId = id
                 self.present(controller, animated: true)
             }
+            cell.onExpand = expand
+            cell.onTakeOver = expand
         }
         if let texts = Self.menuTexts(row) {
             cell.accessibilityCustomActions = [
@@ -683,6 +685,20 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     /// 点状态栏回到顶上，不算拖动，也要记下已经不在底部。
     func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
         stick = distanceFromBottom < Self.stickDistance
+    }
+
+    /// 卡片上的停止、放大视图里的「取消任务」：这一轮还在跑就停掉；已经停着在等人接手，就替人说一句不做了。
+    private func stopBrowser() {
+        guard let socket else { return }
+        if state.running {
+            socket.abort()
+        } else {
+            socket.submit(ChatRows.browserCancelText) { [weak self] refusal in
+                guard let refusal, let self else { return }
+                self.state.error = refusal
+                self.scheduleRender()
+            }
+        }
     }
 
     // MARK: - 发送和引用
