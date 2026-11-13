@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
+import { MemberAvatar } from "./Avatar";
 import type { Project } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals, WaitingChip } from "./Approvals";
@@ -286,7 +287,11 @@ export function App() {
               onClick={() => setSettings("root")}
               className="glass lift tap grid size-bar place-items-center rounded-full text-subheadline font-semibold"
             >
-              我
+              <MemberAvatar
+                name="我"
+                src={members.find((member) => member.current)?.avatar ?? null}
+                className="size-[calc(100%-4px)]"
+              />
             </button>
           </div>
           <div className="h-2" />

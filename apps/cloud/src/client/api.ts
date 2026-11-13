@@ -114,6 +114,12 @@ export const api = {
   /** 断开一个账号，open-connector 那边一起撤销授权。 */
   removeConnector: (id: string) =>
     request<{ ok: true }>(`/api/connectors/${encodeURIComponent(id)}/remove`, { method: "POST" }),
+  /** 换自己的头像：一个预设的 id，或者 null 换回名字的第一个字。 */
+  setAvatar: (preset: string | null) =>
+    request<{ ok: true }>("/api/me/avatar", { method: "POST", body: JSON.stringify({ preset }) }),
+  /** 上传自己的头像：先裁成正方形缩小（见 Avatar.tsx 的 `cropToSquare`），云端只验不转码。 */
+  uploadAvatar: (image: Blob) =>
+    request<{ ok: true }>("/api/me/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>

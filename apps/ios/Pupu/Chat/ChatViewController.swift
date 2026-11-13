@@ -490,9 +490,9 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             guard let cell = cell as? UserCell else { return }
             cell.configure(body: body, quote: quote, width: width)
             cell.onQuote = { [weak self] in self?.jump(toQuote: quote ?? "", from: id) }
-        case .other(let body, let quote, let sender):
+        case .other(let body, let quote, let sender, let avatar):
             guard let cell = cell as? OtherCell else { return }
-            cell.configure(body: body, quote: quote, sender: sender, width: width)
+            cell.configure(body: body, quote: quote, sender: sender, avatar: avatar, width: width)
             cell.onQuote = { [weak self] in self?.jump(toQuote: quote ?? "", from: id) }
         case .assistant(let text):
             guard let cell = cell as? AssistantCell else { return }
@@ -711,7 +711,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
 
     private static func menuTexts(_ row: ChatRow) -> (copy: String, quote: String)? {
         switch row.kind {
-        case .user(let body, _), .other(let body, _, _): (body, body)
+        case .user(let body, _), .other(let body, _, _, _): (body, body)
         case .assistant(let text): (Markdown.plainText(text), text)
         case .report(let card): (card.quote, card.quote)
         default: nil

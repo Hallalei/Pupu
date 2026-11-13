@@ -9,6 +9,7 @@
  * 以后每人各自的聊天、个人记忆、「替谁做」都挂在成员 id 上，这里先只有名单。
  */
 
+import { avatarUrl } from "./avatars.ts";
 import type { ComputerStore } from "./bridge/store.ts";
 import type { ConnectorStore } from "./connectors/store.ts";
 import type { DeviceKind, DeviceStore } from "./devices.ts";
@@ -28,6 +29,8 @@ export type MemberRow = {
   readonly createdAt: number;
   /** 第一次登录的时间。邀请了还没登录过是 null。 */
   readonly joinedAt: number | null;
+  /** 换过的头像，见 avatars.ts 的 `AvatarChoice`。没换过是 null。 */
+  readonly avatar: string | null;
 };
 
 /** 给网页和 App 看的成员。 */
@@ -38,6 +41,8 @@ export type MemberView = {
   readonly name: string;
   readonly role: MemberRole;
   readonly joinedAt: number | null;
+  /** 头像地址，相对这个 Pupu 的网址。没换过是 null，显示名字的第一个字。 */
+  readonly avatar: string | null;
   /** 发这次请求的设备是他的。 */
   readonly current: boolean;
 };
@@ -125,6 +130,7 @@ export function memberView(row: MemberRow, current: string | null): MemberView {
     name: memberName(row),
     role: row.role,
     joinedAt: row.joinedAt,
+    avatar: avatarUrl(row.id, row.avatar),
     current: row.id === current
   };
 }
@@ -153,7 +159,8 @@ function toRow(row: Row): MemberRow {
     role: row.role === "creator" ? "creator" : "member",
     invitedBy: row.invited_by === null ? null : String(row.invited_by),
     createdAt: Number(row.created_at),
-    joinedAt: row.joined_at === null ? null : Number(row.joined_at)
+    joinedAt: row.joined_at === null ? null : Number(row.joined_at),
+    avatar: typeof row.avatar === "string" ? row.avatar : null
   };
 }
 
@@ -181,6 +188,9 @@ export class MemberStore {
       }
       if (!columns.some((row) => row.name === "leaving_at")) {
         this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN leaving_at INTEGER");
+      }
+      if (!columns.some((row) => row.name === "avatar")) {
+        this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN avatar TEXT");
       }
       this.#ready = true;
     }
@@ -253,6 +263,11 @@ export class MemberStore {
   /** 记下登录时 Google 给的名字。`name` 是 null（Google 没给）时留着原来的。 */
   setName(id: string, name: string | null): void {
     if (name !== null) this.#db().exec("UPDATE pupu_members SET name = ? WHERE id = ?", name, id);
+  }
+
+  /** 换头像，`avatar` 见 avatars.ts 的 `formatChoice`；null 是换回名字的第一个字。 */
+  setAvatar(id: string, avatar: string | null): void {
+    this.#db().exec("UPDATE pupu_members SET avatar = ? WHERE id = ?", avatar, id);
   }
 
   /** 开始移除一个成员，见 `removeMember`。创建者移除不了。 */

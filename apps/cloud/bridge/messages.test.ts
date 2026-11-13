@@ -11,7 +11,7 @@ const LIN: Sender = { id: "m1", name: "林夏" };
 const ZHOU: Sender = { id: "m2", name: "阿周" };
 
 function member(sender: Sender, current = false): MemberView {
-  return { id: sender.id, email: `${sender.id}@example.com`, name: sender.name, role: "member", joinedAt: 1, current };
+  return { id: sender.id, email: `${sender.id}@example.com`, name: sender.name, role: "member", joinedAt: 1, avatar: null, current };
 }
 
 let nextId = 1;

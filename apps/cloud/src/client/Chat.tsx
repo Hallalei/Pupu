@@ -14,6 +14,7 @@ import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
 import { quotedMessage, type Sender } from "../messages";
+import { MemberAvatar } from "./Avatar";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
 import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
@@ -408,7 +409,13 @@ function Row({
       );
     case "user":
       return row.sender ? (
-        <OtherMessage body={row.body} quote={row.quote} sender={row.sender} onMenu={onMenu} />
+        <OtherMessage
+          body={row.body}
+          quote={row.quote}
+          sender={row.sender}
+          avatar={context.members.find((member) => member.id === row.sender?.id)?.avatar ?? null}
+          onMenu={onMenu}
+        />
       ) : (
         <UserMessage body={row.body} quote={row.quote} onMenu={onMenu} />
       );
@@ -488,17 +495,20 @@ function OtherMessage({
   body,
   quote,
   sender,
+  avatar,
   onMenu
 }: {
   body: string;
   quote: string | null;
   sender: Sender;
+  /** 他现在的头像，按成员 id 从名单里查，换了头像旧消息也跟着换。没换过、已经移除了是 null。 */
+  avatar: string | null;
   onMenu: MenuOpener;
 }) {
   const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
     <div className="flex max-w-[85%] items-start gap-2">
-      <Avatar name={sender.name} />
+      <MemberAvatar name={sender.name} src={avatar} className="strong size-8 text-footnote" />
       <div className="flex min-w-0 flex-col items-start gap-1">
         {quote && <QuoteStrip quote={quote} className="max-w-full" />}
         <div
@@ -510,15 +520,6 @@ function OtherMessage({
         </div>
       </div>
     </div>
-  );
-}
-
-/** 名字的第一个字。 */
-function Avatar({ name }: { name: string }) {
-  return (
-    <span aria-hidden="true" className="strong grid size-8 shrink-0 place-items-center rounded-full text-footnote">
-      {[...name][0]?.toUpperCase()}
-    </span>
   );
 }
 

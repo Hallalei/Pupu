@@ -139,14 +139,29 @@ nonisolated struct API: Sendable {
     private struct Done: Decodable {}
     private struct Failure: Decodable { let error: String }
 
+    /// 换自己的头像：一个预设的 id，或者 nil 换回名字的第一个字。只能换自己的（云端 avatars.ts）。
+    func setAvatar(preset: String?) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["preset": preset.map { $0 as Any } ?? NSNull()])
+        let _: Done = try await send("api/me/avatar", method: "POST", raw: body, type: "application/json")
+    }
+
+    /// 上传自己的头像：已经裁成方形、缩到 256 的 JPEG。云端只验不转码。
+    func uploadAvatar(_ data: Data, type: String) async throws {
+        let _: Done = try await send("api/me/avatar", method: "PUT", raw: data, type: type)
+    }
+
     private func send<T: Decodable>(_ path: String, method: String = "GET", body: [String: String]? = nil) async throws -> T {
+        try await send(path, method: method, raw: body.map { try JSONSerialization.data(withJSONObject: $0) }, type: "application/json")
+    }
+
+    private func send<T: Decodable>(_ path: String, method: String, raw body: Data?, type: String) async throws -> T {
         var request = URLRequest(url: endpoint.url(path))
         request.httpMethod = method
         request.timeoutInterval = 20
         endpoint.authorize(&request)
         if let body {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            request.setValue(type, forHTTPHeaderField: "Content-Type")
         }
         let data: Data
         let response: URLResponse

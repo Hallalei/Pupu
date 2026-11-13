@@ -62,7 +62,8 @@ final class SettingsViewController: UICollectionViewController {
     }
 
     nonisolated private enum Item: Hashable, Sendable {
-        case profile(title: String, detail: String)
+        /// avatar 是自己的头像地址；member 是 false 时（不是成员）点不进去换头像。
+        case profile(title: String, detail: String, avatar: String?, member: Bool)
         case link(Page, summary: String?)
         case account(Connectors.Account, owner: String?)
         case service(Connectors.Service, busy: Bool)
@@ -102,6 +103,7 @@ final class SettingsViewController: UICollectionViewController {
     private var connecting: String?
     private var signIn: SignIn?
     private var pushToken: NSObjectProtocol?
+    private var avatarToken: NSObjectProtocol?
     /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，第一页也就不放这一行。
     private var invites: InviteList?
     private var creatingInvite = false
@@ -148,6 +150,10 @@ final class SettingsViewController: UICollectionViewController {
         token = Store.shared.observe { [weak self] in self?.render() }
         pushToken = NotificationCenter.default.addObserver(forName: Push.changed, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.render() }
+        }
+        // 头像图是异步拿的，拿到了重画：列表格子的图是画好了塞进去的。
+        avatarToken = NotificationCenter.default.addObserver(forName: Avatars.loaded, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconfigureAvatars() }
         }
         if page == .root || page == .notifications { Push.shared.register() }
         if page == .root || page == .invites { loadInvites() }
@@ -203,7 +209,12 @@ final class SettingsViewController: UICollectionViewController {
         let host = Connection.shared.endpoint?.base.host() ?? ""
         snapshot.appendSections([.profile, .pages(0), .pages(1)])
         snapshot.appendItems([
-            .profile(title: me?.email ?? UIDevice.current.name, detail: [me?.label, host].compactMap { $0 }.joined(separator: " · "))
+            .profile(
+                title: me?.email ?? UIDevice.current.name,
+                detail: [me?.label, host].compactMap { $0 }.joined(separator: " · "),
+                avatar: me?.avatar,
+                member: me != nil
+            )
         ], toSection: .profile)
 
         let connectors = store.connectors
@@ -356,11 +367,17 @@ final class SettingsViewController: UICollectionViewController {
         content.imageProperties.tintColor = Theme.ink
         cell.accessories = []
         switch item {
-        case .profile(let title, let detail):
+        case .profile(let title, let detail, let avatar, let member):
             content.text = title
             content.textProperties.font = Theme.font(.title)
             content.secondaryText = detail
-            content.image = Self.avatar(for: title)
+            content.image = Avatars.round(
+                Avatars.shared.image(avatar),
+                letter: Avatars.letter(title),
+                size: Theme.Size.control,
+                pixelArt: Avatars.isPixelArt(avatar)
+            )
+            if member { cell.accessories = [.disclosureIndicator()] }
             content.imageProperties.maximumSize = CGSize(width: Theme.Size.control, height: Theme.Size.control)
             content.imageToTextPadding = Theme.Space.s3
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(
@@ -448,6 +465,16 @@ final class SettingsViewController: UICollectionViewController {
         case .member(let member, let removable):
             content.text = member.current ? "\(member.email) · 你" : member.email
             content.secondaryText = member.label
+            content.image = Avatars.round(
+                Avatars.shared.image(member.avatar),
+                letter: Avatars.letter(member.displayName),
+                size: Theme.Size.avatar,
+                pixelArt: Avatars.isPixelArt(member.avatar),
+                fill: Theme.surfaceStrong,
+                ink: Theme.ink
+            )
+            content.imageProperties.maximumSize = CGSize(width: Theme.Size.avatar, height: Theme.Size.avatar)
+            content.imageToTextPadding = Theme.Space.s3
             if removable {
                 let remove = UIButton(configuration: .plain(), primaryAction: UIAction(title: "移除") { [weak self] _ in
                     self?.confirmRemove(member)
@@ -530,26 +557,25 @@ final class SettingsViewController: UICollectionViewController {
     }
 
     /// 头像：名字的第一个字母放在一个圆里。
-    private static func avatar(for name: String) -> UIImage {
-        let size = CGSize(width: Theme.Size.control, height: Theme.Size.control)
-        let letter = String(name.first.map(String.init)?.uppercased() ?? "P")
-        return UIGraphicsImageRenderer(size: size).image { _ in
-            Theme.action.setFill()
-            UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 18, weight: .semibold),
-                .foregroundColor: Theme.onAction
-            ]
-            let text = letter as NSString
-            let bounds = text.size(withAttributes: attributes)
-            text.draw(at: CGPoint(x: (size.width - bounds.width) / 2, y: (size.height - bounds.height) / 2), withAttributes: attributes)
+    /// 拿到了头像图，有头像的格子重画一遍。
+    private func reconfigureAvatars() {
+        var snapshot = source.snapshot()
+        let items = snapshot.itemIdentifiers.filter {
+            switch $0 {
+            case .profile, .member: true
+            default: false
+            }
         }
+        guard !items.isEmpty else { return }
+        snapshot.reconfigureItems(items)
+        source.apply(snapshot, animatingDifferences: false)
     }
 
     // MARK: - 点了做什么
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
+        case .profile(_, _, _, let member): member
         case .link, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
         case .inviteCode(let invite): invite.usedBy == nil
         case .newInvite(let left, let busy): left > 0 && !busy
@@ -560,6 +586,8 @@ final class SettingsViewController: UICollectionViewController {
     override func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         switch source.itemIdentifier(for: indexPath) {
+        case .profile:
+            navigationController?.pushViewController(AvatarPickerViewController(), animated: true)
         case .link(let target, _):
             navigationController?.pushViewController(SettingsViewController(page: target), animated: true)
         case .computer(let computer):

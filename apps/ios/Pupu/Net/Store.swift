@@ -23,6 +23,8 @@ final class Store {
         var activity: [ComputerActivity] = []
         /// 项目报回聊天的结果，按时间先后。
         var reports: [ReportCard] = []
+        /// 能选的预设头像。
+        var avatarPresets: [AvatarPreset] = []
         var error: String?
         var loaded = false
     }
@@ -133,6 +135,7 @@ final class Store {
                     connectors: state.connectors ?? .empty,
                     activity: state.activity ?? [],
                     reports: state.reports ?? [],
+                    avatarPresets: state.avatarPresets ?? [],
                     error: nil,
                     loaded: true
                 )

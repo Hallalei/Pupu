@@ -4,8 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 export function sqlStorage(): SqlStorage {
   const db = new DatabaseSync(":memory:");
   return {
-    exec(query: string, ...bindings: SqlStorageValue[]) {
+    exec(query: string, ...values: SqlStorageValue[]) {
       const statement = db.prepare(query);
+      // Durable Object 收 ArrayBuffer 当 BLOB，node:sqlite 要 Uint8Array。
+      const bindings = values.map((value) => (value instanceof ArrayBuffer ? new Uint8Array(value) : value));
       const reads = /^\s*(SELECT|PRAGMA)/i.test(query) || /\bRETURNING\b/i.test(query);
       let rows: Record<string, SqlStorageValue>[] = [];
       let written = 0;

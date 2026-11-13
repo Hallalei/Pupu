@@ -18,6 +18,7 @@ import {
   type MemberView
 } from "../members";
 import { ago } from "./ago";
+import { AvatarPage, MemberAvatar } from "./Avatar";
 import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
@@ -55,6 +56,7 @@ export type SettingsPage =
   | "this"
   | "computers"
   | "members"
+  | "avatar"
   | "invites"
   | "devices"
   | "passkeys"
@@ -67,6 +69,7 @@ const TITLES: Record<Exclude<SettingsPage, object>, string> = {
   this: "这台电脑",
   computers: "电脑",
   members: "成员",
+  avatar: "头像",
   invites: "邀请码",
   devices: "设备",
   passkeys: "通行密钥",
@@ -174,6 +177,8 @@ export function Settings({
     body = (
       <>
         <Profile
+          me={me}
+          onPress={me ? () => onPage("avatar") : undefined}
           name={me?.email ?? here?.name ?? host}
           detail={[me ? (me.role === "creator" ? "创建者" : "成员") : here ? null : "本机开发", host]
             .filter((part) => part && part !== (me?.email ?? here?.name ?? host))
@@ -293,6 +298,9 @@ export function Settings({
         onInvite={onInviteMember}
       />
     );
+  } else if (shown === "avatar") {
+    const me = members.find((member) => member.current);
+    body = me ? <AvatarPage me={me} /> : <Note>用 Google 登录之后才能换头像。</Note>;
   } else if (shown === "invites") {
     body = invites.list ? <Invites list={invites.list} onChanged={invites.load} /> : <Note>这个 Pupu 不发邀请码。</Note>;
   } else if (shown === "devices") {
@@ -409,20 +417,38 @@ function useInvites(enabled: boolean) {
 }
 
 /** 首页最上面：自己是谁，连的是哪个 Pupu。 */
-function Profile({ name, detail }: { name: string; detail: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-row bg-surface px-4 py-3">
-      <span
-        aria-hidden="true"
-        className="grid size-10 shrink-0 place-items-center rounded-full bg-foreground text-headline text-background uppercase"
-      >
-        {Array.from(name)[0] ?? "我"}
-      </span>
+function Profile({
+  me,
+  name,
+  detail,
+  onPress
+}: {
+  me: MemberView | undefined;
+  name: string;
+  detail: string;
+  /** 是成员时点进去换头像。 */
+  onPress?: () => void;
+}) {
+  const content = (
+    <>
+      <MemberAvatar name={name} src={me?.avatar ?? null} className="size-10 bg-foreground text-headline text-background" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-title">{name}</span>
         {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
       </span>
-    </div>
+    </>
+  );
+  if (!onPress) return <div className="flex items-center gap-3 rounded-row bg-surface px-4 py-3">{content}</div>;
+  return (
+    <button
+      type="button"
+      aria-label="换头像"
+      onClick={onPress}
+      className="flex w-full items-center gap-3 rounded-row bg-surface px-4 py-3 text-left hover:bg-surface-secondary"
+    >
+      {content}
+      <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
+    </button>
   );
 }
 
@@ -881,6 +907,7 @@ function MemberRow({
   return (
     <div className="flex flex-col gap-2 px-4 py-2.5">
       <div className="flex items-center gap-3">
+        <MemberAvatar name={member.name} src={member.avatar} className="size-8 strong text-footnote" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-body">
             {member.email}
