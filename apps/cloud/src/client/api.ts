@@ -7,6 +7,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
+import type { RemoteConfirm } from "../bridge/remote-confirm";
 import type { DeviceView } from "../devices";
 import type { InviteList } from "../directory";
 import type { Purpose } from "../passkeys";
@@ -88,6 +89,11 @@ export const api = {
     request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/policy`, {
       method: "POST",
       body: JSON.stringify({ policy })
+    }),
+  setRemoteConfirm: (id: string, level: RemoteConfirm) =>
+    request<{ ok: true }>(`/api/computers/${encodeURIComponent(id)}/remote-confirm`, {
+      method: "POST",
+      body: JSON.stringify({ level })
     }),
   decideApproval: (id: string, decision: "allow" | "deny", proof?: AuthenticationResponseJSON) =>
     request<{ ok: true }>(`/api/approvals/${encodeURIComponent(id)}`, {

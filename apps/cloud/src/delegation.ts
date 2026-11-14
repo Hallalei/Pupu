@@ -34,7 +34,7 @@ import { MEMORY_TOOLS } from "./memory.ts";
 export const DELEGATION_TOOLS = ["delegate", "message_child", "list_children", "stop_child"] as const;
 
 /** 协调模式下主会话只能用这些：委派、只读的组织查询，加上资料和记忆（不动电脑，人在空间里说「存一下」「记住」时用得上）。 */
-export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects", ...DOC_TOOLS, ...MEMORY_TOOLS];
+export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects", "org_overview", ...DOC_TOOLS, ...MEMORY_TOOLS];
 /** 这一版协调模式的工具列表。会话里记的和它不一样，启动时重配。 */
 export const COORDINATOR_KEY = COORDINATOR_TOOLS.join(",");
 

@@ -516,6 +516,7 @@ export class ComputerBridge {
       stale,
       lastSeenAt: lastBeat ?? row.lastSeenAt,
       policy: row.policy,
+      remoteConfirm: row.remoteConfirm,
       screen: screenOn(row.screen, now),
       ...(alive && link?.present !== undefined ? { inUse: link.present } : {}),
       ...(alive && link?.browser ? { browser: true } : {}),
