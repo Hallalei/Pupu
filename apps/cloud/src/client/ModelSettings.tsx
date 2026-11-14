@@ -1,6 +1,7 @@
 import { Button, Label, Switch } from "@heroui/react";
 import { useEffect, useState } from "react";
 import type { ComputerView } from "../bridge/protocol";
+import type { MagpieView } from "../server";
 import { recognize, templateOf, TEMPLATES, type Template } from "../model/catalog";
 import type { ModelList, ModelOption } from "../model/list";
 import type { KeyView, ModelView } from "../model/settings";
@@ -87,10 +88,11 @@ function payload(fields: Fields) {
   };
 }
 
-type Source = "pupu" | "key" | `computer:${string}`;
+type Source = "pupu" | "key" | `computer:${string}` | `magpie:${string}`;
 
 function sourceOf(view: ModelView): Source {
-  return view.source === "computer" ? `computer:${view.computerId}` : view.source;
+  if (view.source !== "computer") return view.source;
+  return view.magpie ? `magpie:${view.computerId}` : `computer:${view.computerId}`;
 }
 
 type ModelState = {
@@ -98,11 +100,13 @@ type ModelState = {
   readonly mayEdit: boolean;
   readonly own?: KeyView | null;
   readonly keys?: readonly { readonly provider: string; readonly baseUrl: string }[];
+  readonly magpie?: readonly MagpieView[];
 };
 
 /**
  * 这个 Pupu 用哪个模型。大家都看得到用的是哪种，只有创建者能改。
  * 列出来的电脑是报过本地模型的那几台，加上现在选着的那台（它可能离线了）。
+ * 自己电脑上开着 Magpie 的，再多一项 Magpie，选了从它的模型里挑一个（照 Cindy 的做法，见 bridge/magpie.ts）。
  */
 export function ModelSection({
   model,
@@ -122,7 +126,8 @@ export function ModelSection({
   useEffect(() => setPicked(currentSource), [currentSource]);
 
   const relays = computers.filter(
-    (computer) => computer.model || (current.source === "computer" && current.computerId === computer.id)
+    (computer) =>
+      computer.model || (current.source === "computer" && !current.magpie && current.computerId === computer.id)
   );
 
   async function save(choice: unknown): Promise<boolean> {
@@ -146,11 +151,36 @@ export function ModelSection({
     if (source === "pupu" && current.source !== "pupu") void save({ source: "pupu" });
     if (source.startsWith("computer:")) {
       const computerId = source.slice("computer:".length);
-      if (current.source !== "computer" || current.computerId !== computerId) {
+      if (current.source !== "computer" || current.computerId !== computerId || current.magpie) {
         void save({ source: "computer", computerId, fallback: false });
       }
     }
+    // Magpie 要先挑模型，挑了才存。
   }
+
+  const nameOf = (computerId: string) => computers.find((computer) => computer.id === computerId)?.name ?? "电脑";
+  const magpies = model.magpie ?? [];
+  const magpieOptions = magpies.map((each) => {
+    const computer = computers.find((item) => item.id === each.computerId);
+    const using = current.source === "computer" && current.computerId === each.computerId ? current.magpie : undefined;
+    const where = magpies.length > 1 ? ` · ${nameOf(each.computerId)}` : "";
+    return {
+      source: `magpie:${each.computerId}` as Source,
+      label: using ? `Magpie · ${using.name}` : `Magpie${where}`,
+      detail: !computer?.online ? "离线" : each.on ? (using && where ? nameOf(each.computerId) : null) : "Magpie 没开",
+      disabled: !computer?.online || !each.on
+    };
+  });
+  // 选着 Magpie、但自己看不到清单（别人看，或者电脑被删了）时也要有这一项。
+  if (current.source === "computer" && current.magpie && !magpies.some((each) => each.computerId === current.computerId)) {
+    magpieOptions.push({
+      source: `magpie:${current.computerId}`,
+      label: `Magpie · ${current.magpie.name}`,
+      detail: nameOf(current.computerId),
+      disabled: true
+    });
+  }
+  const pickedMagpie = picked.startsWith("magpie:") ? magpies.find((each) => `magpie:${each.computerId}` === picked) : undefined;
 
   const own = current.source === "key" ? current : (model.own ?? null);
   const options: { source: Source; label: string; detail: string | null; disabled: boolean }[] = [
@@ -161,6 +191,7 @@ export function ModelSection({
       detail: computer.online ? (computer.model ? null : "这台电脑上没设模型") : "离线",
       disabled: !computer.model
     })),
+    ...magpieOptions,
     {
       source: "key",
       label: current.source === "key" ? `${current.providerName} · ${current.model}` : "自己的 key",
@@ -198,7 +229,14 @@ export function ModelSection({
           <Switch
             isSelected={current.fallback}
             isDisabled={sending}
-            onChange={(fallback) => void save({ ...current, fallback })}
+            onChange={(fallback) =>
+              void save({
+                source: "computer",
+                computerId: current.computerId,
+                fallback,
+                ...(current.magpie ? { magpie: current.magpie.id } : {})
+              })
+            }
           >
             <Switch.Content className="flex w-full items-center gap-3 px-2">
               <Label className="min-w-0 flex-1 text-subheadline">电脑离线时用 Pupu 自带的</Label>
@@ -207,6 +245,14 @@ export function ModelSection({
               </Switch.Control>
             </Switch.Content>
           </Switch>
+        )}
+        {model.mayEdit && pickedMagpie && (
+          <MagpiePicker
+            magpie={pickedMagpie}
+            current={current.source === "computer" && current.computerId === pickedMagpie.computerId ? (current.magpie?.id ?? null) : null}
+            sending={sending}
+            onPick={(id) => void save({ source: "computer", computerId: pickedMagpie.computerId, fallback: false, magpie: id })}
+          />
         )}
         {model.mayEdit && picked === "key" && (
           <KeyForm
@@ -232,6 +278,52 @@ export function ModelSection({
       </div>
       {!model.mayEdit && <p className="m-0 px-4 text-footnote font-normal text-muted">只有创建者能换。</p>}
     </section>
+  );
+}
+
+/** Magpie 里的模型，挑一个就试一下并存上。 */
+function MagpiePicker({
+  magpie,
+  current,
+  sending,
+  onPick
+}: {
+  magpie: MagpieView;
+  current: string | null;
+  sending: boolean;
+  onPick: (id: string) => void;
+}) {
+  const [choosing, setChoosing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!sending) setChoosing(null);
+  }, [sending]);
+  const models = [...magpie.models].sort((a, b) => a.name.localeCompare(b.name));
+  const value = choosing ?? (current && models.some((each) => each.id === current) ? current : "");
+  return (
+    <div className="flex flex-col gap-1 border-t border-foreground/10 pt-3">
+      <span className="relative">
+        <select
+          aria-label="Magpie 里的模型"
+          value={value}
+          disabled={sending || !magpie.on}
+          onChange={(event) => {
+            if (!event.target.value) return;
+            setChoosing(event.target.value);
+            onPick(event.target.value);
+          }}
+          className={`${INPUT} w-full appearance-none pr-8`}
+        >
+          {!value && <option value="">{models.length ? "选一个模型" : "Magpie 里没有能调工具的模型"}</option>}
+          {models.map((each) => (
+            <option key={each.id} value={each.id}>
+              {each.name}
+            </option>
+          ))}
+        </select>
+        <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[11px] text-muted" />
+      </span>
+      {sending && choosing && <p className="m-0 px-1 text-footnote text-muted">正在试这个模型…</p>}
+    </div>
   );
 }
 
@@ -494,6 +586,7 @@ function KeyForm({
 export function modelSummary(current: ModelView, computers: readonly ComputerView[]): string {
   if (current.source === "pupu") return "Pupu 自带";
   if (current.source === "key") return current.model;
+  if (current.magpie) return current.magpie.name;
   const computer = computers.find((item) => item.id === current.computerId);
   return computer?.model?.name ?? computer?.name ?? "电脑上的";
 }

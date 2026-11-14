@@ -14,6 +14,7 @@ import { requestsDir, type BridgeConfig } from "./config.ts";
 import { readLocal, writeLocal } from "./local.ts";
 import { menubarState, type Menubar, type MenubarAction, type MenubarProblem } from "./menubar.ts";
 import { InputHelper } from "./input.ts";
+import { discoverMagpie, type Magpie } from "./magpie.ts";
 import { infoOf, ModelRelayClient, type LocalModel } from "./model.ts";
 import { RemoteAgent, type CaptureCommand, type CaptureEvent } from "./remote.ts";
 import { openBridge, type BridgeConnection } from "./session.ts";
@@ -37,6 +38,8 @@ export type RunOptions = {
   readonly inputSink?: { send(event: DesktopInput): void; stop(): void };
   /** 这台电脑上设的模型，每次连之前读一次。没有就不转发。 */
   readonly model?: () => Promise<LocalModel | null>;
+  /** 找这台电脑上的 Magpie。测试时换掉。 */
+  readonly magpie?: () => Promise<Magpie | null>;
 };
 
 export type RunningBridge = {
@@ -52,6 +55,9 @@ export type RunningBridge = {
   /** 停掉正在跑的命令，断开连接，`done` 随后结束。 */
   stop(): void;
 };
+
+/** 连着时多久看一次 Magpie 开没开、模型变没变。只问本机，很便宜。 */
+const MAGPIE_POLL_MS = 30_000;
 
 /** 连着时多久看一次有没有人在用电脑。 */
 const PRESENCE_POLL_MS = 20_000;
@@ -71,9 +77,23 @@ export function runBridge(options: RunOptions): RunningBridge {
   let takebackQueued = false;
   let wake: (() => void) | null = null;
   let localModel: LocalModel | null = null;
+  const findMagpie = options.magpie ?? (() => discoverMagpie());
+  let magpie: Magpie | null = null;
+  // 这条连接上最后报过的清单。换连接时清掉，重报一次。
+  let magpieSent: string | null = null;
+  const checkMagpie = async (): Promise<Magpie | null> => {
+    magpie = await findMagpie().catch(() => null);
+    const key = JSON.stringify(magpie?.models ?? null);
+    if (key !== magpieSent && current?.send({ type: "model", message: { kind: "magpie", models: magpie?.models ?? null } })) {
+      magpieSent = key;
+    }
+    return magpie;
+  };
   const relay = new ModelRelayClient({
     send: (message) => current?.send({ type: "model", message }) ?? false,
-    current: () => localModel
+    current: () => localModel,
+    // 刚打开 Magpie 还没轮到检查时，现问一次。
+    magpie: async () => magpie ?? (await checkMagpie())
   });
   const reportModel = () => current?.send({ type: "model", message: { kind: "info", model: infoOf(localModel) } });
 
@@ -161,6 +181,7 @@ export function runBridge(options: RunOptions): RunningBridge {
       // 有没有人在用：连上时报一次，之后变了才报。
       let present: boolean | null = null;
       let presenceTimer: ReturnType<typeof setInterval> | undefined;
+      let magpieTimer: ReturnType<typeof setInterval> | undefined;
       const checkPresence = async () => {
         const now = await userPresent();
         if (now === null || now === present) return;
@@ -174,6 +195,10 @@ export function runBridge(options: RunOptions): RunningBridge {
             problem = null;
             if (takebackQueued) takebackQueued = !session.send({ type: "takeback" });
             session.send({ type: "model", message: { kind: "info", model: infoOf(localModel) } });
+            magpieSent = null;
+            void checkMagpie();
+            magpieTimer ??= setInterval(() => void checkMagpie(), MAGPIE_POLL_MS);
+            magpieTimer.unref?.();
             reportFinishedTo((frame) => session.send(frame));
             present = null;
             void checkPresence();
@@ -195,6 +220,8 @@ export function runBridge(options: RunOptions): RunningBridge {
             reportFinishedTo(null);
             clearInterval(presenceTimer);
             presenceTimer = undefined;
+            clearInterval(magpieTimer);
+            magpieTimer = undefined;
             connected = false;
             cloud = { pending: [], screen: false };
             // 云端的租约跟着这条连接结束了，点对点的画面和输入不能还开着。

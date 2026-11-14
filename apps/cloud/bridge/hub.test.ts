@@ -652,3 +652,22 @@ test("浏览器画面：报了 browser 能力的桥发来才转，旧桥发来�
   assert.deepEqual(seen, [`${fresh.row.id}:https://a.test/`]);
 });
 });
+
+test("Magpie：老的桥不报是 outdated；报了清单记下来，关了只改标记", async () => {
+  const env = await harness();
+  const lists: unknown[] = [];
+  env.hub.onMagpie = (computerId, models) => lists.push([computerId, models]);
+  assert.equal(env.hub.magpieOf(env.row.id), "offline");
+  const socket = await env.connect();
+  await env.hello(socket);
+  assert.equal(env.hub.magpieOf(env.row.id), "outdated");
+  const models = [{ id: "fake-a", name: "Fake A", contextWindow: 200_000, vision: true, reasoning: false }];
+  await env.hub.onMessage(socket, JSON.stringify({ type: "model", message: { kind: "magpie", models } }));
+  assert.equal(env.hub.magpieOf(env.row.id), true);
+  assert.deepEqual(lists, [[env.row.id, models]]);
+  await env.hub.onMessage(socket, JSON.stringify({ type: "model", message: { kind: "magpie", models: null } }));
+  assert.equal(env.hub.magpieOf(env.row.id), false);
+  assert.equal(lists.length, 1);
+  // 清单不进连接附件：附件有大小上限。
+  assert.doesNotMatch(JSON.stringify(socket.attachment), /fake-a/);
+});

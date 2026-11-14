@@ -60,11 +60,11 @@ import {
 import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
 import { createComputerTools } from "./bridge/tools";
-import { ModelRelay } from "./bridge/model-relay";
+import { ModelRelay, type MagpieModel } from "./bridge/model-relay";
 import { templateOf, type OwnApi } from "./model/catalog";
 import { probeKeyModel } from "./model/key-probe";
 import { listModels, type ModelList } from "./model/list";
-import { keyModel, ROUTER_MODEL, routerProvider } from "./model/router";
+import { keyModel, magpieModel, RELAY_KEY, ROUTER_MODEL, routerProvider } from "./model/router";
 import { keyBaseUrl, keyView, modelView, parseChoice, type KeyView, type ModelView } from "./model/settings";
 import { ModelStore } from "./model/store";
 import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
@@ -219,6 +219,13 @@ export type DocView = Doc & { mayDelete: boolean };
 /** 状态里的空间：项目本身加上它的子会话。 */
 export type ProjectView = Project & { readonly children: readonly ChildView[] };
 
+/** 一台电脑上的 Magpie，见 `PupuState.model.magpie`。 */
+export type MagpieView = {
+  readonly computerId: string;
+  readonly on: boolean;
+  readonly models: readonly MagpieModel[];
+};
+
 export type PupuState = {
   readonly projects: readonly ProjectView[];
   /** 全员空间（原来的「大家」，会话是 root）。`mayManage`：组织的创建者能切它的模式。旧客户端不认这一项，照旧用 chats.main。 */
@@ -254,6 +261,11 @@ export type PupuState = {
     readonly own?: KeyView | null;
     /** 哪几家存过 key，地址是存的时候的。只给能改的人。 */
     readonly keys?: readonly { readonly provider: string; readonly baseUrl: string }[];
+    /**
+     * 本人电脑上 Magpie 里能选的模型。`on` 是现在开着。只给能改的人，也只有本人的电脑：
+     * 清单看得出订了哪些服务，用别人电脑上的 Magpie 就是花别人的订阅。
+     */
+    readonly magpie?: readonly MagpieView[];
   };
   /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
   readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
@@ -530,8 +542,9 @@ export class Pupu extends DurableObject<Env> {
           },
           apis: this.modelApis,
           computerModel: (computerId) => this.bridge.modelOf(computerId),
+          computerMagpie: (computerId) => this.#magpieOf(computerId),
           computerName: (computerId) => this.#computerName(computerId),
-          relayFetch: (computerId) => this.relay.fetch(computerId)
+          relayFetch: (computerId, target) => this.relay.fetch(computerId, target)
         })
       );
       return Harness.open(
@@ -646,6 +659,9 @@ export class Pupu extends DurableObject<Env> {
     };
     this.bridge.onModel = (computerId, message) => this.relay.receive(computerId, message);
     this.bridge.onModelGone = (computerId) => this.relay.gone(computerId);
+    this.bridge.onMagpie = (computerId, models) => {
+      this.modelChoice.setMagpieModels(computerId, models);
+    };
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
       this.sockets.broadcast({ type: "computers_changed" });
@@ -1524,7 +1540,15 @@ export class Pupu extends DurableObject<Env> {
   async setModel(input: unknown, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
     await this.lifecycle.start();
     if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
-    const parsed = parseChoice(input, (provider, baseUrl) => this.modelChoice.savedKey(provider, baseUrl));
+    const actor = this.#actor(device);
+    const parsed = parseChoice(
+      input,
+      (provider, baseUrl) => this.modelChoice.savedKey(provider, baseUrl),
+      (computerId, modelId) =>
+        this.#magpieComputers(actor).includes(computerId)
+          ? (this.modelChoice.magpieModels(computerId)?.find((model) => model.id === modelId) ?? null)
+          : null
+    );
     if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
     const choice = parsed.choice;
     if (choice.source === "computer" && !this.computers.list().some((row) => row.id === choice.computerId)) {
@@ -1532,6 +1556,21 @@ export class Pupu extends DurableObject<Env> {
     }
     if (choice.source === "key") {
       const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis: this.modelApis });
+      if (!probe.ok) return { ok: false, status: 400, error: probe.error };
+    }
+    if (choice.source === "computer" && choice.magpie) {
+      const state = this.#magpieOf(choice.computerId);
+      const name = this.#computerName(choice.computerId);
+      if (state === "offline") return { ok: false, status: 400, error: `「${name}」没连上，连上后再选。` };
+      if (state === "outdated") return { ok: false, status: 400, error: `「${name}」上的 Pupu 太旧，更新电脑 App 后再选。` };
+      if (state === null) return { ok: false, status: 400, error: `「${name}」上的 Magpie 没开，打开后再选。` };
+      // 和真正调用走同一条路试一次：Magpie 能转到、这个模型会调工具。
+      const probe = await probeKeyModel({
+        model: magpieModel(choice.magpie),
+        apiKey: RELAY_KEY,
+        apis: this.modelApis,
+        fetch: this.relay.fetch(choice.computerId, "magpie")
+      });
       if (!probe.ok) return { ok: false, status: 400, error: probe.error };
     }
     this.modelChoice.set(choice);
@@ -1544,7 +1583,29 @@ export class Pupu extends DurableObject<Env> {
     const current = modelView(this.modelChoice.get());
     if (!mayEdit) return { current, mayEdit };
     const own = this.modelChoice.lastOwn();
-    return { current, mayEdit, own: own ? keyView(own) : null, keys: this.modelChoice.keyProviders() };
+    const magpie: MagpieView[] = [];
+    for (const computerId of this.#magpieComputers(this.#actor(device))) {
+      const models = this.modelChoice.magpieModels(computerId);
+      if (!models) continue;
+      magpie.push({ computerId, on: this.bridge.magpieOf(computerId) === true, models });
+    }
+    return { current, mayEdit, own: own ? keyView(own) : null, keys: this.modelChoice.keyProviders(), magpie };
+  }
+
+  /** 这个人能用哪几台电脑上的 Magpie：只有自己的。本机开发没带凭据的都能用。 */
+  #magpieComputers(actor: Actor | null | undefined): string[] {
+    if (actor === undefined) return [];
+    return this.computers
+      .list()
+      .filter((row) => actor === null || (row.ownerId !== null && row.ownerId === actor.memberId))
+      .map((row) => row.id);
+  }
+
+  /** 这台电脑上的 Magpie：开着给清单，关着是 null。 */
+  #magpieOf(computerId: string): readonly MagpieModel[] | null | "offline" | "outdated" {
+    const state = this.bridge.magpieOf(computerId);
+    if (state === "offline" || state === "outdated") return state;
+    return state ? (this.modelChoice.magpieModels(computerId) ?? null) : null;
   }
 
   /**

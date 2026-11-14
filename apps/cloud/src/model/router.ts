@@ -18,16 +18,16 @@ import type {
   TranscriptContext
 } from "@earendil-works/pi-ai";
 import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
-import type { LocalModelInfo } from "../bridge/model-relay.ts";
+import type { LocalModelInfo, MagpieModel, ModelTarget } from "../bridge/model-relay.ts";
 import { templateOf, type OwnApi } from "./catalog.ts";
 import { catalogModel } from "./catalog-models.ts";
-import { apiOf, providerOf, type KeyChoice, type ModelChoice } from "./settings.ts";
+import { apiOf, providerOf, type KeyChoice, type MagpieChoice, type ModelChoice } from "./settings.ts";
 
 export const ROUTER_MODEL = { provider: "pupu", id: "main" } as const;
 
 /** 转发时 OpenAI SDK 要一个地址和 key 才肯发请求；真正的地址和 key 在电脑上，电脑一律换掉。 */
 const RELAY_BASE_URL = "https://relay.pupu.invalid/v1";
-const RELAY_KEY = "relay";
+export const RELAY_KEY = "relay";
 
 /**
  * 不认识的 OpenAI 兼容服务按最保守的来：ollama、vLLM、公司网关常拒 developer 角色、store、strict 和
@@ -102,6 +102,20 @@ export function keyModel(choice: KeyChoice): Model<Api> {
   });
 }
 
+/**
+ * 转给 Magpie 的这一次用的 model。按 OpenAI Chat 协议、最保守的兼容参数发，Magpie 再转给各家。
+ * 不开思考：各家的思考格式经 Magpie 转一道后对不齐，带回去容易被拒。
+ */
+export function magpieModel(choice: MagpieChoice): Model<Api> {
+  return ownModel({
+    provider: "magpie",
+    id: choice.id,
+    baseUrl: RELAY_BASE_URL,
+    vision: choice.vision,
+    contextWindow: choice.contextWindow
+  });
+}
+
 export type RouterDeps = {
   readonly choice: () => ModelChoice;
   /** 我们的模型：已经包好每日额度的 DeepSeek provider 和它的 model。 */
@@ -110,8 +124,10 @@ export type RouterDeps = {
   readonly apis: Partial<Record<OwnApi, ProviderStreams>>;
   /** 这台电脑现在能不能转发。 */
   readonly computerModel: (computerId: string) => LocalModelInfo | null | "offline" | "outdated";
+  /** 这台电脑上的 Magpie：开着给清单，关着是 null。 */
+  readonly computerMagpie: (computerId: string) => readonly MagpieModel[] | null | "offline" | "outdated";
   readonly computerName: (computerId: string) => string;
-  readonly relayFetch: (computerId: string) => typeof fetch;
+  readonly relayFetch: (computerId: string, target: ModelTarget) => typeof fetch;
 };
 
 /** 这一次调谁。`error` 是不调，这一轮以这句话出错结束。 */
@@ -128,13 +144,14 @@ export function routeOf(deps: RouterDeps): Route {
     case "key":
       return { kind: "own", model: keyModel(choice), apiKey: choice.apiKey };
     case "computer": {
+      if (choice.magpie) return magpieRoute(deps, choice.computerId, choice.magpie, choice.fallback);
       const state = deps.computerModel(choice.computerId);
       if (state !== null && typeof state === "object") {
         return {
           kind: "own",
           model: ownModel({ provider: "own-relay", id: state.name, baseUrl: RELAY_BASE_URL, ...state }),
           apiKey: RELAY_KEY,
-          fetch: deps.relayFetch(choice.computerId)
+          fetch: deps.relayFetch(choice.computerId, "local")
         };
       }
       if (choice.fallback) return { kind: "pupu" };
@@ -144,6 +161,19 @@ export function routeOf(deps: RouterDeps): Route {
       return { kind: "error", message: `「${name}」上还没有设模型。在那台电脑的 Pupu 设置里填上。` };
     }
   }
+}
+
+function magpieRoute(deps: RouterDeps, computerId: string, choice: MagpieChoice, fallback: boolean): Route {
+  const state = deps.computerMagpie(computerId);
+  if (Array.isArray(state) && state.some((model) => model.id === choice.id)) {
+    return { kind: "own", model: magpieModel(choice), apiKey: RELAY_KEY, fetch: deps.relayFetch(computerId, "magpie") };
+  }
+  if (fallback) return { kind: "pupu" };
+  const name = deps.computerName(computerId);
+  if (state === "offline") return { kind: "error", message: `「${name}」现在没连上，用不了它上面的 Magpie。等它回来，或者在设置里换模型。` };
+  if (state === "outdated") return { kind: "error", message: `「${name}」上的 Pupu 太旧，不能转给 Magpie。更新电脑 App 后再试。` };
+  if (state === null) return { kind: "error", message: `「${name}」上的 Magpie 没开。打开 Magpie 再试，或者在设置里换模型。` };
+  return { kind: "error", message: `「${name}」的 Magpie 里没有「${choice.name}」了。在设置里重新选一个模型。` };
 }
 
 /** 会话看到的模型元数据：按当前设置给。转发的电脑不在线时按设置里最后报的给不了，就按保守值。 */

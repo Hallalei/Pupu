@@ -19,7 +19,7 @@ import {
   type UpFrame
 } from "./protocol.ts";
 import type { DesktopDown, DesktopUp } from "./desktop.ts";
-import { parseLocalModelInfo, type LocalModelInfo, type ModelDown, type ModelUp } from "./model-relay.ts";
+import { parseLocalModelInfo, type LocalModelInfo, type MagpieModel, type ModelDown, type ModelUp } from "./model-relay.ts";
 import { screenOn } from "./gate.ts";
 import {
   appendTail,
@@ -54,6 +54,8 @@ export type BridgeLink = {
   readonly browser?: boolean;
   /** 桥报的本地模型，null 是没设。老的桥不报，不能转发。 */
   readonly model?: LocalModelInfo | null;
+  /** 桥报的 Magpie 开没开。清单在云端的 SQLite 里。老的桥不报，不能转给 Magpie。 */
+  readonly magpie?: boolean;
 };
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -115,8 +117,10 @@ export class ComputerBridge {
   onGone: (computerId: string) => void = () => {};
   /** Pupu 浏览器的一帧画面，只转给能看到这台电脑上的活的人。 */
   onBrowserFrame: (computerId: string, frame: BrowserFrame) => void = () => {};
-  /** 桥发来的模型转发响应（不含 info，info 记在连接上）。 */
-  onModel: (computerId: string, message: Exclude<ModelUp, { kind: "info" }>) => void = () => {};
+  /** 桥发来的模型转发响应（不含 info 和 magpie，那两个记在连接上）。 */
+  onModel: (computerId: string, message: Exclude<ModelUp, { kind: "info" | "magpie" }>) => void = () => {};
+  /** 桥报了 Magpie 的清单（Magpie 关了不报清单）。 */
+  onMagpie: (computerId: string, models: readonly MagpieModel[]) => void = () => {};
   /** 一条桥连接关了，上面在途的模型转发都断。被新连接替换的旧连接也算。 */
   onModelGone: (computerId: string) => void = () => {};
   /** 调用找不到能用的电脑：`computerId` 是离线的那台，没指定、一台都不在线是 null。 */
@@ -214,6 +218,11 @@ export class ComputerBridge {
       if (!link?.ready) return;
       if (frame.message.kind === "info") {
         this.#writeLink(socket, { ...link, model: frame.message.model });
+        this.onChange();
+      } else if (frame.message.kind === "magpie") {
+        // 先记清单再改标记：onChange 发出去的状态里清单要已经在了。
+        if (frame.message.models) this.onMagpie(link.computerId, frame.message.models);
+        this.#writeLink(socket, { ...link, magpie: frame.message.models !== null });
         this.onChange();
       } else this.onModel(link.computerId, frame.message);
       return;
@@ -432,6 +441,14 @@ export class ComputerBridge {
     const view = this.list().find((computer) => computer.id === computerId);
     if (!view?.online) return "offline";
     return view.model === undefined ? "outdated" : view.model;
+  }
+
+  /** 这台电脑上的 Magpie 开没开。没连着是 "offline"，老的桥是 "outdated"。 */
+  magpieOf(computerId: string): boolean | "offline" | "outdated" {
+    if (!this.list().find((computer) => computer.id === computerId)?.online) return "offline";
+    const socket = this.#socketFor(computerId);
+    const link = socket ? readLink(socket) : null;
+    return link?.magpie === undefined ? "outdated" : link.magpie;
   }
 
   /** 把远程桌面的消息发给这台电脑的桥。没连着返回 false。 */
@@ -762,6 +779,7 @@ export function readLink(socket: { deserializeAttachment(): unknown }): BridgeLi
     terminalsFolder: typeof link.terminalsFolder === "string" ? link.terminalsFolder : "",
     ...(typeof link.present === "boolean" ? { present: link.present } : {}),
     ...(link.browser === true ? { browser: true } : {}),
-    ...(link.model === null ? { model: null } : link.model ? { model: parseLocalModelInfo(link.model) } : {})
+    ...(link.model === null ? { model: null } : link.model ? { model: parseLocalModelInfo(link.model) } : {}),
+    ...(typeof link.magpie === "boolean" ? { magpie: link.magpie } : {})
   };
 }

@@ -1,10 +1,12 @@
+import type { MagpieModel } from "../bridge/model-relay.ts";
 import { CUSTOM_OPENAI, isOwnApi, templateOf, type OwnApi, type Template } from "./catalog.ts";
 
 /**
  * 一个 Pupu 用哪个模型（docs/自带模型方案.md）。只有创建者能改；所有成员看得到用的是哪种，看不到 key。
  *
  * - `pupu`：我们的 DeepSeek，扣每日额度。
- * - `computer`：经某台电脑转发，地址和 key 在那台电脑上，云端只记是哪台。
+ * - `computer`：经某台电脑转发，地址和 key 在那台电脑上，云端只记是哪台。带 `magpie` 的转给那台电脑上的 Magpie，
+ *   模型是选的那个；不带的转给那台电脑上设的模型。
  * - `key`：主人选的服务商（catalog.ts）、地址和 key 存在这个 Pupu 的 SQLite 里，云端直接调。
  *
  * `key` 的 `provider`、`api`、`reasoning` 是后来加的：之前存的只有 OpenAI 兼容地址，读出来按自定义的 OpenAI 兼容处理。
@@ -17,8 +19,12 @@ export type ModelChoice =
       readonly computerId: string;
       /** 那台电脑不在线时，用我们的模型顶上（扣额度）。默认关：内容不该悄悄发给别的模型。 */
       readonly fallback: boolean;
+      /** 用那台电脑上 Magpie 里的这个模型。选的时候从那台电脑报的清单里抄下来。 */
+      readonly magpie?: MagpieChoice;
     }
   | KeyChoice;
+
+export type MagpieChoice = Pick<MagpieModel, "id" | "name" | "contextWindow" | "vision">;
 
 export type KeyChoice = {
   readonly source: "key";
@@ -57,7 +63,12 @@ export type KeyView = {
 /** 发给所有成员的样子：没有 key，地址只给主机名。 */
 export type ModelView =
   | { readonly source: "pupu" }
-  | { readonly source: "computer"; readonly computerId: string; readonly fallback: boolean }
+  | {
+      readonly source: "computer";
+      readonly computerId: string;
+      readonly fallback: boolean;
+      readonly magpie?: { readonly id: string; readonly name: string };
+    }
   | KeyView;
 
 /** 低于这个上下文长度，系统提示词和工具说明就占掉一大半，不让选。 */
@@ -73,7 +84,12 @@ export function modelView(choice: ModelChoice): ModelView {
     case "pupu":
       return { source: "pupu" };
     case "computer":
-      return { source: "computer", computerId: choice.computerId, fallback: choice.fallback };
+      return {
+        source: "computer",
+        computerId: choice.computerId,
+        fallback: choice.fallback,
+        ...(choice.magpie ? { magpie: { id: choice.magpie.id, name: choice.magpie.name } } : {})
+      };
     case "key":
       return keyView(choice);
   }
@@ -128,11 +144,15 @@ export type ParsedChoice =
 /** 这家服务商、这个地址存过的 key。地址变了就不算：不能把存的 key 发到别的主机。 */
 export type SavedKey = (provider: string, baseUrl: string) => string;
 
+/** 这台电脑报过的 Magpie 清单里的这个模型。没有是 null。 */
+export type MagpieLookup = (computerId: string, modelId: string) => MagpieModel | null;
+
 /**
  * 网页提交的设置。`key` 模式下 key 留空表示沿用已存的（网页拿不到旧 key，只能这样表示不改）。
  * 模板的地址和协议以模板为准；只有自定义的能自己填地址、选协议。
+ * Magpie 的模型只认 id，资料从电脑报的清单里抄，不信网页给的。
  */
-export function parseChoice(value: unknown, savedKey: SavedKey): ParsedChoice {
+export function parseChoice(value: unknown, savedKey: SavedKey, magpie: MagpieLookup = () => null): ParsedChoice {
   if (typeof value !== "object" || value === null) return { ok: false, error: "设置不对。" };
   const input = value as Record<string, unknown>;
   switch (input.source) {
@@ -140,7 +160,18 @@ export function parseChoice(value: unknown, savedKey: SavedKey): ParsedChoice {
       return { ok: true, choice: PUPU_CHOICE };
     case "computer": {
       if (typeof input.computerId !== "string" || !input.computerId) return { ok: false, error: "选一台电脑。" };
-      return { ok: true, choice: { source: "computer", computerId: input.computerId, fallback: input.fallback === true } };
+      const base = { source: "computer", computerId: input.computerId, fallback: input.fallback === true } as const;
+      if (input.magpie === undefined || input.magpie === null || input.magpie === "") return { ok: true, choice: base };
+      if (typeof input.magpie !== "string") return { ok: false, error: "选一个 Magpie 里的模型。" };
+      const found = magpie(input.computerId, input.magpie);
+      if (!found) return { ok: false, error: "那台电脑的 Magpie 里没有这个模型。" };
+      return {
+        ok: true,
+        choice: {
+          ...base,
+          magpie: { id: found.id, name: found.name, contextWindow: found.contextWindow, vision: found.vision }
+        }
+      };
     }
     case "key": {
       const provider = input.provider === undefined ? CUSTOM_OPENAI : String(input.provider);

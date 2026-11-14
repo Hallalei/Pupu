@@ -88,6 +88,7 @@ function deps(choice: ModelChoice, overrides: Partial<RouterDeps> = {}): RouterD
     pupu: { provider: faux.provider, model: faux.getModel(), apiKey: () => "pupu-key" },
     apis: { "openai-completions": openAICompletionsApi() },
     computerModel: () => ({ name: LOCAL.model, vision: LOCAL.vision, contextWindow: LOCAL.contextWindow }),
+    computerMagpie: () => "outdated",
     computerName: () => "办公室的 Mac",
     relayFetch: () => {
       throw new Error("不该转发");

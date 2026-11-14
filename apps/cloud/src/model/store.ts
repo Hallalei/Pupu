@@ -1,3 +1,4 @@
+import { parseMagpieModels, type MagpieModel } from "../bridge/model-relay.ts";
 import { PUPU_CHOICE, providerOf, type KeyChoice, type ModelChoice } from "./settings.ts";
 
 /**
@@ -6,6 +7,8 @@ import { PUPU_CHOICE, providerOf, type KeyChoice, type ModelChoice } from "./set
  * - `pupu_model`：现在用的，一行。
  * - `pupu_model_own`：最后一次用的自带 key 设置，一行。换成别的来源再换回来，不用重填。
  * - `pupu_model_keys`：每家服务商存过的 key 和当时的地址。只在地址一样时沿用（`savedKey`）。
+ * - `pupu_magpie`：每台电脑最后报的 Magpie 清单。Magpie 关了也留着，设置页还能看到选的是哪个；
+ *   开没开看桥连接上的标记。清单可能很长，连接附件放不下，所以存这里。
  */
 export class ModelStore {
   readonly #sql: SqlStorage;
@@ -17,6 +20,31 @@ export class ModelStore {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS pupu_model_keys (provider TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key TEXT NOT NULL)"
     );
+    sql.exec("CREATE TABLE IF NOT EXISTS pupu_magpie (computer_id TEXT PRIMARY KEY, models TEXT NOT NULL)");
+  }
+
+  /** 这台电脑最后报的 Magpie 清单。没报过是 null。 */
+  magpieModels(computerId: string): MagpieModel[] | null {
+    const [row] = this.#sql.exec("SELECT models FROM pupu_magpie WHERE computer_id = ?", computerId).toArray();
+    if (!row) return null;
+    try {
+      return parseMagpieModels(JSON.parse(String(row.models)));
+    } catch {
+      return null;
+    }
+  }
+
+  /** 记下清单。返回有没有变。 */
+  setMagpieModels(computerId: string, models: readonly MagpieModel[]): boolean {
+    const text = JSON.stringify(models);
+    const [row] = this.#sql.exec("SELECT models FROM pupu_magpie WHERE computer_id = ?", computerId).toArray();
+    if (row && String(row.models) === text) return false;
+    this.#sql.exec(
+      "INSERT INTO pupu_magpie (computer_id, models) VALUES (?, ?) ON CONFLICT(computer_id) DO UPDATE SET models = excluded.models",
+      computerId,
+      text
+    );
+    return true;
   }
 
   get(): ModelChoice {
