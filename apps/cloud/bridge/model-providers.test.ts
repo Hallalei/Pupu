@@ -366,6 +366,11 @@ describe("拉模型列表", () => {
     assert.equal(followed, "manual");
     assert.match(moved.error ?? "", /重定向/);
     assert.equal(moved.models.length, 0);
+    const down: typeof fetch = async () => {
+      throw new TypeError("Network connection lost.");
+    };
+    const lost = await listModels(templateOf("custom-openai")!, "https://llm.example.com/v1", "k", down);
+    assert.equal(lost.error, "拉不到模型列表，可以直接填模型名。");
   });
 
   test("自定义的 Anthropic 兼容地址贴了完整路径：保存和拉列表用同一个地址", async () => {

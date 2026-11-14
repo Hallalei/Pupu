@@ -43,7 +43,12 @@ export async function writeLocalModel(model: LocalModel | null): Promise<void> {
   }
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.${process.pid}.tmp`;
-  await writeFile(temporary, sealed, { mode: 0o600 });
-  await chmod(temporary, 0o600);
-  await rename(temporary, target);
+  try {
+    await writeFile(temporary, sealed, { mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
 }

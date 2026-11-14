@@ -92,8 +92,9 @@ async function fetchList(
   let response: Response;
   try {
     response = await fetchImpl(url, { headers, redirect: "manual", signal: AbortSignal.timeout(LIST_TIMEOUT_MS) });
-  } catch (error) {
-    return { ok: false, error: `拉不到模型列表：${error instanceof Error ? error.message : String(error)}` };
+  } catch {
+    // 连不上、超时：原话多半是英文（「Network connection lost.」）。为什么连不上，按「保存」试的时候会写。
+    return { ok: false, error: "拉不到模型列表，可以直接填模型名。" };
   }
   if (response.status >= 300 && response.status < 400) {
     await response.body?.cancel();
