@@ -29,6 +29,16 @@ export function MenuIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 找人框里的放大镜，照规范 SpaceSettings：16 格，描边 1.6。 */
+export function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon viewBox="0 0 16 16" strokeWidth={1.6} {...props}>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.5 10.5 14 14" />
+    </Icon>
+  );
+}
+
 export function FolderIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>

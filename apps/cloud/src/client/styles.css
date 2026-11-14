@@ -93,6 +93,7 @@
   --text-code--line-height: 18px;
 
   --radius-tag: 8px;
+  --radius-field: 12px;
   --radius-mark: 6px;
   --radius-mark-lg: 12px;
   --radius-row: 16px;
@@ -239,6 +240,12 @@
   --field-background: var(--color-surface-inset);
   --field-foreground: var(--color-ink);
   --field-placeholder: var(--color-ink-muted);
+  --field-radius: var(--radius-field);
+  --field-shadow: none;
+  --field-border-width: 0px;
+  --field-hover: var(--color-surface-inset);
+  --field-focus: var(--color-surface-inset);
+  color-scheme: light;
 
   /* 阴影：一圈 0.5pt 的边加一层很淡的投影。深色主题卡片只留白边。 */
   --shadow-card: 0 0 0 0.5px #0000000f, 0 8px 30px #0000001a;
@@ -246,6 +253,7 @@
   --shadow-raised: 0 1px 2px #0000000f;
 }
 .dark {
+  color-scheme: dark;
   --surface: #181818;
   --warning: oklch(0.8203 0.1388 76.34);
   --danger: oklch(0.594 0.1967 24.63);
@@ -287,6 +295,26 @@
   border-radius: var(--radius-sheet-top) var(--radius-sheet-top) var(--radius-card) var(--radius-card);
   @media (pointer: fine) {
     border-radius: var(--radius-card-pointer);
+  }
+}
+
+/*
+ * 输入框照规范 README：surface-inset 底、radius-field 12、不描边；高 control（手机 44，电脑 32），左右 12，占位 ink-muted。
+ * 原生的 input 用 `field`，HeroUI 的 Input、TextArea 在后面改写成一样。
+ */
+@utility field {
+  min-width: 0;
+  height: var(--spacing-control);
+  border: 0;
+  border-radius: var(--radius-field);
+  background: var(--color-surface-inset);
+  padding-inline: 12px;
+  color: var(--color-ink);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  outline: none;
+  &::placeholder {
+    color: var(--color-ink-muted);
   }
 }
 
@@ -609,4 +637,76 @@ button:focus-visible {
 }
 .pt-safe {
   padding-top: max(env(safe-area-inset-top), 0px);
+}
+
+/* HeroUI 的输入框照规范 README 的输入框（见上面的 field）。 */
+.input,
+.textarea {
+  border: 0;
+  border-radius: var(--radius-field);
+  background: var(--color-surface-inset);
+  padding-inline: 12px;
+  color: var(--color-ink);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  box-shadow: none;
+}
+.input {
+  height: var(--spacing-control);
+  padding-block: 0;
+}
+.textarea {
+  padding-block: 10px;
+}
+
+/*
+ * 开关照规范 README：开着 action 底、on-action 圆钮；关着 action-off 底、surface 圆钮加 shadow-raised，深色里圆钮用 ink-muted。
+ * 手机档 52×32，电脑档 40×24。HeroUI 的 Switch 在这里改写。单选圈和勾选框用 ink。
+ */
+.switch {
+  --switch-control-bg: var(--color-action-off);
+  --switch-control-bg-hover: var(--color-action-off);
+  --switch-control-bg-pressed: var(--color-action-off);
+  --switch-control-bg-checked: var(--color-action);
+  --switch-control-bg-checked-hover: var(--color-action);
+}
+.switch .switch__control {
+  width: 52px;
+  height: 32px;
+  border-radius: 9999px;
+}
+.switch .switch__thumb {
+  width: 28px;
+  height: 28px;
+  margin-inline-start: 2px;
+  border-radius: 9999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+.dark .switch .switch__thumb {
+  background: var(--color-ink-muted);
+}
+.switch[data-selected="true"] .switch__thumb,
+.switch[aria-checked="true"] .switch__thumb {
+  margin-inline-start: calc(100% - 30px);
+  background: var(--color-on-action);
+  box-shadow: none;
+}
+@media (pointer: fine) {
+  .switch .switch__control {
+    width: 40px;
+    height: 24px;
+  }
+  .switch .switch__thumb {
+    width: 20px;
+    height: 20px;
+  }
+  .switch[data-selected="true"] .switch__thumb,
+  .switch[aria-checked="true"] .switch__thumb {
+    margin-inline-start: calc(100% - 22px);
+  }
+}
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: var(--color-ink);
 }

@@ -963,7 +963,7 @@ function ComputerPanel({
       ) : remote === "phone" ? (
         <div className="mb-2"><Note>在手机 App 上远程控制这台电脑。</Note></div>
       ) : mine && !computer.online ? (
-        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-action-off text-body font-semibold text-ink-faint">
+        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-action-off text-body font-semibold text-ink-muted">
           离线，连上才能远程控制
         </div>
       ) : null}

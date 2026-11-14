@@ -8,7 +8,7 @@ import { SPACE_COLORS, SPACE_ICONS, type SpaceColor, type SpaceIcon } from "../s
 import type { SpaceChange } from "../spaces";
 import { ago } from "./ago";
 import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileIcon, MenuIcon, PlusIcon } from "./icons";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileIcon, MenuIcon, PlusIcon, SearchIcon } from "./icons";
 import { Sheet, SheetClose } from "./Sheet";
 import { SPACE_ICON_PATHS } from "./space-icons";
 
@@ -269,7 +269,7 @@ function SwitchRow({
       onClick={onClick}
       aria-current={selected ? "page" : undefined}
       aria-label={label}
-      className="flex min-h-13 w-full items-center gap-3 px-4 text-left active:bg-ink/5 pointer-fine:hover:bg-ink/4"
+      className="flex min-h-13 w-full items-center gap-3 px-4 text-left active:bg-line pointer-fine:hover:bg-line"
     >
       {children}
     </button>
@@ -342,7 +342,7 @@ export function SpaceSwitcher({
                     key={child.session}
                     type="button"
                     onClick={() => onOpenChild(space.id, child.session)}
-                    className="flex h-10 w-full items-center gap-2.5 pr-4 pl-12 text-left text-subheadline active:bg-ink/5 pointer-fine:hover:bg-ink/4"
+                    className="flex h-10 w-full items-center gap-2.5 pr-4 pl-12 text-left text-subheadline active:bg-line pointer-fine:hover:bg-line"
                   >
                     <ChildDot child={child} />
                     <span className="min-w-0 flex-1 truncate">{child.title}</span>
@@ -491,7 +491,7 @@ export function CardMembers({ space, members, mine, onPress }: { space: ProjectV
   return (
     <>
       {onPress ? (
-        <button type="button" aria-label={`${count}，空间设置`} onClick={onPress} className="tap flex shrink-0 items-center rounded-full p-1 text-[14px] hover:bg-ink/4">
+        <button type="button" aria-label={`${count}，空间设置`} onClick={onPress} className="tap flex shrink-0 items-center rounded-full p-1 text-[14px] hover:bg-surface-inset">
           <Members space={space} members={members} ring="ring-surface" />
         </button>
       ) : (
@@ -652,14 +652,17 @@ export function SpaceSettings({
             </fieldset>
           )}
           {!everyone && mine && (
-            <input
-              type="search"
-              aria-label="找人"
-              placeholder="组织里的人"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-11 rounded-xl bg-surface-inset px-3.5 text-body text-ink outline-none placeholder:text-ink-muted"
-            />
+            <label className="field flex items-center gap-2 px-3.5 text-ink-muted">
+              <SearchIcon className="shrink-0 text-[16px]" />
+              <input
+                type="search"
+                aria-label="找人"
+                placeholder="组织里的人"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="h-full min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-ink-muted"
+              />
+            </label>
           )}
           {!everyone && people.length > 0 && (
             <ul className="m-0 flex list-none flex-col overflow-hidden rounded-row bg-surface-inset p-0">
@@ -679,7 +682,7 @@ export function SpaceSettings({
                           type="button"
                           disabled={busy !== null}
                           onClick={() => void run(member.id, { kind: "remove", memberId: member.id })}
-                          className={`${chip} text-ink-muted hover:bg-ink/4`}
+                          className={`${chip} text-ink-muted hover:bg-line`}
                         >
                           移出
                         </button>

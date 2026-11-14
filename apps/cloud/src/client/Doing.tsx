@@ -60,7 +60,7 @@ export function StatusStrip({
             aria-label={`收回${screens.map((row) => `「${row.computerName}」`).join("")}的屏幕控制`}
             disabled={screens.some((row) => taking.has(row.computerId))}
             onClick={() => void takeback(screens.map((row) => row.computerId))}
-            className={`${CHIP} font-semibold disabled:text-ink-faint`}
+            className={`${CHIP} font-semibold disabled:text-ink-muted`}
           >
             收回
           </button>
@@ -120,7 +120,7 @@ function DoingRow({
           type="button"
           disabled={taking}
           onClick={onTakeback}
-          className="tap h-8 shrink-0 rounded-full bg-surface px-3.5 text-subheadline font-semibold text-ink disabled:text-ink-faint"
+          className="tap h-8 shrink-0 rounded-full bg-surface px-3.5 text-subheadline font-semibold text-ink disabled:text-ink-muted"
         >
           收回
         </button>
