@@ -1,18 +1,18 @@
 # 私聊
 
-每个成员有一条只有自己和 Pupu 的私聊。聊天这一段（「Pupu」）就是它；原来的「大家」成了空间列表第一个的「全员」（见 spaces.md 的 `space.everyone`）。2026-11-14 起没有长按切换。
+每个成员有一条只有自己和 Pupu 的私聊。「我的 Pupu」就是它（宽屏侧栏第一行，窄屏切换 sheet 第一行）；原来的「大家」成了空间列表第一个的「全员」（见 spaces.md 的 `space.everyone`）。2026-11-14 起没有长按切换。
 
 ## Sub-features
 
-- `private.open`：登录后聊天这一段直接是私聊：夜空，输入栏「只发给 Pupu」。`/api/state` 第一次拿到之前只转圈、没有输入栏，免得发到全员。
+- `private.open`：登录后「我的 Pupu」直接是私聊，输入栏「只发给 Pupu」，窗框是 canvas（不是空间，不染色）。`/api/state` 第一次拿到之前只转圈、没有输入栏，免得发到全员。
 - `private.isolated`：别人连不上你的私聊，会话 WebSocket 收到 `打不开这条聊天` 后以 1011 关闭。查不到的会话也一样。
-- `private.dot`：私聊有 Pupu 的新回复、人在「项目」段时，聊天这一段亮红点。全员的新消息在空间列表「全员」那行亮红点。
+- `private.dot`：私聊有 Pupu 的新回复、人不在「我的 Pupu」时，那一行名字加粗、行尾一个墨色圆点（宽屏侧栏、窄屏切换 sheet），窄屏顶栏的切换按钮右上角也有一个墨色小点。全员的新消息在「全员」那行同样标。
 - `private.handoff`：私聊里转交前 Pupu 先说内容会公开。报告卡回到这条私聊，别人的 `/api/state` 里没有这张卡，项目里不带无关私事。
 - `private.approval`：私聊发起的电脑动作，审批卡和「正在做」只给发起人和电脑主人。第三个人的 `/api/state`、`activity` 帧里都没有。
 
 ## How to get to it (user POV)
 
-- 顶部「Pupu」段。宽屏和 ≡ 列表里是「我的 Pupu」。
+- 宽屏侧栏第一行「我的 Pupu」；窄屏左上角切换按钮，sheet 第一行。手机 App 还是顶部「Pupu」段（iOS 还没换新导航）。
 
 ## Driving it with ego-browser
 
@@ -25,7 +25,7 @@ Preconditions: 要几个成员，`apps/cloud/.dev.vars` 按 `apps/cloud/README.m
 - 窄屏：`await page.cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: false })`。每次 `ego-browser nodejs` 都要重设。
 - `private.open`：`await page.waitForSelector('loc=css:textarea[placeholder="只发给 Pupu"]')`。测转圈：拦住 `/api/state`（停掉服务或 `Fetch.enable` 挂起），应只有「正在打开」，没有 textarea。
 - `private.isolated`：在成员页面里 `new WebSocket("ws://" + location.host + "/agents/pupu/me?_pk=" + crypto.randomUUID() + "&session=<别人的私聊>")`。`/api/state` 的 `chats.private.session` 是各人的私聊。
-- `private.dot`：林夏停在某个空间，阿周在全员发一句。结果：林夏那边 ≡ 列表「全员」那行有红点。
+- `private.dot`：林夏停在某个空间，阿周在全员发一句。结果：林夏那边侧栏（或切换 sheet）「全员」那行加粗带墨色圆点，窄屏切换按钮右上角有点。
 
 ## Gotchas
 

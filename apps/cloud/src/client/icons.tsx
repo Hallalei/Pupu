@@ -20,10 +20,11 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 切换按钮的三道线，照规范 SpaceHeader：20 格，描边 1.7。 */
 export function MenuIcon(props: SVGProps<SVGSVGElement>) {
   return (
-    <Icon {...props}>
-      <path d="M4 7h16M4 12h11M4 17h7" />
+    <Icon viewBox="0 0 20 20" strokeWidth={1.7} {...props}>
+      <path d="M4 6h12M4 10h12M4 14h7" />
     </Icon>
   );
 }

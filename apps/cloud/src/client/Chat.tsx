@@ -77,8 +77,6 @@ export type ChatContext = {
 type ChatProps = {
   readonly session: string;
   readonly context: ChatContext;
-  /** 盖在对话顶上的东西，比如项目名。滚回最新消息时淡出，往回翻时出现。 */
-  readonly top?: ReactNode;
   readonly empty: ReactNode;
   readonly placeholder: string;
   readonly starters?: readonly string[];
@@ -87,7 +85,7 @@ type ChatProps = {
 /** 离底部这么近就算在底部，新内容来了跟着滚。 */
 const STICK_DISTANCE = 80;
 
-export function Chat({ session, context, top, empty, placeholder, starters = [] }: ChatProps) {
+export function Chat({ session, context, empty, placeholder, starters = [] }: ChatProps) {
   const pi = usePiSession(session, context.onProjectsChanged, context.onActivity);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
@@ -95,8 +93,6 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   /** 用户往上翻了：右下角出现「回到底部」。 */
   const [away, setAway] = useState(false);
-  /** 用户翻回了最新消息，顶上的东西让开。 */
-  const [settled, setSettled] = useState(false);
   /** 长按或右键的那条消息的文字，和菜单弹出的位置：鼠标在光标处，长按在消息下沿。 */
   const [menu, setMenu] = useState<{ text: string; x: number; y: number } | null>(null);
   const menuAnchor = useRef<HTMLSpanElement | null>(null);
@@ -210,31 +206,17 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
 
   return (
     <div className="fade-in relative flex h-full flex-col">
-      {top && (
-        <div
-          className={`pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 transition-opacity duration-200 ${settled ? "opacity-0" : ""}`}
-        >
-          {top}
-        </div>
-      )}
       <div className="relative min-h-0 flex-1">
-        <div className="scroll-fade" aria-hidden="true" />
         <div
           ref={scroller}
           onScroll={(event) => {
             const node = event.currentTarget;
             stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < STICK_DISTANCE;
-            if (away === stick.current) {
-              setAway(!stick.current);
-              setSettled(stick.current);
-            }
+            if (away === stick.current) setAway(!stick.current);
           }}
-          className="h-full overflow-y-auto"
+          className="scroll-fade h-full overflow-y-auto"
         >
-          <div
-            data-capped={top ? "" : undefined}
-            className="scroll-body mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pb-4 lg:px-6"
-          >
+          <div className="mx-auto flex min-h-full w-full max-w-column flex-col px-4 pt-3 pb-4">
             {loading && (
               <div className="my-auto flex justify-center">
                 <Spinner size="sm" aria-label="正在打开" />
@@ -267,7 +249,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
           </div>
         </div>
         {away && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 mx-auto flex max-w-2xl justify-end px-4 lg:px-6">
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 mx-auto flex max-w-column justify-end px-4">
             <button
               type="button"
               aria-label="回到底部"
@@ -291,7 +273,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
       )}
 
       <div className="pb-safe relative z-30 shrink-0">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
+        <div className="mx-auto flex w-full max-w-column flex-col gap-2 px-4 pb-3">
           {quote !== null && (
             <div className="flex items-start gap-2">
               <div className="bg-surface-inset max-w-[85%] rounded-bubble px-4 py-2.5 text-message">

@@ -290,6 +290,74 @@
   }
 }
 
+/*
+ * SpaceMark：空间原色的圆角方块，里面一个 on-mark 的像素图标，没图标时写名字的第一个字。
+ * 两种主题一样；往里收一圈 0.5pt 的边，放在同色窗框上也分得清。像素图标只按整数倍放大：20 里画 16，40 里画 32。
+ */
+@utility space-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--spacing-mark);
+  height: var(--spacing-mark);
+  border-radius: var(--radius-mark);
+  color: var(--color-on-mark);
+  box-shadow: inset 0 0 0 0.5px #0000001f;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  & svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    shape-rendering: crispEdges;
+  }
+}
+@utility space-mark-lg {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--spacing-mark-lg);
+  height: var(--spacing-mark-lg);
+  border-radius: var(--radius-mark-lg);
+  color: var(--color-on-mark);
+  box-shadow: inset 0 0 0 0.5px #0000001f;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 600;
+  & svg {
+    display: block;
+    width: 32px;
+    height: 32px;
+    shape-rendering: crispEdges;
+  }
+}
+
+/* 色板（规范 SpaceColor）：没选中是一圈很淡的内描；选中的外面隔 2 的 sheet 底色，再描 2 的墨色。 */
+@utility swatch-edge {
+  box-shadow: inset 0 0 0 1px #0000000f;
+}
+@utility swatch-on {
+  box-shadow:
+    0 0 0 2px var(--color-surface-sheet),
+    0 0 0 4px var(--color-ink);
+}
+
+/* 空间设置里横着滑的一行图标，右边淡出。末尾留出淡出的那一段，滑到头最后一个也看得清。 */
+@utility icon-strip {
+  scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 80%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 80%, transparent);
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  &::after {
+    content: "";
+    flex: none;
+    width: 20%;
+  }
+}
+
 html,
 body,
 #root {
@@ -333,7 +401,7 @@ body {
 
 /*
  * 电脑 App 的窗口没有系统标题栏：红绿灯浮在页面左上角，顶上一条用来拖窗口。
- * `--titlebar` 是侧栏给红绿灯让的高度，`--traffic-lights` 是窄窗口（没有侧栏）顶栏让的宽度。
+ * `--titlebar` 是侧栏给红绿灯那一行让的高度（行高 28 加 8 的间隔），`--traffic-lights` 是窄窗口（没有侧栏）顶栏让的宽度。
  * 浏览器和老版本的 App 里 data-titlebar 不存在，这些都不生效。
  */
 :root {
@@ -341,7 +409,7 @@ body {
   --traffic-lights: 0px;
 }
 :root[data-titlebar="inset"] {
-  --titlebar: 28px;
+  --titlebar: 36px;
   --traffic-lights: 88px;
 }
 .window-drag {
@@ -363,23 +431,13 @@ body {
   }
 }
 .sidebar {
-  padding-top: calc(var(--spacing) * 2 + var(--titlebar));
+  padding-top: calc(var(--spacing) * 3 + var(--titlebar));
 }
 
-/* 对话在卡片里滚，上沿淡出：内容滚到卡片顶上时渐隐，不模糊。 */
-:root {
-  --chat-top: calc(var(--spacing) * 2);
-}
-.scroll-body {
-  padding-top: var(--chat-top);
-}
-/* 项目页顶上浮着项目名小胶囊，第一条消息要从它下面开始。 */
-.scroll-body[data-capped] {
-  padding-top: calc(var(--spacing) * 10);
-}
+/* 对话在卡片里滚，上沿淡出：内容滚到卡片上沿时渐隐，不模糊。挂在滚动的那一层上。 */
 .scroll-fade {
-  mask-image: linear-gradient(to bottom, transparent, #000 var(--chat-top));
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--chat-top));
+  mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--spacing) * 3));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--spacing) * 3));
 }
 
 /*
@@ -412,6 +470,22 @@ body {
 }
 .fade-in {
   animation: fade-in 0.2s;
+}
+
+/* 电脑上打开子会话：子会话卡从右边滑进来（规范 interaction.md：弹簧 0.35 秒）。减弱动态效果时只淡入。 */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+.slide-in {
+  animation: slide-in 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .slide-in {
+    animation: fade-in 0.2s;
+  }
 }
 
 /* 能点的东西：鼠标放上去略微变深，按下缩一点，键盘走到时有焦点环。 */

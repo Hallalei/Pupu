@@ -1,22 +1,23 @@
 # 空间
 
-协作版：侧栏（窄屏 ≡）是「我的 Pupu」加空间列表。成员建私有空间（L3），主人能邀请、移出、改「谁看得到」。协调模式的空间里，主会话派出去的事是任务卡，点进子会话。
+协作版：宽屏左侧栏（窄屏切换 sheet）是「我的 Pupu」「资料」加空间列表。每个空间有颜色和像素图标，进了空间窗框染成它的颜色。成员建私有空间（L3），主人能邀请、移出、改「谁看得到」。协调模式的空间里，主会话派出去的事是任务卡，点进子会话。
 
 ## Sub-features
 
 - `space.create`：「新空间」填名字，建出来 level 是 L3，成员只有自己。没登录时退回老的全组织项目。
-- `space.invite`：空间胶囊上的「邀请」（只有主人有）打开邀请框：搜索「组织里的人」，邀请、移出；「谁看得到」三选一（只有成员 L3、全组织 L2、机密 L4）。
-- `space.member-view`：不是主人的成员点胶囊上的头像，只看到成员名单。
+- `space.invite`：空间设置（窄屏点顶栏右边的成员胶囊，宽屏点卡片头的「邀请」或成员头像）：标题行是大号标记加空间名；主人往下有颜色、图标、搜索「组织里的人」、成员（邀请、移出）、「谁看得到」三选一（只有成员 L3、全组织 L2、机密 L4）和「只派活」。
+- `space.look`：主人在空间设置里点颜色或图标，马上换上：`html[data-frame]`、body 底色和 `meta[name=theme-color]` 换成新的窗框色，侧栏、顶栏、sheet 里的标记方块跟着换；`/api/state` 里这个空间的 `color`、`icon` 跟着变。
+- `space.member-view`：不是主人的成员点成员胶囊，只看到成员名单，没有颜色、图标和范围。
 - `space.pupu`：「我的 Pupu」打开自己的私聊。
-- `space.everyone`：空间列表第一个是「全员」（楼图标，`#/projects/everyone`），就是原来的根会话 "1"，历史都在。输入栏「发给组织里所有人和 Pupu」。创建者点胶囊上的楼打开设置，只有「只派活」一个开关；`/api/state` 的 `everyone.mode` 跟着在 direct 和 coordinator 之间变，别人改返回 forbidden。
+- `space.everyone`：空间列表第一个是「全员」（楼图标，`#/projects/everyone`），就是原来的根会话 "1"，历史都在。输入栏「发给组织里所有人和 Pupu」。创建者点顶栏（宽屏卡片头）的楼打开设置：颜色、图标和「只派活」；别人那里楼只是标识，点不开；`/api/state` 的 `everyone.mode` 跟着在 direct 和 coordinator 之间变，别人改返回 forbidden。
 - `space.mode`：主人在邀请框里也有「只派活」开关（项目空间默认开）。
 - `space.task-card`：协调模式主会话里 delegate 显示成任务卡，状态点和「正在做 / 等你批准 / 做完了 · 结果」。
-- `space.child`：宽屏在右侧 420 宽面板打开子会话，窄屏整页，左上返回；第一条显示「从「空间名」派来」，输入框「接着说这件事」。
+- `space.child`：宽屏在主卡片右边开一张 400 宽的子会话卡（从右边滑进来，头一行名字和状态，右边关闭），窄屏整页，顶栏左边返回、中间名字和状态；第一条显示「从「空间名」派来」，输入框「接着说这件事」。
 - `space.access`：被移出或空间收窄，开着的会话连接被 4004 断开，列表里不再有它。
 
 ## 要几个成员
 
-本机要假 Google（见 chat.md 的 `chat.sender`）。`/api/members` 不带凭据能邀请（本机开发）。登录用 `/api/auth/google/start?client=browser`，假 Google 的选账号页 `/auth` 带 `email=` 参数可以登任意邮箱。
+本机要假 Google（见 chat.md 的 `chat.sender`）。创建者登录以后邀请要亲手确认：用 private-chat.md 里的手机凭据，或者在无头 Chrome 里挂虚拟认证器（CDP `WebAuthn.addVirtualAuthenticator`，`transport: internal`、resident key、`automaticPresenceSimulation`），页面里 `(await import('/src/client/passkey.ts')).confirm({ kind: 'invite', email }, state.passkeys)` 拿到 proof 再 `POST /api/members`。第二个成员用另一个浏览器配置目录登录。登录用 `/api/auth/google/start?client=browser`，假 Google 的选账号页 `/auth` 带 `email=` 参数可以登任意邮箱。
 
 ## 协调模式
 

@@ -8,11 +8,11 @@
 - `chat.reply`：Pupu 回复。需要 `DEEPSEEK_API_KEY`，会扣真实余额。
 - `chat.model-error`：没配模型时显示「模型出错了，这条没回上：Provider is not configured: deepseek」。
 - `chat.sender`：多个成员时，别人的消息靠左、带头像和名字，自己的靠右；只有一个成员时不显示名字；Pupu 答得出是谁说的。
-- `chat.doing`：有电脑在干活、等批准或屏幕控制没收回时，聊天顶部显示一条，把对话往下挤；屏幕控制开着时带「收回」；没有就不占位。多台电脑只摊开第一行，屏幕控制开着的在最前，+N 展开其余的。要真的工具调用：配好电脑，让 Pupu 跑一条长命令。
+- `chat.doing`：有电脑在干活、等批准或屏幕控制没收回时，会话卡最上面一行（状态条）出现「正在做 N」胶囊，把对话往下挤；屏幕控制开着时旁边多一个「收回」；都没有时整行收起，不占位。点「正在做」往下摊开每台电脑一行（屏幕控制开着的在最前，那一行带「收回」），再点收起。只在「我的 Pupu」和全员的主会话里有。要真的工具调用：配好电脑，让 Pupu 跑一条长命令。
 
 ## How to get to it (user POV)
 
-- 网页和手机：「聊天」页的「发给大家和 Pupu」。私聊是「只发给 Pupu」，见 [private-chat.md](./private-chat.md)。
+- 网页：「我的 Pupu」是自己的私聊，输入栏「只发给 Pupu」，见 [private-chat.md](./private-chat.md)；没登录（本机不带凭据）时退回全员那条。全员是空间列表第一个，输入栏「发给组织里所有人和 Pupu」。
 - 项目页：「在「项目名」里说」。
 
 ## Driving it with ego-browser
@@ -21,7 +21,7 @@ Preconditions: 网页路径已打开。`chat.reply` 还要 `doctor.mjs` 里 DEEP
 
 - `chat.send`：
   ```js
-  await page.fill('loc=css:textarea[placeholder="发给大家和 Pupu"]', "你好");
+  await page.fill('loc=css:textarea[placeholder="发给组织里所有人和 Pupu"]', "你好");
   await page.click('loc=css:button[aria-label="发送"]');
   ```
   结果：快照里出现这条消息，随后出现回复或 `chat.model-error` 的文字。

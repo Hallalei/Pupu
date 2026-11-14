@@ -1,6 +1,6 @@
 # 资料
 
-共享上下文第一版：组织层和空间里的文字资料、skill。侧栏「我的 Pupu」下面是「资料」（`#/docs`），按地方分组，点开读正文；「上传」贴正文或选 .md / .txt，选放在哪（组织或看得到的空间），可以标成 skill。Pupu 有 doc_list / doc_search / doc_read / doc_write / doc_promote 工具，skill 的名字和一句说明列在每个会话的提示词里。
+共享上下文第一版：组织层和空间里的文字资料、skill。侧栏「我的 Pupu」下面是「资料」（`#/docs`，窄屏在切换 sheet 里），按地方分组，点开读正文；「上传」贴正文或选 .md / .txt，选放在哪（组织或看得到的空间），可以标成 skill。Pupu 有 doc_list / doc_search / doc_read / doc_write / doc_promote 工具，skill 的名字和一句说明列在每个会话的提示词里。
 
 ## Sub-features
 

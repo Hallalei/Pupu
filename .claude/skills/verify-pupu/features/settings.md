@@ -10,14 +10,15 @@
 
 ## How to get to it (user POV)
 
-- 网页宽屏：侧栏底部「我 设置」。
-- 网页窄屏和手机：右上角「我」。
+- 网页宽屏：侧栏最下面自己的头像和名字。
+- 网页窄屏：左上角切换按钮，sheet 最下面自己那一行。
+- 手机 App：右上角「我」（iOS 还没换新导航）。
 
 ## Driving it with ego-browser
 
 Preconditions: 网页路径已打开。
 
-- `settings.open`：`await page.click('text="设置"');` 结果：快照出现「电脑」「手机、浏览器和电脑 App」「连接新设备」。
+- `settings.open`：宽屏 `await page.click('loc=css:nav button[aria-label="设置"]');`，窄屏先点 `button[aria-label^="切换"]` 再点 sheet 里的 `button[aria-label="设置"]`。 结果：快照出现「电脑」「手机、浏览器和电脑 App」「连接新设备」。
 - `settings.pairing-code`：点 `text="生成配对码"`。结果：面板显示 `XXXX-XXXX` 格式的码。
 
 ## Gotchas

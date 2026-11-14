@@ -41,7 +41,7 @@ export function Docs({ version, open, onOpen }: { version: unknown; open: string
     .filter((group) => group.docs.length > 0);
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-2xl flex-col gap-5 px-4 pb-10">
+      <div className="mx-auto flex max-w-column flex-col gap-5 px-4 pb-10">
         <div className="flex justify-end">
           <Button
             variant="ghost"
@@ -120,7 +120,7 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
 
   return (
     <div className="h-full overflow-y-auto">
-      <article className="mx-auto flex max-w-2xl flex-col gap-3 px-4 pb-10">
+      <article className="mx-auto flex max-w-column flex-col gap-3 px-4 pb-10">
         <div className="flex items-center justify-between">
           <button
             type="button"

@@ -1,26 +1,41 @@
-import { Button, Spinner, Tabs } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { busyComputers, waitingProjects } from "../bridge/activity";
+import { Button, Spinner } from "@heroui/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { busyComputers, type ComputerActivity } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
-import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
 import { EVERYONE_ID } from "../projects";
+import type { ChildView, ProjectView } from "../server";
 import { api, usePupuState } from "./api";
-import { Approvals, WaitingChip } from "./Approvals";
+import { Approvals } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, type ChatContext } from "./Chat";
 import { EVERYONE_HINT, PRIVATE_HINT, useChatLines } from "./chat-lines";
 import { Docs } from "./Docs";
-import { Doing } from "./Doing";
-import { ChevronLeftIcon, CloseIcon, MenuIcon, PlusIcon } from "./icons";
-import { ChildDot, childLabel, EveryoneHeader, EveryoneSheet, InviteSheet, ownsSpace, SpaceHeader, SpaceList } from "./Spaces";
-import type { ChildView, ProjectView } from "../server";
+import { StatusStrip } from "./Doing";
+import { CloseIcon, PlusIcon } from "./icons";
+import { useWide } from "./layout";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { confirmWhere, type ConfirmWhere } from "./passkey";
-import { Settings, type SettingsPage } from "./Settings";
 import { RemoteDesktopLayer } from "./RemoteDesktop";
-import { setNight } from "./theme";
+import { Settings, type SettingsPage } from "./Settings";
+import {
+  BackButton,
+  CardHead,
+  CardMembers,
+  ChildTitle,
+  colorOf,
+  MembersCapsule,
+  ownsSpace,
+  PlaceTitle,
+  SpaceHeader,
+  SpaceSettings,
+  SpaceSidebar,
+  SpaceSwitcher,
+  SwitchButton,
+  type Place
+} from "./Spaces";
+import { setFrame, setNight } from "./theme";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
 type Route =
@@ -28,8 +43,6 @@ type Route =
   | { readonly kind: "projects" }
   | { readonly kind: "docs"; readonly id?: string }
   | { readonly kind: "project"; readonly id: string; readonly child?: string };
-
-type Section = "chat" | "projects";
 
 function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, "");
@@ -58,10 +71,6 @@ function hashOf(route: Route): string {
   }
 }
 
-function sectionOf(route: Route): Section {
-  return route.kind === "project" || route.kind === "docs" ? "projects" : route.kind;
-}
-
 function useRoute() {
   const [route, setRoute] = useState<Route>(() => parseHash(location.hash));
   useEffect(() => {
@@ -75,19 +84,7 @@ function useRoute() {
   return [route, go] as const;
 }
 
-/** 宽屏（侧栏常驻，子会话开在右边）。和 Tailwind 的 lg 一样是 1024。 */
-function useWide(): boolean {
-  const [wide, setWide] = useState(() => matchMedia("(min-width: 1024px)").matches);
-  useEffect(() => {
-    const query = matchMedia("(min-width: 1024px)");
-    const onChange = () => setWide(query.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-  return wide;
-}
-
-/** 记住上次打开的项目，点「项目」时直接回到它。浏览器存储可能不可用，失败就算了。 */
+/** 记住上次打开的空间，老地址 `#/projects` 直接回到它。浏览器存储可能不可用，失败就算了。 */
 const LAST_PROJECT = "pupu:last-project";
 
 function lastProject(): string | null {
@@ -107,9 +104,10 @@ function rememberProject(id: string) {
 }
 
 /**
- * 和 iOS 同一个结构：顶栏中间切换聊天和项目，聊天那段是「我的 Pupu」，自己的私聊；全员在空间列表第一个。
- * 右边「我」打开设置。项目页顶上的小胶囊写项目名。
- * 窄于 1024：项目页左上角 ≡ 打开整页项目列表。宽屏（电脑 App 的窗口、电脑浏览器）：这页列表常驻在左边。
+ * 照设计规范的三层：窗框（`canvas`，进了空间染空间色）、浮在上面的白卡片、卡片上面的 sheet。
+ * 窄于 1024（手机和窄窗口）：窗框上是 SpaceHeader，下面一张卡；左上角切换按钮打开 SpaceSwitcher，
+ * 设置从它最底下进。宽屏：窗框左边是 SpaceSidebar，右边主卡片；打开子会话时子会话卡并排开在右边。
+ * 「我的 Pupu」是自己的私聊，全员是空间列表的第一个。
  */
 export function App() {
   const [route, go] = useRoute();
@@ -133,13 +131,12 @@ export function App() {
     unauthorized,
     refresh
   } = usePupuState();
-  const [listOpen, setListOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [inviting, setInviting] = useState<string | null>(null);
-  const [everyoneSettings, setEveryoneSettings] = useState(false);
+  /** 开着设置的空间。只在人还在这个空间里时开着。 */
+  const [spaceSettings, setSpaceSettings] = useState<string | null>(null);
   const wide = useWide();
   const [settings, setSettings] = useState<SettingsPage | null>(null);
-  const section = sectionOf(route);
   // 全员空间就是原来的主会话（root）。路由里是 `#/projects/everyone`。
   const project =
     route.kind === "project"
@@ -196,14 +193,22 @@ export function App() {
     setNight(unauthorized);
   }, [unauthorized]);
 
+  // 窗框跟着空间换色（0.3 秒渐变在样式表里）；「我的 Pupu」、资料不是空间，用 canvas。
+  const frame = !unauthorized && project ? colorOf(project) : null;
   useEffect(() => {
-    if (section !== "projects") setListOpen(false);
-  }, [section]);
-  useEffect(() => {
-    if (!inEveryone) setEveryoneSettings(false);
-  }, [inEveryone]);
+    setFrame(frame);
+  }, [frame]);
 
-  // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
+  useEffect(() => {
+    if (wide) setSwitching(false);
+  }, [wide]);
+  // 离开空间就收起它的设置，回来时不自己弹出来。
+  const here = route.kind === "project" ? route.id : null;
+  useEffect(() => {
+    setSpaceSettings(null);
+  }, [here]);
+
+  // 老地址「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
   useEffect(() => {
     if (route.kind !== "projects" || !loaded) return;
     const last = lastProject();
@@ -213,7 +218,6 @@ export function App() {
 
   const child = route.kind === "project" && route.child ? project?.children.find((item) => item.session === route.child) : undefined;
   const me = members.find((member) => member.current);
-  const inviteSpace = projects.find((item) => item.id === inviting && item.id === project?.id);
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
@@ -228,57 +232,63 @@ export function App() {
 
   if (unauthorized) return <Login />;
 
-  /** 「我的 Pupu」是自己的私聊；没有成员身份（本机开发没登录）时是全员那条。 */
-  const openPupu = () => {
-    setListOpen(false);
-    go({ kind: "chat" });
+  /** 这个人在这个空间能改什么：主人（全员是组织创建者）拉人、移人、改范围和模式，也换颜色和图标。 */
+  const rights = (space: ProjectView) => {
+    const mine = space.id === EVERYONE_ID ? (everyone?.mayManage ?? false) : ownsSpace(space, me);
+    // 全员没有成员名单和范围，不是创建者就没什么可看的。
+    return { mine, open: space.id !== EVERYONE_ID || mine };
   };
-  const spaceList = (inWide: boolean) => (
-    <SpaceList
-      spaces={projects}
-      everyone={everyone}
-      everyoneUnread={lines.unread.everyone}
-      members={members}
-      waiting={waiting}
-      current={project?.id}
-      currentChild={child?.session}
-      pupuAvatar={pupuAvatar}
-      onPupu={openPupu}
-      docs={route.kind === "docs"}
-      onDocs={() => {
-        setListOpen(false);
-        go({ kind: "docs" });
-      }}
-      onOpen={(id) => {
-        setListOpen(false);
-        go({ kind: "project", id });
-      }}
-      onOpenChild={(id, session) => {
-        setListOpen(false);
-        go({ kind: "project", id, child: session });
-      }}
-      onCreate={() => {
-        setListOpen(false);
-        setCreating(true);
-      }}
-      wide={inWide}
-    />
-  );
-  const childChat = (space: ProjectView, item: ChildView, top?: ReactNode) => (
+  const settingsTarget = project && spaceSettings === project.id ? project : undefined;
+
+  const place: Place | null = route.kind === "chat" ? "pupu" : route.kind === "docs" ? "docs" : (project?.id ?? null);
+  const nav = {
+    spaces: allSpaces,
+    members,
+    me,
+    pupuAvatar,
+    current: place,
+    unread: { pupu: lines.unread.own, spaces: new Set(lines.unread.everyone ? [EVERYONE_ID] : []) },
+    onPupu: () => {
+      setSwitching(false);
+      go({ kind: "chat" });
+    },
+    onDocs: () => {
+      setSwitching(false);
+      go({ kind: "docs" });
+    },
+    onOpen: (id: string) => {
+      setSwitching(false);
+      go({ kind: "project", id });
+    },
+    onCreate: () => {
+      setSwitching(false);
+      setCreating(true);
+    },
+    onSettings: () => {
+      setSwitching(false);
+      setSettings("root");
+    }
+  };
+
+  const childChat = (space: ProjectView, item: ChildView) => (
     <Chat
       key={item.session}
       session={item.session}
       context={{ ...chat, handoffFrom: `从「${space.name}」派来` }}
       placeholder="接着说这件事"
-      top={top}
       empty={<div className="text-message text-ink">{item.title}</div>}
     />
   );
-  const waiting = waitingProjects(activity);
-  // 停在审批上的电脑，审批卡就在正上方，同一件事不写两遍。屏幕控制开着的留着，「收回」在这一行上。
+  // 停在审批上的电脑，审批卡就在正下方，同一件事不写两遍。屏幕控制开着的留着，「收回」在状态条上。
   const doing = busyComputers(activity).filter(
     (row) => row.screen || row.state !== "waiting" || !approvals.some((item) => item.computerId === row.computerId)
   );
+  // 状态条在「我的 Pupu」和全员的主会话里；宽屏开着子会话时，全员的主会话还在主卡片上。
+  const showStrip = route.kind === "chat" || (inEveryone && (!child || wide));
+  const openActivity = (activity: ComputerActivity) => {
+    if (activity.project) go({ kind: "project", id: activity.project.id });
+    else if (!showComputerCard(activity.computerId)) setSettings({ computer: activity.computerId });
+  };
 
   let body;
   if (route.kind === "chat" && !loaded) {
@@ -307,15 +317,7 @@ export function App() {
   } else if (route.kind === "docs") {
     body = <Docs version={projects} open={route.id} onOpen={(id) => go({ kind: "docs", id })} />;
   } else if (project && child && !wide) {
-    body = childChat(
-      project,
-      child,
-      <span className="bg-surface-inset flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-ink">
-        <span className="truncate font-semibold">{child.title}</span>
-        <ChildDot child={child} />
-        <span className="shrink-0 text-ink-muted">{childLabel(child)}</span>
-      </span>
-    );
+    body = childChat(project, child);
   } else if (project && inEveryone) {
     body = (
       <Chat
@@ -323,7 +325,6 @@ export function App() {
         session={project.session}
         context={chat}
         placeholder={EVERYONE_HINT}
-        top={<EveryoneHeader space={project} mayManage={everyone?.mayManage ?? false} onSettings={() => setEveryoneSettings(true)} />}
         empty={<div className="text-greeting text-ink">{project.name}</div>}
       />
     );
@@ -334,7 +335,6 @@ export function App() {
         session={project.session}
         context={chat}
         placeholder={`在「${project.name}」里说`}
-        top={<SpaceHeader space={project} members={members} mine={ownsSpace(project, me)} onMembers={() => setInviting(project.id)} />}
         empty={
           <div className="flex max-w-md flex-col gap-2 text-center text-ink">
             <div className="text-greeting">{project.name}</div>
@@ -350,7 +350,7 @@ export function App() {
           <Spinner size="sm" aria-label="正在打开" />
         ) : (
           <>
-            {route.kind === "project" && <div className="text-message text-ink">找不到这个项目</div>}
+            {route.kind === "project" && <div className="text-message text-ink">找不到这个空间</div>}
             <Button
               variant="ghost"
               onPress={() => setCreating(true)}
@@ -365,122 +365,86 @@ export function App() {
     );
   }
 
+  // 窗框上的顶栏（窄屏）和主卡片的头一行（宽屏）写的是同一个地方。
+  const spaceRights = project ? rights(project) : null;
+  const openSettings = project && spaceRights?.open ? () => setSpaceSettings(project.id) : undefined;
+  const title =
+    route.kind === "chat" ? (
+      <PlaceTitle pupuAvatar={pupuAvatar} />
+    ) : route.kind === "docs" ? (
+      <PlaceTitle docs />
+    ) : project ? (
+      <PlaceTitle space={project} />
+    ) : null;
+
   return (
     <div className="flex h-dvh">
       <div className="window-drag" />
       <BrowserTakeover />
       <RemoteDesktopLayer computers={computers} memberId={current?.memberId} confirmBy={confirmBy} passkeys={passkeys} />
-      <aside className="sidebar bg-surface-inset relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-row lg:flex">
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">{spaceList(true)}</div>
-      </aside>
-      <div className="relative flex min-w-0 flex-1 flex-col">
-        <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)]">
-          <div className="titlebar-lead flex h-control items-center justify-between px-4">
-            {/* 宽屏的项目列表在左侧栏，≡ 不要了，位置留着让切换居中。 */}
-            {project && child && !wide ? (
-              <button
-                type="button"
-                aria-label={`回到「${project.name}」`}
-                onClick={() => go({ kind: "project", id: project.id })}
-                className="bg-surface-inset tap grid size-control place-items-center rounded-full text-[20px]"
-              >
-                <ChevronLeftIcon />
-              </button>
-            ) : section === "projects" ? (
-              <button
-                type="button"
-                aria-label="全部空间"
-                aria-expanded={listOpen}
-                onClick={() => setListOpen((open) => !open)}
-                className="bg-surface-inset tap relative grid size-control place-items-center rounded-full text-[20px] lg:invisible"
-              >
-                <MenuIcon />
-                {lines.unread.everyone && !inEveryone && (
-                  <span className="absolute top-1.5 right-1.5 size-2.5 rounded-full bg-danger outline-2 outline-surface" />
-                )}
-              </button>
-            ) : (
-              <div className="size-control" />
-            )}
-            <SectionSwitch
-              section={section}
-              onSection={(kind) => go({ kind })}
-              unread={lines.unread.own}
-              everyoneUnread={lines.unread.everyone && section === "chat"}
-              avatar={pupuAvatar}
-            />
-            <button
-              type="button"
-              aria-label="设置"
-              onClick={() => setSettings("root")}
-              className="bg-surface-inset tap grid size-control place-items-center rounded-full text-subheadline font-semibold"
-            >
-              <MemberAvatar
-                name="我"
-                src={members.find((member) => member.current)?.avatar ?? null}
-                className="size-[calc(100%-4px)]"
-              />
-            </button>
-          </div>
-          <div className="h-2" />
-        </header>
-        {error && (
-          <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
-            <div className="bg-surface-sheet shadow-card rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
-          </div>
+      <SpaceSidebar {...nav} />
+      <div className="flex min-w-0 flex-1 flex-col lg:py-frame-gap lg:pr-frame-gap">
+        {project && child ? (
+          <SpaceHeader child leading={<BackButton label={`回到「${project.name}」`} onPress={() => go({ kind: "project", id: project.id })} />}>
+            <ChildTitle child={child} />
+          </SpaceHeader>
+        ) : (
+          <SpaceHeader
+            leading={<SwitchButton onPress={() => setSwitching(true)} unread={lines.unread.own || lines.unread.everyone} expanded={switching} />}
+            trailing={project && <MembersCapsule space={project} members={members} onPress={openSettings} />}
+          >
+            {title}
+          </SpaceHeader>
         )}
-        <div className="status relative z-10 flex shrink-0 flex-col">
-          <Approvals
-            approvals={approvals}
-            where={approvalWhere}
-            passkeys={passkeys}
-            phonePaired={devices.some((device) => device.kind === "phone")}
-            onDecide={async (id, decision, proof) => {
-              await api.decideApproval(id, decision, proof);
-              await refresh();
-            }}
-          />
-          {(route.kind === "chat" || (inEveryone && !child)) && (
-            <Doing
-              rows={doing}
-              onOpen={(activity) => {
-                if (activity.project) go({ kind: "project", id: activity.project.id });
-                else if (!showComputerCard(activity.computerId)) setSettings({ computer: activity.computerId });
-              }}
-              onTakeback={async (id) => {
-                await api.takeback(id);
+        <div className="layer-card relative mx-frame-gap mb-frame-gap flex min-h-0 flex-1 flex-col overflow-hidden lg:m-0">
+          {title && (
+            <CardHead
+              trailing={project && <CardMembers space={project} members={members} mine={spaceRights?.mine ?? false} onPress={openSettings} />}
+            >
+              {title}
+            </CardHead>
+          )}
+          {error && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
+              <div className="bg-surface-sheet shadow-card rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
+            </div>
+          )}
+          <div className="relative z-10 flex shrink-0 flex-col">
+            {showStrip && (
+              <StatusStrip
+                rows={doing}
+                onOpen={openActivity}
+                onTakeback={async (id) => {
+                  await api.takeback(id);
+                  await refresh();
+                }}
+              />
+            )}
+            <Approvals
+              approvals={approvals}
+              where={approvalWhere}
+              passkeys={passkeys}
+              phonePaired={devices.some((device) => device.kind === "phone")}
+              onDecide={async (id, decision, proof) => {
+                await api.decideApproval(id, decision, proof);
                 await refresh();
               }}
             />
-          )}
+          </div>
+          <main className="relative min-h-0 flex-1">
+            {body}
+          </main>
         </div>
-        <main className="relative min-h-0 flex-1">
-          {body}
-          {listOpen && (
-            <div className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface py-2 lg:hidden">
-              {spaceList(false)}
-            </div>
-          )}
-        </main>
       </div>
       {project && child && wide && (
-        <aside
-          aria-label="子会话"
-          className="bg-surface-inset relative z-10 m-3 ml-0 flex w-105 shrink-0 flex-col overflow-hidden rounded-row"
-        >
-          <header className="flex shrink-0 items-center gap-2 py-3 pr-3 pl-5">
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="truncate text-body font-semibold">{child.title}</span>
-              <span className="flex items-center gap-1.5 text-caption text-ink-muted">
-                <ChildDot child={child} />
-                {childLabel(child)}
-              </span>
-            </span>
+        <aside aria-label="子会话" className="layer-card slide-in my-frame-gap mr-frame-gap flex w-panel-sub shrink-0 flex-col overflow-hidden">
+          <header className="flex shrink-0 items-center gap-2 py-2.5 pr-3 pl-4">
+            <ChildTitle child={child} />
             <button
               type="button"
               aria-label="关闭"
               onClick={() => go({ kind: "project", id: project.id })}
-              className="tap grid size-8 place-items-center rounded-full hover:bg-ink/6"
+              className="tap grid size-control-sm shrink-0 place-items-center rounded-full bg-surface-inset text-[14px]"
             >
               <CloseIcon />
             </button>
@@ -488,22 +452,25 @@ export function App() {
           <div className="relative min-h-0 flex-1">{childChat(project, child)}</div>
         </aside>
       )}
-      <EveryoneSheet
-        space={everyoneSettings && inEveryone && everyone?.mayManage ? project : undefined}
-        onClose={() => setEveryoneSettings(false)}
-        onChange={async (mode) => {
-          await api.changeSpace(EVERYONE_ID, { kind: "mode", mode });
-          await refresh();
+      <SpaceSwitcher
+        {...nav}
+        isOpen={switching && !wide}
+        onClose={() => setSwitching(false)}
+        onOpenChild={(id, session) => {
+          setSwitching(false);
+          go({ kind: "project", id, child: session });
         }}
       />
-      <InviteSheet
-        space={inviteSpace}
+      <SpaceSettings
+        space={settingsTarget}
         members={members}
-        mine={inviteSpace ? ownsSpace(inviteSpace, me) : false}
-        onClose={() => setInviting(null)}
+        mine={settingsTarget ? rights(settingsTarget).mine : false}
+        mayLook={settingsTarget ? rights(settingsTarget).mine : false}
+        everyone={settingsTarget?.id === EVERYONE_ID}
+        onClose={() => setSpaceSettings(null)}
         onChange={async (change) => {
-          if (!inviteSpace) return;
-          await api.changeSpace(inviteSpace.id, change);
+          if (!settingsTarget) return;
+          await api.changeSpace(settingsTarget.id, change);
           await refresh();
         }}
       />
@@ -572,53 +539,6 @@ function showComputerCard(computerId: string): boolean {
   const card = cards[cards.length - 1];
   if (!card) return false;
   card.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  card.animate([{ outline: "2px solid var(--color-foreground)" }, { outline: "2px solid transparent" }], { duration: 1200 });
+  card.animate([{ outline: "2px solid var(--color-ink)" }, { outline: "2px solid transparent" }], { duration: 1200 });
   return true;
-}
-
-/** 顶部切换。聊天那段是「我的 Pupu」：自己的私聊。 */
-function SectionSwitch({
-  section,
-  onSection,
-  unread,
-  everyoneUnread,
-  avatar
-}: {
-  section: Section;
-  onSection: (section: Section) => void;
-  unread: boolean;
-  /** 全员有新消息、人在聊天段：窄屏没有侧栏，红点挂在「项目」上。到了项目段改挂在 ≡ 上。 */
-  everyoneUnread: boolean;
-  /** Pupu 换过的头像，没换过是 null。 */
-  avatar: string | null;
-}) {
-  const segment =
-    "h-control-sm rounded-full px-0 text-subheadline text-ink data-[selected=true]:text-on-action";
-  const indicator = <Tabs.Indicator className="rounded-full bg-action" />;
-
-  return (
-    <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
-      <Tabs.ListContainer>
-        <Tabs.List aria-label="Pupu" className="bg-surface-inset h-control rounded-full p-1">
-          <Tabs.Tab id="chat" aria-label={unread ? "我的 Pupu，有新消息" : "我的 Pupu"} className={`${segment} font-semibold`}>
-            <span className="relative flex h-control-sm items-center gap-1.5 pr-3 pl-1">
-              <MemberAvatar name="Pupu" src={avatar ?? PUPU_AVATAR} className="size-6.5 pointer-fine:size-6" />
-              Pupu
-              {unread && <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-surface" />}
-            </span>
-            {indicator}
-          </Tabs.Tab>
-          <Tabs.Tab
-            id="projects"
-            aria-label={everyoneUnread ? "项目，全员有新消息" : "项目"}
-            className={`${segment} relative w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}
-          >
-            项目
-            {everyoneUnread && <span className="absolute top-0.5 right-0.5 size-2.5 rounded-full bg-danger outline-2 outline-surface lg:hidden" />}
-            {indicator}
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs.ListContainer>
-    </Tabs>
-  );
 }

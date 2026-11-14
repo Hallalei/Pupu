@@ -91,7 +91,7 @@ export function Approvals({
   }
 
   return (
-    <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
+    <div className="relative z-10 mx-auto flex w-full max-w-column flex-col gap-2 px-4 pt-3">
       <section
         aria-label={`等你批准，${approval.title}`}
         className="bg-surface-inset flex flex-col gap-3 rounded-row p-4"
