@@ -86,7 +86,7 @@ function deps(choice: ModelChoice, overrides: Partial<RouterDeps> = {}): RouterD
   return {
     choice: () => choice,
     pupu: { provider: faux.provider, model: faux.getModel(), apiKey: () => "pupu-key" },
-    openai: openAICompletionsApi(),
+    apis: { "openai-completions": openAICompletionsApi() },
     computerModel: () => ({ name: LOCAL.model, vision: LOCAL.vision, contextWindow: LOCAL.contextWindow }),
     computerName: () => "办公室的 Mac",
     relayFetch: () => {
@@ -346,28 +346,41 @@ describe("中途换模型：历史里混着两种模型的消息", () => {
   });
 });
 
+const noKey = () => "";
+
 describe("模型设置", () => {
   test("自带 key：要 https，不能太小的上下文；成员看到的没有 key，只有主机名", () => {
-    assert.equal(parseChoice({ source: "key", baseUrl: "http://api.example.com/v1", model: "m", apiKey: "k" }, PUPU_CHOICE).ok, false);
+    assert.equal(parseChoice({ source: "key", baseUrl: "http://api.example.com/v1", model: "m", apiKey: "k" }, noKey).ok, false);
     assert.equal(
-      parseChoice({ source: "key", baseUrl: "https://api.example.com/v1", model: "m", apiKey: "k", contextWindow: 8000 }, PUPU_CHOICE).ok,
+      parseChoice({ source: "key", baseUrl: "https://api.example.com/v1", model: "m", apiKey: "k", contextWindow: 8000 }, noKey).ok,
       false
     );
     const parsed = parseChoice(
       { source: "key", baseUrl: "https://api.example.com/v1/chat/completions", model: "m", apiKey: "secret-key" },
-      PUPU_CHOICE
+      noKey
     );
     assert.ok(parsed.ok);
     const view = modelView(parsed.choice);
-    assert.deepEqual(view, { source: "key", host: "api.example.com", model: "m", vision: false, contextWindow: 32_000 });
+    assert.deepEqual(view, {
+      source: "key",
+      provider: "custom-openai",
+      providerName: "OpenAI 兼容地址",
+      host: "api.example.com",
+      model: "m",
+      vision: false,
+      contextWindow: 32_000,
+      reasoning: false
+    });
     assert.doesNotMatch(JSON.stringify(view), /secret-key/);
   });
 
   test("key 留空是沿用旧的；换了地址就要重填", () => {
-    const current: ModelChoice = { source: "key", baseUrl: "https://a.example/v1", model: "m", apiKey: "old", vision: false, contextWindow: 32_000 };
-    const same = parseChoice({ source: "key", baseUrl: "https://a.example/v1", model: "m2" }, current);
+    const store = new ModelStore(sqlStorage());
+    store.set({ source: "key", baseUrl: "https://a.example/v1", model: "m", apiKey: "old", vision: false, contextWindow: 32_000 });
+    const saved = (provider: string, baseUrl: string) => store.savedKey(provider, baseUrl);
+    const same = parseChoice({ source: "key", baseUrl: "https://a.example/v1", model: "m2" }, saved);
     assert.ok(same.ok && same.choice.source === "key" && same.choice.apiKey === "old");
-    assert.equal(parseChoice({ source: "key", baseUrl: "https://b.example/v1", model: "m" }, current).ok, false);
+    assert.equal(parseChoice({ source: "key", baseUrl: "https://b.example/v1", model: "m" }, saved).ok, false);
   });
 
   test("存一行，读回来一样；没存过是我们的模型", () => {

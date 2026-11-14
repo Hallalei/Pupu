@@ -1,10 +1,12 @@
 import { Button, Label, Switch } from "@heroui/react";
 import { useEffect, useState } from "react";
 import type { ComputerView } from "../bridge/protocol";
-import type { ModelView } from "../model/settings";
+import { recognize, templateOf, TEMPLATES, type Template } from "../model/catalog";
+import type { ModelList, ModelOption } from "../model/list";
+import type { KeyView, ModelView } from "../model/settings";
 import { api } from "./api";
 import { desktop, type LocalModelView } from "./desktop";
-import { CheckIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon } from "./icons";
 
 /** 地址、模型名、key、上下文、能不能看图。云端存 key 和电脑上存模型共用。 */
 type Fields = { baseUrl: string; model: string; apiKey: string; contextWindow: string; vision: boolean };
@@ -91,6 +93,13 @@ function sourceOf(view: ModelView): Source {
   return view.source === "computer" ? `computer:${view.computerId}` : view.source;
 }
 
+type ModelState = {
+  readonly current: ModelView;
+  readonly mayEdit: boolean;
+  readonly own?: KeyView | null;
+  readonly keys?: readonly { readonly provider: string; readonly baseUrl: string }[];
+};
+
 /**
  * 这个 Pupu 用哪个模型。大家都看得到用的是哪种，只有创建者能改。
  * 列出来的电脑是报过本地模型的那几台，加上现在选着的那台（它可能离线了）。
@@ -100,17 +109,12 @@ export function ModelSection({
   computers,
   onSaved
 }: {
-  model: { readonly current: ModelView; readonly mayEdit: boolean };
+  model: ModelState;
   computers: readonly ComputerView[];
   onSaved: () => Promise<void>;
 }) {
   const current = model.current;
   const [picked, setPicked] = useState<Source>(sourceOf(current));
-  const [fields, setFields] = useState<Fields>(
-    current.source === "key"
-      ? { ...EMPTY, baseUrl: "", model: current.model, contextWindow: String(current.contextWindow), vision: current.vision }
-      : EMPTY
-  );
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 每 5 秒拉一次 state，对象会换；按来源比，不然填到一半的表单会被收起来。
@@ -121,14 +125,16 @@ export function ModelSection({
     (computer) => computer.model || (current.source === "computer" && current.computerId === computer.id)
   );
 
-  async function save(choice: unknown) {
+  async function save(choice: unknown): Promise<boolean> {
     setSending(true);
     setError(null);
     try {
       await api.setModel(choice);
       await onSaved();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     } finally {
       setSending(false);
     }
@@ -146,6 +152,7 @@ export function ModelSection({
     }
   }
 
+  const own = current.source === "key" ? current : (model.own ?? null);
   const options: { source: Source; label: string; detail: string | null; disabled: boolean }[] = [
     { source: "pupu", label: "Pupu 自带", detail: null, disabled: false },
     ...relays.map((computer) => ({
@@ -156,8 +163,8 @@ export function ModelSection({
     })),
     {
       source: "key",
-      label: current.source === "key" ? `自己的 key · ${current.model}` : "自己的 key",
-      detail: current.source === "key" ? current.host : null,
+      label: current.source === "key" ? `${current.providerName} · ${current.model}` : "自己的 key",
+      detail: current.source !== "key" && own ? `上次用的 ${own.providerName} · ${own.model}` : null,
       disabled: false
     }
   ];
@@ -202,28 +209,288 @@ export function ModelSection({
           </Switch>
         )}
         {model.mayEdit && picked === "key" && (
-          <form
-            className="flex flex-col gap-2 border-t border-foreground/10 pt-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save({ source: "key", ...payload(fields) });
+          <KeyForm
+            own={own}
+            keys={model.keys ?? []}
+            sending={sending}
+            onSave={save}
+            onForget={async (provider) => {
+              setSending(true);
+              setError(null);
+              try {
+                await api.forgetModelKey(provider);
+                await onSaved();
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : String(cause));
+              } finally {
+                setSending(false);
+              }
             }}
-          >
-            <ModelFields
-              fields={fields}
-              onChange={setFields}
-              keyKept={current.source === "key"}
-              baseUrlHint={current.source === "key" ? `https://${current.host}/…` : "https://api.example.com/v1"}
-            />
-            <Button size="sm" type="submit" className="self-end" isPending={sending}>
-              试一下并保存
-            </Button>
-          </form>
+          />
         )}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </div>
       {!model.mayEdit && <p className="m-0 px-4 text-footnote font-normal text-muted">只有创建者能换。</p>}
     </section>
+  );
+}
+
+const REGIONS: readonly [Template["region"], string][] = [
+  ["cn", "国内"],
+  ["global", "海外"],
+  ["custom", "自定义"]
+];
+
+/** 「高级」里的几项。选了模型就按模型的资料填，用户可以改。 */
+type Extras = { contextWindow: string; vision: boolean; reasoning: boolean };
+
+function extrasOf(option: ModelOption | KeyView | null): Extras {
+  return option
+    ? { contextWindow: String(option.contextWindow), vision: option.vision, reasoning: option.reasoning }
+    : { contextWindow: "32000", vision: false, reasoning: false };
+}
+
+/**
+ * 自己的 key：选一家，贴 key，从拉到的模型里挑一个。地址、协议跟着模板走；自定义的才填地址。
+ * 模型列表拉不到就手填模型名，不卡住保存。
+ */
+function KeyForm({
+  own,
+  keys,
+  sending,
+  onSave,
+  onForget
+}: {
+  own: KeyView | null;
+  keys: readonly { readonly provider: string; readonly baseUrl: string }[];
+  sending: boolean;
+  onSave: (choice: unknown) => Promise<boolean>;
+  onForget: (provider: string) => Promise<void>;
+}) {
+  const [provider, setProvider] = useState(own?.provider ?? "deepseek");
+  const template = templateOf(provider) ?? TEMPLATES[0]!;
+  const editable = template.editableBaseUrl === true;
+  const [customUrl, setCustomUrl] = useState(() => {
+    const saved = keys.find((each) => each.provider === provider);
+    return editable && saved ? saved.baseUrl : "";
+  });
+  const baseUrl = editable ? customUrl.trim() : template.baseUrl;
+  const saved = keys.find((each) => each.provider === provider);
+  const keyKept = Boolean(saved && (!editable || saved.baseUrl === baseUrl.replace(/\/+$/, "")));
+  const [apiKey, setApiKey] = useState("");
+  const [list, setList] = useState<ModelList | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [modelId, setModelId] = useState(own?.provider === provider ? own.model : "");
+  const [typing, setTyping] = useState(false);
+  const [extras, setExtras] = useState<Extras>(extrasOf(own?.provider === provider ? own : null));
+
+  // 换服务商、key 或地址就重拉。key 是一个字一个字粘进来的，等一下再拉。
+  useEffect(() => {
+    // 本机开发时云端能连 localhost 上的服务，和服务端的规则一样。
+    if (editable && !/^(https:\/\/[^/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/)/.test(baseUrl)) {
+      setList(null);
+      return;
+    }
+    let stale = false;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      api
+        .providerModels({ provider, baseUrl, apiKey })
+        .then((next) => {
+          if (!stale) setList(next);
+        })
+        .catch((cause) => {
+          if (!stale) setList({ models: [], error: cause instanceof Error ? cause.message : String(cause) });
+        })
+        .finally(() => {
+          if (!stale) setLoading(false);
+        });
+    }, 400);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [provider, baseUrl, apiKey, editable]);
+
+  const models = list?.models ?? [];
+  const listed = models.find((each) => each.id === modelId);
+  // 列表里没有、或者拉不到：手填。
+  const manual = typing || (list !== null && models.length === 0);
+
+  function chooseProvider(next: string) {
+    setProvider(next);
+    setApiKey("");
+    setList(null);
+    setTyping(false);
+    const keep = own?.provider === next ? own : null;
+    setModelId(keep?.model ?? "");
+    setExtras(extrasOf(keep));
+    const nextTemplate = templateOf(next);
+    const savedNext = keys.find((each) => each.provider === next);
+    setCustomUrl(nextTemplate?.editableBaseUrl && savedNext ? savedNext.baseUrl : "");
+  }
+
+  function chooseModel(id: string) {
+    setModelId(id);
+    const option = models.find((each) => each.id === id);
+    if (option) setExtras(extrasOf(option));
+  }
+
+  // 列表来了，还没选模型：选第一个。
+  useEffect(() => {
+    if (!modelId && models[0]) chooseModel(models[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
+
+  return (
+    <form
+      className="flex flex-col gap-2 border-t border-foreground/10 pt-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSave({
+          source: "key",
+          provider,
+          baseUrl,
+          model: modelId.trim(),
+          apiKey,
+          contextWindow: Number(extras.contextWindow || 0),
+          vision: extras.vision,
+          reasoning: extras.reasoning
+        }).then((saved) => {
+          // 存好了就清掉框里的 key，之后显示「key 已存」。
+          if (saved) setApiKey("");
+        });
+      }}
+    >
+      <span className="relative">
+        <select
+          aria-label="服务商"
+          value={provider}
+          onChange={(event) => chooseProvider(event.target.value)}
+          className={`${INPUT} w-full appearance-none pr-8`}
+        >
+          {REGIONS.map(([region, label]) => (
+            <optgroup key={region} label={label}>
+              {TEMPLATES.filter((each) => each.region === region).map((each) => (
+                <option key={each.id} value={each.id}>
+                  {each.name}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[11px] text-muted" />
+      </span>
+      {editable && (
+        <input
+          aria-label="地址"
+          placeholder={template.api === "anthropic-messages" ? "https://api.example.com/anthropic" : "https://api.example.com/v1"}
+          value={customUrl}
+          onChange={(event) => {
+            const value = event.target.value;
+            const known = recognize(value);
+            // 贴的是认得的那家：直接换成那家的模板。
+            if (known && !known.editableBaseUrl) chooseProvider(known.id);
+            else setCustomUrl(value);
+          }}
+          className={INPUT}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      )}
+      <div className="flex items-center gap-2">
+        <input
+          aria-label="key"
+          type="password"
+          placeholder={keyKept ? "key 已存，留空不改" : "key"}
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+          className={`${INPUT} min-w-0 flex-1`}
+          autoComplete="off"
+        />
+        {template.keyUrl && (
+          <a
+            href={template.keyUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 text-subheadline text-accent"
+          >
+            拿 key
+          </a>
+        )}
+      </div>
+      {manual ? (
+        <input
+          aria-label="模型名"
+          placeholder="模型名"
+          value={modelId}
+          onChange={(event) => setModelId(event.target.value)}
+          className={INPUT}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      ) : (
+        <span className="relative">
+          <select
+            aria-label="模型"
+            value={listed ? modelId : ""}
+            disabled={loading && models.length === 0}
+            onChange={(event) => {
+              if (event.target.value === "\u0000") setTyping(true);
+              else chooseModel(event.target.value);
+            }}
+            className={`${INPUT} w-full appearance-none pr-8`}
+          >
+            {!listed && <option value="">{loading ? "正在拉模型…" : "选一个模型"}</option>}
+            {models.map((each) => (
+              <option key={each.id} value={each.id}>
+                {each.name === each.id ? each.id : `${each.name}（${each.id}）`}
+              </option>
+            ))}
+            <option value={"\u0000"}>填别的模型名…</option>
+          </select>
+          <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[11px] text-muted" />
+        </span>
+      )}
+      {list?.error && <p className="m-0 px-1 text-footnote text-muted">{list.error}</p>}
+      <details className="px-1">
+        <summary className="cursor-pointer text-footnote text-muted">高级</summary>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <label className="flex items-center gap-2 text-subheadline">
+            <span className="shrink-0 text-muted">上下文</span>
+            <input
+              aria-label="上下文长度"
+              inputMode="numeric"
+              value={extras.contextWindow}
+              onChange={(event) => setExtras({ ...extras, contextWindow: event.target.value.replace(/[^\d]/g, "") })}
+              className={`${INPUT} w-28`}
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-subheadline">
+            <input type="checkbox" checked={extras.vision} onChange={(event) => setExtras({ ...extras, vision: event.target.checked })} />
+            能看图
+          </label>
+          <label className="flex items-center gap-1.5 text-subheadline">
+            <input
+              type="checkbox"
+              checked={extras.reasoning}
+              onChange={(event) => setExtras({ ...extras, reasoning: event.target.checked })}
+            />
+            会思考
+          </label>
+        </div>
+      </details>
+      <div className="flex justify-end gap-2">
+        {saved && (
+          <Button size="sm" variant="tertiary" isDisabled={sending} onPress={() => void onForget(provider)}>
+            忘掉 key
+          </Button>
+        )}
+        <Button size="sm" type="submit" isPending={sending} isDisabled={!modelId.trim()}>
+          试一下并保存
+        </Button>
+      </div>
+    </form>
   );
 }
 

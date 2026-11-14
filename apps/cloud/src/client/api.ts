@@ -7,6 +7,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalView } from "../bridge/approvals";
 import type { ComputerPolicy } from "../bridge/policy";
+import type { ModelList } from "../model/list";
 import type { RemoteConfirm } from "../bridge/remote-confirm";
 import type { DeviceView } from "../devices";
 import type { InviteList } from "../directory";
@@ -151,6 +152,12 @@ export const api = {
     request<{ ok: true }>("/api/pupu/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
   /** 换模型。自带 key 会先试一次，不过就报错。 */
   setModel: (choice: unknown) => request<{ ok: true }>("/api/model", { method: "POST", body: JSON.stringify(choice) }),
+  /** 一家服务商能选的模型。key 留空用存过的。 */
+  providerModels: (input: { provider: string; baseUrl: string; apiKey: string }) =>
+    request<ModelList>("/api/model/models", { method: "POST", body: JSON.stringify(input) }),
+  /** 忘掉一家存的 key。正在用它就换回 Pupu 自带的。 */
+  forgetModelKey: (provider: string) =>
+    request<{ ok: true }>("/api/model/forget", { method: "POST", body: JSON.stringify({ provider }) }),
   /** 这个账号在的 Pupu，见 server.ts 的 `orgList`。 */
   orgs: () => request<OrgList>("/api/orgs"),
   /** 切到另一个 Pupu：网页的凭据在 cookie 里，切完重新载入页面。 */

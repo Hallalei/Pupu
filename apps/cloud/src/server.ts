@@ -1,6 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ProviderStreams } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
+import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
@@ -57,9 +61,11 @@ import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
 import { createComputerTools } from "./bridge/tools";
 import { ModelRelay } from "./bridge/model-relay";
-import { probeModel } from "./model/probe";
-import { ROUTER_MODEL, routerProvider } from "./model/router";
-import { modelView, parseChoice, type ModelView } from "./model/settings";
+import { templateOf, type OwnApi } from "./model/catalog";
+import { probeKeyModel } from "./model/key-probe";
+import { listModels, type ModelList } from "./model/list";
+import { keyModel, ROUTER_MODEL, routerProvider } from "./model/router";
+import { keyBaseUrl, keyView, modelView, parseChoice, type KeyView, type ModelView } from "./model/settings";
 import { ModelStore } from "./model/store";
 import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
 import {
@@ -241,7 +247,14 @@ export type PupuState = {
   /** Pupu 自己的头像，相对地址。null 是没换过，用各端自带的。 */
   readonly pupuAvatar: string | null;
   /** 用哪个模型，没有 key。`mayEdit`：这个人能不能改（只有创建者）。 */
-  readonly model: { readonly current: ModelView; readonly mayEdit: boolean };
+  readonly model: {
+    readonly current: ModelView;
+    readonly mayEdit: boolean;
+    /** 最后一次用的自带 key 设置（没有 key），换回来时预先填好。只给能改的人。 */
+    readonly own?: KeyView | null;
+    /** 哪几家存过 key，地址是存的时候的。只给能改的人。 */
+    readonly keys?: readonly { readonly provider: string; readonly baseUrl: string }[];
+  };
   /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
   readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
 };
@@ -316,6 +329,14 @@ export class Pupu extends DurableObject<Env> {
   readonly usage = new UsageStore(this.ctx.storage.sql);
   /** 用哪个模型。 */
   readonly modelChoice = new ModelStore(this.ctx.storage.sql);
+  /** 云端会说的几种协议，自带 key 按模型的 api 挑。 */
+  readonly modelApis: Partial<Record<OwnApi, ProviderStreams>> = {
+    "openai-completions": openAICompletionsApi(),
+    "openai-responses": openAIResponsesApi(),
+    "anthropic-messages": anthropicMessagesApi(),
+    "google-generative-ai": googleGenerativeAIApi(),
+    "mistral-conversations": mistralConversationsApi()
+  };
   /** 连接器工具和审批要用的状态。 */
   readonly #connectorDeps: ConnectorDeps = {
     client: () => this.#connectorClient(),
@@ -507,7 +528,7 @@ export class Pupu extends DurableObject<Env> {
             model: pupuModel,
             apiKey: () => this.env.DEEPSEEK_API_KEY
           },
-          openai: openAICompletionsApi(),
+          apis: this.modelApis,
           computerModel: (computerId) => this.bridge.modelOf(computerId),
           computerName: (computerId) => this.#computerName(computerId),
           relayFetch: (computerId) => this.relay.fetch(computerId)
@@ -1042,7 +1063,7 @@ export class Pupu extends DurableObject<Env> {
       chats: this.threads.chats(own),
       avatarPresets: AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
       pupuAvatar: pupuAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null),
-      model: { current: modelView(this.modelChoice.get()), mayEdit: mayChangeModel(this.#actor(current)) },
+      model: this.#modelState(current),
       passkeys:
         viewer === null
           ? null
@@ -1503,17 +1524,63 @@ export class Pupu extends DurableObject<Env> {
   async setModel(input: unknown, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
     await this.lifecycle.start();
     if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
-    const parsed = parseChoice(input, this.modelChoice.get());
+    const parsed = parseChoice(input, (provider, baseUrl) => this.modelChoice.savedKey(provider, baseUrl));
     if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
     const choice = parsed.choice;
     if (choice.source === "computer" && !this.computers.list().some((row) => row.id === choice.computerId)) {
       return { ok: false, status: 400, error: "没有这台电脑。" };
     }
     if (choice.source === "key") {
-      const probe = await probeModel({ baseUrl: choice.baseUrl, apiKey: choice.apiKey, model: choice.model });
+      const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis: this.modelApis });
       if (!probe.ok) return { ok: false, status: 400, error: probe.error };
     }
     this.modelChoice.set(choice);
+    this.sockets.broadcast({ type: "computers_changed" });
+    return { ok: true };
+  }
+
+  #modelState(device: string | null): PupuState["model"] {
+    const mayEdit = mayChangeModel(this.#actor(device));
+    const current = modelView(this.modelChoice.get());
+    if (!mayEdit) return { current, mayEdit };
+    const own = this.modelChoice.lastOwn();
+    return { current, mayEdit, own: own ? keyView(own) : null, keys: this.modelChoice.keyProviders() };
+  }
+
+  /**
+   * 一家服务商能选的模型。key 留空用存过的（地址一样才算）。只有能换模型的人能拉：要用到存的 key。
+   */
+  async listProviderModels(
+    input: { provider?: unknown; baseUrl?: unknown; apiKey?: unknown },
+    device: string | null = null
+  ): Promise<{ ok: true; list: ModelList } | { ok: false; status: 400 | 403; error: string }> {
+    await this.lifecycle.start();
+    if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
+    const template = templateOf(typeof input.provider === "string" ? input.provider : undefined);
+    if (!template) return { ok: false, status: 400, error: "没有这家服务商。" };
+    const baseUrl = keyBaseUrl(template, template.api, input.baseUrl);
+    if (template.editableBaseUrl) {
+      let url: URL;
+      try {
+        url = new URL(baseUrl);
+      } catch {
+        return { ok: true, list: { models: [], error: null } };
+      }
+      const local = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+      if ((url.protocol !== "https:" && !local) || url.username || url.password) {
+        return { ok: true, list: { models: [], error: "地址要用 https。" } };
+      }
+    }
+    const typed = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
+    const apiKey = typed || this.modelChoice.savedKey(template.id, baseUrl);
+    return { ok: true, list: await listModels(template, baseUrl, apiKey) };
+  }
+
+  /** 忘掉一家的 key。正在用它就换回 Pupu 自带的。 */
+  async forgetModelKey(provider: string, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 403; error: string }> {
+    await this.lifecycle.start();
+    if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
+    this.modelChoice.forget(provider);
     this.sockets.broadcast({ type: "computers_changed" });
     return { ok: true };
   }
@@ -2739,6 +2806,15 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
       return Response.json({ error: "别人的电脑只能往严里改，放宽要电脑主人自己改" }, { status: 403 });
     }
     return Response.json({ ok: true });
+  }
+  if (pathname === "/api/model/models" && method === "POST") {
+    const result = await caller.pupu.listProviderModels(await readJson<Record<string, unknown>>(request), caller.device);
+    return result.ok ? Response.json(result.list) : Response.json({ error: result.error }, { status: result.status });
+  }
+  if (pathname === "/api/model/forget" && method === "POST") {
+    const body = await readJson<{ provider?: unknown }>(request);
+    const result = await caller.pupu.forgetModelKey(String(body.provider ?? ""), caller.device);
+    return result.ok ? Response.json({ ok: true }) : Response.json({ error: result.error }, { status: result.status });
   }
   if (pathname === "/api/model" && method === "POST") {
     const result = await caller.pupu.setModel(await readJson<unknown>(request), caller.device);

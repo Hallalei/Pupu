@@ -19,7 +19,9 @@ import type {
 } from "@earendil-works/pi-ai";
 import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
 import type { LocalModelInfo } from "../bridge/model-relay.ts";
-import type { ModelChoice } from "./settings.ts";
+import { templateOf, type OwnApi } from "./catalog.ts";
+import { catalogModel } from "./catalog-models.ts";
+import { apiOf, providerOf, type KeyChoice, type ModelChoice } from "./settings.ts";
 
 export const ROUTER_MODEL = { provider: "pupu", id: "main" } as const;
 
@@ -50,28 +52,62 @@ export function ownModel(input: {
   readonly baseUrl: string;
   readonly vision: boolean;
   readonly contextWindow: number;
-}): Model<"openai-completions"> {
+  readonly api?: OwnApi;
+  readonly reasoning?: boolean;
+}): Model<Api> {
+  const api = input.api ?? "openai-completions";
   return {
     id: input.id,
     name: input.id,
-    api: "openai-completions",
+    api,
     provider: input.provider,
     baseUrl: input.baseUrl,
-    reasoning: false,
+    reasoning: input.reasoning === true,
     input: input.vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: input.contextWindow,
     maxTokens: Math.max(1024, Math.min(OWN_MAX_TOKENS, Math.floor(input.contextWindow / 4))),
-    compat: OWN_COMPAT
-  };
+    ...(api === "openai-completions" ? { compat: OWN_COMPAT } : {})
+  } as Model<Api>;
+}
+
+/**
+ * 自带 key 这一次用的 model。目录里有的用目录的（兼容参数、思考格式、图片限制都对），上下文和能不能看图以设置为准；
+ * 目录外的按保守的来。`provider` 用模板 id：换服务商时 pi-ai 按它判断历史里的思考要不要原样带上。
+ */
+export function keyModel(choice: KeyChoice): Model<Api> {
+  const provider = providerOf(choice);
+  const template = templateOf(provider);
+  const known = template ? catalogModel(template, choice.model) : undefined;
+  if (known && known.api === apiOf(choice)) {
+    return {
+      ...known,
+      provider,
+      baseUrl: choice.baseUrl || known.baseUrl,
+      input: choice.vision ? ["text", "image"] : ["text"],
+      contextWindow: choice.contextWindow,
+      maxTokens: Math.min(known.maxTokens, Math.max(1024, Math.floor(choice.contextWindow / 2))),
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    };
+  }
+  return ownModel({
+    // 老记录（没有 provider）照旧叫 own，已有会话里的历史还认得是同一个模型。
+    provider: choice.provider ?? "own",
+    id: choice.model,
+    baseUrl: choice.baseUrl,
+    vision: choice.vision,
+    contextWindow: choice.contextWindow,
+    api: apiOf(choice),
+    reasoning: choice.reasoning
+  });
 }
 
 export type RouterDeps = {
   readonly choice: () => ModelChoice;
   /** 我们的模型：已经包好每日额度的 DeepSeek provider 和它的 model。 */
   readonly pupu: { readonly provider: Provider<Api>; readonly model: Model<Api>; readonly apiKey: () => string | undefined };
-  /** OpenAI 兼容的流式实现，自带 key 和转发都用它。 */
-  readonly openai: ProviderStreams;
+  /** 各协议的流式实现。转发只用 openai-completions。 */
+  readonly apis: Partial<Record<OwnApi, ProviderStreams>>;
   /** 这台电脑现在能不能转发。 */
   readonly computerModel: (computerId: string) => LocalModelInfo | null | "offline" | "outdated";
   readonly computerName: (computerId: string) => string;
@@ -81,7 +117,7 @@ export type RouterDeps = {
 /** 这一次调谁。`error` 是不调，这一轮以这句话出错结束。 */
 export type Route =
   | { readonly kind: "pupu" }
-  | { readonly kind: "own"; readonly model: Model<"openai-completions">; readonly apiKey: string; readonly fetch?: typeof fetch }
+  | { readonly kind: "own"; readonly model: Model<Api>; readonly apiKey: string; readonly fetch?: typeof fetch }
   | { readonly kind: "error"; readonly message: string };
 
 export function routeOf(deps: RouterDeps): Route {
@@ -90,11 +126,7 @@ export function routeOf(deps: RouterDeps): Route {
     case "pupu":
       return { kind: "pupu" };
     case "key":
-      return {
-        kind: "own",
-        model: ownModel({ provider: "own", id: choice.model, baseUrl: choice.baseUrl, vision: choice.vision, contextWindow: choice.contextWindow }),
-        apiKey: choice.apiKey
-      };
+      return { kind: "own", model: keyModel(choice), apiKey: choice.apiKey };
     case "computer": {
       const state = deps.computerModel(choice.computerId);
       if (state !== null && typeof state === "object") {
@@ -141,7 +173,9 @@ export function routerProvider(deps: RouterDeps): Provider<Api> {
         if (!apiKey) throw new Error("Pupu 自带的模型没有配 key。");
         return call(deps.pupu.provider, deps.pupu.model, { ...options, apiKey } as O);
       }
-      return call(deps.openai, route.model as Model<Api>, {
+      const streams = deps.apis[route.model.api as OwnApi];
+      if (!streams) throw new Error(`Pupu 还不会用 ${route.model.api} 协议。`);
+      return call(streams, route.model, {
         ...options,
         apiKey: route.apiKey,
         ...(route.fetch ? { fetch: route.fetch } : {})
