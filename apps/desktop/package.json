@@ -1,7 +1,7 @@
 {
   "name": "@pupu/desktop",
   "private": true,
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Pupu 的电脑 App：托管桥、托盘、加载网页界面",
   "main": "dist/main.cjs",
   "scripts": {
