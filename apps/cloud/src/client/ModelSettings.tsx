@@ -189,8 +189,10 @@ export function ModelSection({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 每 5 秒拉一次 state，对象会换；按来源比，不然填到一半的表单会被收起来。
+  // 点了马上换的没换成，`misses` 加一，圈回到正在用的那项（取的是那时最新的 state）。
+  const [misses, setMisses] = useState(0);
   const currentSource = sourceOf(current);
-  useEffect(() => setPicked(currentSource), [currentSource]);
+  useEffect(() => setPicked(currentSource), [currentSource, misses]);
 
   const relays = computers.filter(
     (computer) =>
@@ -216,11 +218,15 @@ export function ModelSection({
     if (!mayEdit || sending) return;
     setPicked(source);
     setError(null);
-    if (source === "pupu" && current.source !== "pupu") void save({ source: "pupu" });
+    // 「Pupu 自带」和电脑点了就存；存失败，圈回到正在用的那项，出错照常写在最下面。
+    const switchTo = async (choice: unknown) => {
+      if (!(await save(choice))) setMisses((count) => count + 1);
+    };
+    if (source === "pupu" && current.source !== "pupu") void switchTo({ source: "pupu" });
     if (source.startsWith("computer:")) {
       const computerId = source.slice("computer:".length);
       if (current.source !== "computer" || current.computerId !== computerId || current.magpie) {
-        void save({ source: "computer", computerId, fallback: false });
+        void switchTo({ source: "computer", computerId, fallback: false });
       }
     }
     // Magpie 要先挑模型，挑了才存。

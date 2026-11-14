@@ -309,19 +309,22 @@ function localModelView(): LocalModelView | null {
 
 /** 存这台电脑上的模型：先试能不能调工具，过了才存，交给桥，桥告诉云端。key 留空是沿用旧的。 */
 async function setLocalModel(input: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (input === null) {
-    await writeLocalModel(null);
-    localModel = null;
-    supervisor.model(null);
-    return { ok: true };
+  let next: LocalModel | null = null;
+  if (input !== null) {
+    const parsed = parseLocalModel(input);
+    if (typeof parsed === "string") return { ok: false, error: parsed };
+    const kept = !parsed.apiKey && localModel?.baseUrl === parsed.baseUrl ? localModel.apiKey : parsed.apiKey;
+    next = { ...parsed, apiKey: kept };
+    const probe = await probeModel(next);
+    if (!probe.ok) return { ok: false, error: probe.error };
   }
-  const parsed = parseLocalModel(input);
-  if (typeof parsed === "string") return { ok: false, error: parsed };
-  const kept = !parsed.apiKey && localModel?.baseUrl === parsed.baseUrl ? localModel.apiKey : parsed.apiKey;
-  const next: LocalModel = { ...parsed, apiKey: kept };
-  const probe = await probeModel(next);
-  if (!probe.ok) return { ok: false, error: probe.error };
-  await writeLocalModel(next);
+  try {
+    await writeLocalModel(next);
+  } catch (error) {
+    // 写不进本机（多半是钥匙串用不了）：原话回给页面。直接抛出去，页面上收到的是 Electron 包过的一长串。
+    log(`这台电脑上的模型没存上：${message(error)}`);
+    return { ok: false, error: message(error) };
+  }
   localModel = next;
   supervisor.model(next);
   return { ok: true };

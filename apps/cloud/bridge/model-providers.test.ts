@@ -263,6 +263,45 @@ describe("按服务商调", () => {
     assert.match(probe.error, /key 不对/);
   });
 
+  test("探测：连不上时五种协议都说人话，不写 SDK 那句「Connection error.」；收到回应的照原样报错", async () => {
+    const down: typeof fetch = async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    };
+    const gateway: typeof fetch = async () => new Response("upstream network unreachable", { status: 502 });
+    const choices: KeyChoice[] = [CLAUDE, KIMI];
+    for (const id of ["openai", "xai", "google", "mistral"]) {
+      const template = templateOf(id)!;
+      const model = catalogModels(template)[0]!;
+      choices.push({
+        source: "key",
+        provider: id,
+        api: template.api,
+        baseUrl: template.baseUrl,
+        model: model.id,
+        apiKey: "sk-test",
+        vision: false,
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning
+      });
+    }
+    // Gemini 的实现不认传进去的 fetch，直接用全局的，两处都换掉（同上面 401 那条）。
+    const probe = async (choice: KeyChoice, fake: typeof fetch) => {
+      const original = globalThis.fetch;
+      globalThis.fetch = fake;
+      try {
+        return await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis, fetch: fake });
+      } finally {
+        globalThis.fetch = original;
+      }
+    };
+    for (const choice of choices) {
+      assert.deepEqual(await probe(choice, down), { ok: false, error: "连不上这个地址：检查地址和网络。" }, choice.provider);
+    }
+    const answered = await probe(KIMI, gateway);
+    assert.ok(!answered.ok);
+    assert.match(answered.error, /^模型服务报错.*502 upstream network unreachable/, answered.error);
+  });
+
   test("中途从 Kimi（带思考）换到 Claude：别家的思考去掉，工具调用和结果对得上", async () => {
     const seen: Seen[] = [];
     const listFiles: Tool = { name: "list_files", description: "列目录", parameters: Type.Object({ path: Type.String() }) };
@@ -327,6 +366,11 @@ describe("拉模型列表", () => {
     assert.equal(followed, "manual");
     assert.match(moved.error ?? "", /重定向/);
     assert.equal(moved.models.length, 0);
+    const down: typeof fetch = async () => {
+      throw new TypeError("Network connection lost.");
+    };
+    const lost = await listModels(templateOf("custom-openai")!, "https://llm.example.com/v1", "k", down);
+    assert.equal(lost.error, "拉不到模型列表，可以直接填模型名。");
   });
 
   test("自定义的 Anthropic 兼容地址贴了完整路径：保存和拉列表用同一个地址", async () => {
