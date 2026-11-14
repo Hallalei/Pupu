@@ -43,6 +43,7 @@ import { openRemoteDesktop, useRemoteDesktop } from "./RemoteDesktop";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ModelSection, modelSummary } from "./ModelSettings";
 import { Sheet, SheetBack, SheetClose } from "./Sheet";
+import { ListSkeleton } from "./Skeleton";
 import {
   Dot,
   Group,
@@ -338,7 +339,15 @@ export function Settings({
     body =
       actor?.role === "creator" ? <PupuAvatarPage current={pupuAvatar} /> : <Note>只有创建者能换 Pupu 的头像。</Note>;
   } else if (shown === "invites") {
-    body = invites.list ? <Invites list={invites.list} onChanged={invites.load} /> : <Note>这个 Pupu 不发邀请码。</Note>;
+    // 列表还没到先画骨架（规范 Skeleton「列表」，邀请码没有图标位），到了再看是码还是不发。
+    body =
+      invites.list === undefined ? (
+        <ListSkeleton icons={false} />
+      ) : invites.list ? (
+        <Invites list={invites.list} onChanged={invites.load} />
+      ) : (
+        <Note>这个 Pupu 不发邀请码。</Note>
+      );
   } else if (shown === "devices") {
     body = (
       <>
@@ -421,9 +430,12 @@ function useEscapeBack(back: (() => void) | null) {
   }, [back]);
 }
 
-/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，list 一直是 null，「账户」里就没有这一行。 */
+/**
+ * 发给新用户开 Pupu 的码。还没拉到是 undefined；别的 Pupu 的创建者接口回 403，list 是 null，「账户」里就没有这一行。
+ * 拉到过一次以后重新拉，旧的一直留着，不再回到 undefined。
+ */
 function useInvites(enabled: boolean) {
-  const [list, setList] = useState<InviteList | null>(null);
+  const [list, setList] = useState<InviteList | null | undefined>(undefined);
   const load = useCallback(() => api.invites().then(setList), []);
   useEffect(() => {
     if (enabled) load().catch(() => setList(null));

@@ -64,7 +64,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private let topFade = FadeEdgeView(.top)
     private let empty = UIStackView()
     private let flow = FlowView()
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    /// 会话开了、快照还没到：骨架只占对话区，输入栏照常在（规范 Skeleton「会话」）。到过一次就不再出现。
+    private let skeleton = ChatSkeletonView()
     /// 往上翻了才出现：右下角 `surface` 底的 36pt 圆按钮，`shadow-raised`，点了回到最新的消息。
     private let jump = UIButton.round(image: "chevron.down", background: Theme.surface, foreground: Theme.ink, label: "回到底部")
 
@@ -319,10 +320,9 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         quotePreview.isHidden = true
         statusLabel.textAlignment = .center
         statusLabel.isHidden = true
-        spinner.color = Theme.inkMuted
-        spinner.hidesWhenStopped = true
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(spinner)
+        // 放在卡片上沿的淡出下面，和消息一样被它盖住上沿。
+        skeleton.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(skeleton, belowSubview: topFade)
 
         bottom.axis = .vertical
         bottom.spacing = Theme.Space.s2
@@ -339,6 +339,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         fill.priority = .defaultHigh
         let emptyFill = empty.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -Theme.Space.s6 * 2)
         emptyFill.priority = .defaultHigh
+        let skeletonFill = skeleton.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -Theme.Space.s4 * 2)
+        skeletonFill.priority = .defaultHigh
         let middle = UILayoutGuide()
         view.addLayoutGuide(middle)
         NSLayoutConstraint.activate([
@@ -352,8 +354,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             middle.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             middle.bottomAnchor.constraint(equalTo: bottom.topAnchor),
-            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
+            // 和第一条消息开始的地方一样：列表的 section 上面让出 space-3、左右至少 space-4、最宽 column-max。
+            skeleton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Theme.Space.s3),
+            skeleton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            skeleton.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.Size.columnMax - Theme.Space.s4 * 2),
+            skeletonFill,
             empty.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
             empty.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             empty.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.Size.columnMax - Theme.Space.s6 * 2),
@@ -467,7 +472,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         }
 
         empty.isHidden = !(loaded && ids.isEmpty)
-        if loaded { spinner.stopAnimating() } else { spinner.startAnimating() }
+        skeleton.isHidden = loaded
         composer.running = state.running
         composer.connected = socket?.isOpen == true
         updateStatus()
@@ -699,9 +704,15 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         if let text, statusLabel.text != text { statusLabel.text = text }
         let hidden = text == nil
         guard statusLabel.isHidden != hidden else { return }
-        UIView.animate(withDuration: 0.2) {
+        let change = {
             self.statusLabel.isHidden = hidden
             self.statusLabel.alpha = hidden ? 0 : 1
+        }
+        // 还没上屏（viewDidLoad 里第一次画）就直接摆上：在动画里做第一次排版，整页会从左上角长出来，
+        // 从整张卡的骨架换过来时一眼就看得到。
+        guard view.window != nil else { return change() }
+        UIView.animate(withDuration: 0.2) {
+            change()
             self.view.layoutIfNeeded()
         }
     }

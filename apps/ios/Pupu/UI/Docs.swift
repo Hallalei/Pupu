@@ -102,9 +102,9 @@ final class DocsViewController: UIViewController, UICollectionViewDelegate {
             cell.contentConfiguration = nil
             cell.backgroundConfiguration = .clear()
             cell.contentView.subviews.forEach { $0.removeFromSuperview() }
-            let view = DocsSkeletonView()
+            let view = ListSkeletonView(icons: true)
             cell.contentView.addSubview(view)
-            view.pin(to: cell.contentView)
+            view.pin(to: cell.contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: 0, bottom: 0, right: 0))
         }
         let message = UICollectionView.CellRegistration<UICollectionViewListCell, Row> { cell, _, row in
             cell.backgroundConfiguration = .clear()
@@ -383,78 +383,6 @@ private final class PaddedLabel: UILabel {
     }
 }
 
-/// 第一次打开的骨架：一条组标题、一组三行，`line` 色块，不放转圈。
-private final class DocsSkeletonView: UIView {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isAccessibilityElement = true
-        accessibilityLabel = "正在打开"
-        let heading = bar(width: 64, height: 14, color: Theme.surfaceInset)
-        let group = SurfaceView(.inset, radius: Theme.Radius.row)
-        let rows = UIStackView()
-        rows.axis = .vertical
-        for (index, width) in [0.4, 0.55, 0.3].enumerated() {
-            let line = UIView()
-            line.backgroundColor = Theme.line
-            line.heightAnchor.constraint(equalToConstant: 1).isActive = true
-            if index > 0 { rows.addArrangedSubview(line) }
-            let square = bar(width: 18, height: 18, color: Theme.line, radius: 5)
-            let top = UIView()
-            let bottom = UIView()
-            [top, bottom].forEach {
-                $0.backgroundColor = Theme.line
-                $0.layer.cornerRadius = $0 === top ? 6 : 5
-            }
-            let text = UIView()
-            [top, bottom].forEach {
-                $0.translatesAutoresizingMaskIntoConstraints = false
-                text.addSubview($0)
-            }
-            NSLayoutConstraint.activate([
-                top.topAnchor.constraint(equalTo: text.topAnchor),
-                top.leadingAnchor.constraint(equalTo: text.leadingAnchor),
-                top.heightAnchor.constraint(equalToConstant: 12),
-                top.widthAnchor.constraint(equalTo: text.widthAnchor, multiplier: width),
-                bottom.topAnchor.constraint(equalTo: top.bottomAnchor, constant: Theme.Space.s2),
-                bottom.leadingAnchor.constraint(equalTo: text.leadingAnchor),
-                bottom.bottomAnchor.constraint(equalTo: text.bottomAnchor),
-                bottom.heightAnchor.constraint(equalToConstant: 10),
-                bottom.widthAnchor.constraint(equalTo: text.widthAnchor, multiplier: width + 0.2)
-            ])
-            let row = UIStackView(arrangedSubviews: [square, text])
-            row.spacing = Theme.Space.s3
-            row.alignment = .center
-            row.isLayoutMarginsRelativeArrangement = true
-            row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s4, bottom: 0, trailing: Theme.Space.s4)
-            row.heightAnchor.constraint(equalToConstant: 52).isActive = true
-            rows.addArrangedSubview(row)
-        }
-        group.addSubview(rows)
-        rows.pin(to: group)
-        let column = UIStackView(arrangedSubviews: [heading, group])
-        column.axis = .vertical
-        column.spacing = Theme.Space.s1
-        column.alignment = .leading
-        group.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        addSubview(column)
-        column.pin(to: self, insets: UIEdgeInsets(top: Theme.Space.s4, left: 0, bottom: 0, right: 0))
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func bar(width: CGFloat, height: CGFloat, color: UIColor, radius: CGFloat? = nil) -> UIView {
-        let view = UIView()
-        view.backgroundColor = color
-        view.layer.cornerRadius = radius ?? height / 2
-        view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            view.widthAnchor.constraint(equalToConstant: width),
-            view.heightAnchor.constraint(equalToConstant: height)
-        ])
-        return view
-    }
-}
-
 /// 正文页（规范 Docs「正文页」）：左上返回，上传的人和空间主人右边有删除，点了先问一句再删；下面隔 12 是标题（`title`）、
 /// 说明（`subheadline`、`ink-muted`）、正文，彼此隔 8。正文是 Markdown，直接写在卡片上。
 /// 页面（一页 HTML）占满卡片，标题（`headline`）写在返回键旁边。
@@ -617,34 +545,6 @@ final class DocPageViewController: UIViewController {
             }
         }
     }
-}
-
-/// 正文页的骨架：标题、说明和三行正文的 `surface-inset` 色条。
-private final class PageSkeletonView: UIView {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isAccessibilityElement = true
-        accessibilityLabel = "正在打开"
-        let column = UIStackView()
-        column.axis = .vertical
-        column.spacing = Theme.Space.s3
-        column.alignment = .leading
-        for (width, height) in [(0.4, 20.0), (0.25, 14.0), (0.92, 16.0), (0.85, 16.0), (0.6, 16.0)] {
-            let bar = UIView()
-            bar.backgroundColor = Theme.surfaceInset
-            bar.layer.cornerRadius = height / 2
-            bar.translatesAutoresizingMaskIntoConstraints = false
-            column.addArrangedSubview(bar)
-            NSLayoutConstraint.activate([
-                bar.heightAnchor.constraint(equalToConstant: height),
-                bar.widthAnchor.constraint(equalTo: column.widthAnchor, multiplier: width)
-            ])
-        }
-        addSubview(column)
-        column.pin(to: self)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
 }
 
 /// 上传（规范 Docs「上传」）：标题、一句说明、正文，「选文件」和「放在哪」，是不是做事的方法（skill），最下面「取消」「上传」并排等宽。

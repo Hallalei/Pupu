@@ -36,6 +36,7 @@ import {
   type ToolStep
 } from "./chat-rows";
 import { Composer } from "./Composer";
+import { ChatSkeleton } from "./Skeleton";
 import { desktop, useDesktopComputer } from "./desktop";
 import { begin, IDLE, restoreDraft, settle, type Outbox } from "./outbox";
 import {
@@ -87,13 +88,19 @@ type ChatProps = {
   readonly empty: ReactNode;
   readonly placeholder: string;
   readonly starters?: readonly string[];
+  /**
+   * 换上来时淡入（默认）。刚启动、从整张卡的骨架换过来时是 false：骨架原地留着，只多出输入栏，
+   * 不然骨架会先消失再淡出来。只看第一次挂上时的值。
+   */
+  readonly appear?: boolean;
 };
 
 /** 离底部这么近就算在底部，新内容来了跟着滚。 */
 const STICK_DISTANCE = 80;
 
-export function Chat({ session, context, empty, placeholder, starters = [] }: ChatProps) {
+export function Chat({ session, context, empty, placeholder, starters = [], appear = true }: ChatProps) {
   const pi = usePiSession(session, context.onProjectsChanged, context.onActivity);
+  const [fade] = useState(appear);
   const [draft, setDraft] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
   const [outbox, setOutbox] = useState<Outbox>(IDLE);
@@ -223,7 +230,7 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
   const canSend = Boolean(draft.trim()) && pi.status === "open" && outbox.status !== "sending";
 
   return (
-    <div className="fade-in relative flex h-full flex-col">
+    <div className={`${fade ? "fade-in " : ""}relative flex h-full flex-col`}>
       <div className="relative min-h-0 flex-1">
         <div
           ref={scroller}
@@ -235,11 +242,8 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
           className="scroll-fade h-full overflow-y-auto"
         >
           <div className="mx-auto flex min-h-full w-full max-w-column flex-col px-4 pt-3 pb-4">
-            {loading && (
-              <div className="my-auto flex justify-center">
-                <Spinner size="sm" aria-label="正在打开" />
-              </div>
-            )}
+            {/* 会话开了、消息还没到：骨架只占对话区，输入栏照常在（规范 Skeleton「会话」）。到过一次就不再回来。 */}
+            {loading && <ChatSkeleton />}
             {isEmpty && !loading && (
               <div className="my-auto flex flex-col items-center gap-5 py-8">
                 {empty}
@@ -544,7 +548,7 @@ function Row({
  * 对话里的出错提示（StatusLine）：靠左，内边距和气泡一样，subheadline、danger-ink。
  * 规范 README 写 surface 底，它的预览用 surface-inset；会话卡本身就是 surface，照预览。
  */
-function ErrorRow({ text }: { text: string }) {
+export function ErrorRow({ text }: { text: string }) {
   return (
     <div className="bg-surface-inset w-fit max-w-bubble rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
       {text}

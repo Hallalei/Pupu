@@ -99,11 +99,15 @@ final class SettingsViewController: UICollectionViewController {
         case disconnect
         /// 组下面的说明（`footnote`、`ink-muted`），没有行底。
         case note(String)
+        /// 列表还没到：不带图标位的列表骨架（规范 Skeleton「列表」），没有行底。
+        case skeleton
+        /// 列表拉不到：写在骨架的位置，`subheadline`、`danger-ink`，没有行底。
+        case failure(String)
 
         /// 画在 `HostCell` 里、自己排的几种。
         var hosted: Bool {
             switch self {
-            case .computerHead, .policy, .remoteConfirm, .code: true
+            case .computerHead, .policy, .remoteConfirm, .code, .skeleton: true
             default: false
             }
         }
@@ -133,6 +137,8 @@ final class SettingsViewController: UICollectionViewController {
     private var avatarToken: NSObjectProtocol?
     /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，账户页也就不放这一行。
     private var invites: InviteList?
+    /// 邀请码列表没拉到的原因，邀请码页上写在骨架的位置。
+    private var invitesFailure: String?
     private var creatingInvite = false
     /// 这个账号在的 Pupu。只有一个、也开不了自己的时候，第一页不放这一组。
     private var orgs: OrgList?
@@ -383,8 +389,9 @@ final class SettingsViewController: UICollectionViewController {
 
     private func renderInvites(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         guard let invites else {
-            snapshot.appendSections([.note])
-            snapshot.appendItems([.note("加载中…")], toSection: .note)
+            // 先画列表骨架，拉不到在骨架的位置写原因。
+            snapshot.appendSections([.invites])
+            snapshot.appendItems([invitesFailure.map(Item.failure) ?? .skeleton], toSection: .invites)
             return
         }
         snapshot.appendSections([.invites, .note])
@@ -731,7 +738,15 @@ final class SettingsViewController: UICollectionViewController {
             content.textProperties.color = Theme.inkMuted
             content.textProperties.numberOfLines = 0
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: Theme.Space.s2, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
-        case .computerHead, .policy, .remoteConfirm, .code:
+        case .failure(let text):
+            plain = true
+            content = UIListContentConfiguration.cell()
+            content.text = text
+            content.textProperties.font = Theme.font(.subheadline)
+            content.textProperties.color = Theme.dangerInk
+            content.textProperties.numberOfLines = 0
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
+        case .computerHead, .policy, .remoteConfirm, .code, .skeleton:
             break
         }
         cell.contentConfiguration = content
@@ -774,6 +789,9 @@ final class SettingsViewController: UICollectionViewController {
                 menu: remoteConfirmMenu(for: computer),
                 label: "远程控制「\(computer.name)」前要不要确认"
             )
+        case .skeleton:
+            _ = cell.hosted { ListSkeletonView(icons: false) }
+            paint(cell, plain: true)
         case .code(let pairing):
             let view = cell.hosted { PairCodeView() }
             view.show(code: pairing.code, link: pairLink(pairing), seconds: secondsLeft, copied: copiedAt.map { Date.now.timeIntervalSince($0) < 2 } ?? false)
@@ -1255,8 +1273,14 @@ final class SettingsViewController: UICollectionViewController {
     private func loadInvites() {
         guard let api = Store.shared.api else { return }
         Task {
-            // 不是第一个 Pupu 的创建者会拿到 403：留着 nil，这一行不出现。
-            invites = try? await api.invites()
+            do {
+                invites = try await api.invites()
+                invitesFailure = nil
+            } catch {
+                // 不是第一个 Pupu 的创建者会拿到 403：留着 nil，账户页不放这一行。邀请码页上骨架换成原因。
+                invites = nil
+                invitesFailure = error.localizedDescription
+            }
             render()
         }
     }

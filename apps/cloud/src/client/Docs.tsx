@@ -6,6 +6,7 @@ import type { DocPlace, DocView, DocsView } from "../server";
 import { api } from "./api";
 import { ChevronDownIcon, ChevronLeftIcon, CodeIcon, FileIcon, PlusIcon, TrashIcon } from "./icons";
 import { PILL_ACTION, PILL_SECONDARY } from "./settings-ui";
+import { ListSkeleton, PageSkeleton } from "./Skeleton";
 import { BuildingIcon, SpaceMark } from "./Spaces";
 
 /** 列表打不开时上传只能放组织层。 */
@@ -130,29 +131,6 @@ function DocRow({ doc, onOpen }: { doc: DocMeta; onOpen: () => void }) {
         {doc.summary && <span className="truncate text-subheadline text-ink-muted">{doc.summary}</span>}
       </span>
     </button>
-  );
-}
-
-/** 第一次打开先画骨架，不放转圈：一个组标题、一组三行。 */
-function ListSkeleton() {
-  return (
-    <div role="status" aria-label="正在打开" className="flex flex-col gap-1">
-      <span aria-hidden="true" className="mx-1 my-0.5 h-3.5 w-16 rounded-full bg-surface-inset" />
-      <div aria-hidden="true" className="flex flex-col overflow-hidden rounded-row bg-surface-inset">
-        {[0.4, 0.55, 0.3].map((width, index) => (
-          <Fragment key={width}>
-            {index > 0 && <Separator />}
-            <div className="flex min-h-13 items-center gap-3 px-4 py-2.5">
-              <span className="size-4.5 shrink-0 rounded-[5px] bg-line" />
-              <span className="flex min-w-0 flex-1 flex-col gap-2">
-                <span className="h-3 rounded-full bg-line" style={{ width: `${width * 100}%` }} />
-                <span className="h-2.5 rounded-full bg-line" style={{ width: `${(width + 0.2) * 100}%` }} />
-              </span>
-            </div>
-          </Fragment>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -297,18 +275,6 @@ function PageFrame({ title, html }: { title: string; html: string }) {
 /** 页面的标题：<title> 里的。 */
 function pageTitle(html: string): string {
   return /<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
-}
-
-function PageSkeleton() {
-  return (
-    <div role="status" aria-label="正在打开" className="flex flex-col gap-3">
-      <span aria-hidden="true" className="h-5 w-2/5 rounded-full bg-surface-inset" />
-      <span aria-hidden="true" className="h-3.5 w-1/4 rounded-full bg-surface-inset" />
-      {[0.92, 0.85, 0.6].map((width) => (
-        <span key={width} aria-hidden="true" className="h-4 rounded-full bg-surface-inset" style={{ width: `${width * 100}%` }} />
-      ))}
-    </div>
-  );
 }
 
 /**

@@ -1,4 +1,4 @@
-import { Button, Spinner } from "@heroui/react";
+import { Button } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { busyComputers, type ComputerActivity } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
@@ -8,7 +8,7 @@ import type { ChildView, ProjectView } from "../server";
 import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
-import { Chat, type ChatContext } from "./Chat";
+import { Chat, ErrorRow, type ChatContext } from "./Chat";
 import { PRIVATE_HINT, spaceHint, useChatLines } from "./chat-lines";
 import { Docs } from "./Docs";
 import { StatusStrip } from "./Doing";
@@ -19,6 +19,7 @@ import { NewProject } from "./NewProject";
 import { confirmWhere, type ConfirmWhere } from "./passkey";
 import { RemoteDesktopLayer } from "./RemoteDesktop";
 import { Settings, type SettingsPage } from "./Settings";
+import { ChatSkeleton } from "./Skeleton";
 import {
   BackButton,
   CardHead,
@@ -132,6 +133,11 @@ export function App() {
     refresh
   } = usePupuState();
   const [switching, setSwitching] = useState(false);
+  /** 第一次拉到状态以后才是 true：那一下换上来的会话接着整张卡的骨架，不淡入（见 Chat 的 appear）。 */
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (loaded) setSettled(true);
+  }, [loaded]);
   const [creating, setCreating] = useState(false);
   /** 开着设置的空间。只在人还在这个空间里时开着。 */
   const [spaceSettings, setSpaceSettings] = useState<string | null>(null);
@@ -276,6 +282,7 @@ export function App() {
     <Chat
       key={item.session}
       session={item.session}
+      appear={settled}
       context={{ ...chat, handoffFrom: `从「${space.name}」派来` }}
       placeholder="接着说这件事"
       empty={<div className="text-message text-ink">{item.title}</div>}
@@ -295,16 +302,13 @@ export function App() {
   let body;
   if (route.kind === "chat" && !loaded) {
     // 还不知道有没有私聊：先别开会话，免得落到全员那条，发出去全组织都看得到。
-    body = (
-      <div className="grid h-full place-items-center">
-        <Spinner size="sm" aria-label="正在打开" />
-      </div>
-    );
+    body = <Opening error={error} />;
   } else if (route.kind === "chat") {
     body = (
       <Chat
         key={session}
         session={session}
+        appear={settled}
         context={chat}
         placeholder={lines.isPrivate ? PRIVATE_HINT : spaceHint(everyone?.name ?? "全员")}
         empty={
@@ -331,6 +335,7 @@ export function App() {
       <Chat
         key={project.session}
         session={project.session}
+        appear={settled}
         context={chat}
         placeholder={spaceHint(project.name)}
         empty={<SpaceEmpty name={project.name} />}
@@ -341,29 +346,26 @@ export function App() {
       <Chat
         key={project.session}
         session={project.session}
+        appear={settled}
         context={chat}
         placeholder={spaceHint(project.name)}
         empty={<SpaceEmpty name={project.name} />}
       />
     );
+  } else if (!loaded) {
+    body = <Opening error={error} />;
   } else {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-        {!loaded ? (
-          <Spinner size="sm" aria-label="正在打开" />
-        ) : (
-          <>
-            {route.kind === "project" && <div className="text-message text-ink">找不到这个空间</div>}
-            <Button
-              variant="ghost"
-              onPress={() => setCreating(true)}
-              className="bg-surface-inset tap h-control rounded-full px-4 text-body font-semibold text-ink"
-            >
-              <PlusIcon />
-              新空间
-            </Button>
-          </>
-        )}
+        {route.kind === "project" && <div className="text-message text-ink">找不到这个空间</div>}
+        <Button
+          variant="ghost"
+          onPress={() => setCreating(true)}
+          className="bg-surface-inset tap h-control rounded-full px-4 text-body font-semibold text-ink"
+        >
+          <PlusIcon />
+          新空间
+        </Button>
       </div>
     );
   }
@@ -549,4 +551,12 @@ function SpaceEmpty({ name }: { name: string }) {
       <div className="text-message text-ink-muted">这是「{name}」。说说要做什么，我来拆。</div>
     </div>
   );
+}
+
+/**
+ * 刚启动、还不知道开哪条会话（规范 Skeleton「会话」）：整张卡只有会话骨架，输入栏先不出，免得发到全员那条去。
+ * 位置和对话列一样：左右 16、上面 12、最宽 column-max。拉不到状态时骨架换成原因，写在骨架的位置，接着每 5 秒重试。
+ */
+function Opening({ error }: { error: string | null }) {
+  return <div className="mx-auto w-full max-w-column px-4 pt-3">{error ? <ErrorRow text={error} /> : <ChatSkeleton />}</div>;
 }

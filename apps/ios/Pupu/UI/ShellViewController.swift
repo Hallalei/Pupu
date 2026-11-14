@@ -146,6 +146,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
             display(docs)
         } else {
             // 还不知道有没有私聊：先别开会话，免得落到全员那条，发出去全组织都看得到。
+            if !Store.shared.synced { loading.show(failure: Store.shared.error) }
             display(Store.shared.synced ? ownChat : loading)
         }
         updateUnread()
@@ -294,8 +295,10 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         container.addSubview(next.view)
         next.view.pin(to: container)
         next.didMove(toParent: self)
-        next.view.alpha = 0
-        UIView.animate(withDuration: 0.2) {
+        // 从整张卡的骨架换到会话：骨架在同一个地方，直接换，只多出输入栏；交叉淡入会让骨架中途暗一下。
+        let fade = previous !== loading
+        next.view.alpha = fade ? 0 : 1
+        UIView.animate(withDuration: fade ? 0.2 : 0) {
             next.view.alpha = 1
             previous?.view.alpha = 0
         } completion: { _ in
@@ -418,18 +421,48 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 }
 
-/// 第一次拉到状态之前，会话卡里先转圈。
+/// 第一次拉到状态之前（还不知道开哪条会话，规范 Skeleton「会话」）：整张卡只有会话骨架，输入栏先不出，免得发到全员那条去。
+/// 位置和对话列一样：上面 12、左右 16、最宽 column-max。拉不到时骨架换成原因，写在骨架的位置（样子同对话里的出错提示），接着重试。
 final class LoadingViewController: UIViewController {
+    private let skeleton = ChatSkeletonView()
+    private let failure = SurfaceView(.inset, radius: Theme.Radius.row)
+    private let failureLabel = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.startAnimating()
-        spinner.accessibilityLabel = "加载中"
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(spinner)
+        failure.contentView.addSubview(failureLabel)
+        failureLabel.pin(to: failure.contentView, insets: Bubble.insets)
+        failure.isHidden = true
+        failure.isAccessibilityElement = true
+        let column = UIView()
+        column.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(column)
+        for part in [skeleton, failure] as [UIView] {
+            part.translatesAutoresizingMaskIntoConstraints = false
+            column.addSubview(part)
+        }
+        let fill = column.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -Theme.Space.s4 * 2)
+        fill.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            column.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Theme.Space.s3),
+            column.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            column.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.Size.columnMax - Theme.Space.s4 * 2),
+            fill,
+            skeleton.topAnchor.constraint(equalTo: column.topAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+            failure.topAnchor.constraint(equalTo: column.topAnchor),
+            failure.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            failure.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor, multiplier: Theme.Size.bubbleMax)
         ])
+    }
+
+    /// 拉状态失败的原因；nil 是还在等，画骨架。
+    func show(failure text: String?) {
+        loadViewIfNeeded()
+        failureLabel.text = text
+        failure.accessibilityLabel = text
+        failure.isHidden = text == nil
+        skeleton.isHidden = text != nil
     }
 }
