@@ -489,19 +489,6 @@ final class ToolCell: ChatCell {
         accessibilityValue = hasOutput ? (step.expanded ? "已展开" : "已收起") : nil
     }
 
-    func configure(group: ToolGroup, width: CGFloat) {
-        self.width.constant = width
-        icon.image = UIImage(systemName: "square.stack.3d.up")
-        title.text = group.title
-        show(group.status, failures: group.failures)
-        chevron.isHidden = false
-        chevron.transform = group.expanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
-        output.isHidden = true
-        path.isHidden = true
-        accessibilityLabel = "\(group.title)，\(result.text ?? "进行中")"
-        accessibilityValue = group.expanded ? "已展开" : "已收起"
-    }
-
     private func show(_ status: ToolStep.Status, failures: Int) {
         let text: String? = switch status {
         case .done: "完成"

@@ -23,7 +23,6 @@ import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
   CalendarIcon,
-  CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -37,6 +36,7 @@ import {
   MailIcon,
   PeopleIcon,
   PhoneIcon,
+  PlusIcon,
   SparkleIcon,
   TicketIcon
 } from "./icons";
@@ -158,6 +158,8 @@ export function Settings({
 }) {
   const isOpen = page !== null;
   const thisComputer = useDesktopComputer();
+  /** 电脑页右上角的「配对」点开了。 */
+  const [pairing, setPairing] = useState(false);
   const wide = useWide();
   const invites = useInvites(isOpen && mayManageInvites(actor));
   // 关的时候弹窗还要淡出一会儿，这期间留着原来那页，不闪回首页。
@@ -166,6 +168,9 @@ export function Settings({
   const shown = page ?? lastPage.current;
   const back = shown === "root" ? null : () => onPage(parentOf(shown));
   useEscapeBack(isOpen ? back : null);
+  useEffect(() => {
+    if (shown !== "computers") setPairing(false);
+  }, [shown]);
   // 换页时点的那一行没了，焦点会掉到弹窗外面，Esc 和 Tab 就都不灵了：放回新的这一页上。
   const pageKey = typeof shown === "object" ? `computer:${shown.computer}` : shown;
   const pageRef = useRef<HTMLDivElement>(null);
@@ -197,6 +202,12 @@ export function Settings({
             .join(" · ")}
         />
         <Group>
+          <LinkRow
+            icon={<ComputerIcon />}
+            title="电脑"
+            summary={computers.length === 0 ? "还没有" : `${computers.length} 台 · ${online} 台在线`}
+            onPress={() => onPage("computers")}
+          />
           {actor?.role === "creator" && (
             <LinkRow
               icon={
@@ -238,12 +249,6 @@ export function Settings({
               onPress={() => onPage("this")}
             />
           )}
-          <LinkRow
-            icon={<ComputerIcon />}
-            title="电脑"
-            summary={online > 0 ? `${online} 台在线` : computers.length > 0 ? `${computers.length} 台` : "还没有"}
-            onPress={() => onPage("computers")}
-          />
           {members.length > 0 && (
             <LinkRow icon={<PeopleIcon />} title="成员" summary={`${members.length} 人`} onPress={() => onPage("members")} />
           )}
@@ -282,43 +287,46 @@ export function Settings({
   } else if (shown === "this") {
     body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
   } else if (shown === "computers") {
-    // 学 Grok Bot 的「电脑」页：「你的电脑」一行、「管理设备」每台一行，右边直接是分级的下拉。
-    const mine = computers.find((item) => item.id === thisComputer?.computerId);
-    const others = computers.filter((item) => item !== mine);
+    // 照原型：自己的这台（没有就第一台在线的）摊开在最上面，别的每台一行，点进去是同样的一页。配对在右上角。
+    const featured =
+      computers.find((item) => item.id === thisComputer?.computerId) ?? computers.find((item) => item.online) ?? computers[0];
+    const others = computers.filter((item) => item !== featured);
     body = (
       <>
-        {mine && (
-          <Group title="你的电脑">
-            <PolicyRow computer={mine} actor={actor} title="在这台电脑上执行" onSetPolicy={(policy) => onSetPolicy(mine.id, policy)} />
+        {(pairing || computers.length === 0) && <Group title="连接新设备">{pairNew}</Group>}
+        {featured && (
+          <ComputerPanel
+            key={featured.id}
+            computer={featured}
+            here={featured.id === thisComputer?.computerId}
+            owner={featured.ownerId ? (emails.get(featured.ownerId) ?? null) : null}
+            actor={actor}
+            onRevoke={() => onRevoke(featured.id)}
+            onSetPolicy={(policy) => onSetPolicy(featured.id, policy)}
+          />
+        )}
+        {others.length > 0 && (
+          <Group>
+            {others.map((item) => (
+              <LinkRow
+                key={item.id}
+                icon={<ComputerIcon />}
+                title={item.name}
+                detail={[computerLabel(item), item.ownerId ? emails.get(item.ownerId) : null].filter(Boolean).join(" · ")}
+                dot={item.online}
+                onPress={() => onPage({ computer: item.id })}
+              />
+            ))}
           </Group>
         )}
-        {computers.length === 0 ? (
-          <Note>还没有授权的电脑。</Note>
-        ) : (
-          others.length > 0 && (
-            <Group title="管理设备">
-              {others.map((item) => (
-                <PolicyRow
-                  key={item.id}
-                  computer={item}
-                  actor={actor}
-                  title={item.name}
-                  detail={[computerLabel(item), item.ownerId ? emails.get(item.ownerId) : null].filter(Boolean).join(" · ")}
-                  onOpen={() => onPage({ computer: item.id })}
-                  onSetPolicy={(policy) => onSetPolicy(item.id, policy)}
-                />
-              ))}
-            </Group>
-          )
-        )}
-        <Group title="连接新设备">{pairNew}</Group>
       </>
     );
   } else if (typeof shown === "object") {
     body = computer ? (
-      <ComputerDetail
+      <ComputerPanel
         key={computer.id}
         computer={computer}
+        here={computer.id === thisComputer?.computerId}
         owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
         actor={actor}
         onRevoke={async () => {
@@ -390,7 +398,18 @@ export function Settings({
     </button>
   );
   // 首页不写标题，和 iOS 一样第一眼是自己的卡片；读屏照样念「设置」。
-  const heading = shown === "root" ? "sr-only" : "text-greeting";
+  const heading = shown === "root" ? "sr-only" : "min-w-0 flex-1 truncate text-greeting";
+  const action = shown === "computers" && computers.length > 0 && (
+    <button
+      type="button"
+      aria-expanded={pairing}
+      onClick={() => setPairing((open) => !open)}
+      className="tap flex h-control-sm shrink-0 items-center gap-1 rounded-full bg-surface px-3.5 text-subheadline font-semibold hover:bg-surface-secondary"
+    >
+      <PlusIcon className="text-[13px]" />
+      配对
+    </button>
+  );
   const content = (
     <div key={pageKey} ref={pageRef} tabIndex={-1} className="fade-in flex flex-col gap-6 outline-none">
       {body}
@@ -409,7 +428,10 @@ export function Settings({
               <Modal.CloseTrigger aria-label="关闭" />
               <Modal.Header className="flex min-h-control-sm flex-col items-start gap-3">
                 {backButton}
-                <Modal.Heading className={heading}>{title}</Modal.Heading>
+                <div className="flex w-full items-center gap-3 pr-10">
+                  <Modal.Heading className={heading}>{title}</Modal.Heading>
+                  {action}
+                </div>
               </Modal.Header>
               <Modal.Body className="pt-3 pb-2 text-body text-foreground">{content}</Modal.Body>
             </Modal.Dialog>
@@ -425,7 +447,10 @@ export function Settings({
           <Drawer.Dialog className="w-[min(88vw,380px)] bg-background">
             <Drawer.Header className="flex flex-col items-start gap-3">
               {backButton}
-              <Drawer.Heading className={heading}>{title}</Drawer.Heading>
+              <div className="flex w-full items-center gap-3">
+                <Drawer.Heading className={heading}>{title}</Drawer.Heading>
+                {action}
+              </div>
             </Drawer.Header>
             <Drawer.Body className="text-body text-foreground">{content}</Drawer.Body>
           </Drawer.Dialog>
@@ -522,12 +547,15 @@ function LinkRow({
   icon,
   title,
   detail,
+  dot,
   summary,
   onPress
 }: {
   icon?: ReactNode;
   title: string;
   detail?: string;
+  /** 在不在线：给了就在 detail 前面画一个点。 */
+  dot?: boolean;
   summary?: string;
   onPress: () => void;
 }) {
@@ -540,7 +568,12 @@ function LinkRow({
       {icon && <span className="grid size-5 shrink-0 place-items-center text-[18px]">{icon}</span>}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body">{title}</span>
-        {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
+        {detail && (
+          <span className="flex items-center gap-1.5 text-subheadline text-muted">
+            {dot !== undefined && <Dot online={dot} />}
+            <span className="truncate">{detail}</span>
+          </span>
+        )}
       </span>
       {summary && <span className="shrink-0 text-body text-muted">{summary}</span>}
       <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
@@ -780,49 +813,6 @@ function ServiceRow({ service, connectable }: { service: ConnectorService; conne
   );
 }
 
-/** 一台电脑一行：名字、在不在线，右边是分级的下拉。点名字进那台电脑的一页（吊销在那里）。 */
-function PolicyRow({
-  computer,
-  actor,
-  title,
-  detail,
-  onOpen,
-  onSetPolicy
-}: {
-  computer: ComputerView;
-  actor: Actor | null | undefined;
-  title: string;
-  detail?: string;
-  onOpen?: () => void;
-  onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
-}) {
-  const row = useRowAction();
-  const label = (
-    <span className="min-w-0 flex-1">
-      <span className="block truncate text-body">{title}</span>
-      {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
-    </span>
-  );
-  return (
-    <div data-policy-row={computer.id}>
-      <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
-        {onOpen ? (
-          <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-            <span className="grid size-5 shrink-0 place-items-center">
-              <Dot online={computer.online} />
-            </span>
-            {label}
-          </button>
-        ) : (
-          label
-        )}
-        <PolicySelect computer={computer} actor={actor} sending={row.sending} onChange={(policy) => void row.run(() => onSetPolicy(policy))} />
-      </div>
-      <RowError error={row.error} />
-    </div>
-  );
-}
-
 /** 分级的下拉：系统自带的选择框，样子是一颗小胶囊。别人的电脑只能往严里改，放宽的那几项灰掉。 */
 function PolicySelect({
   computer,
@@ -858,15 +848,21 @@ function PolicySelect({
   );
 }
 
-/** 一台电脑的那一页：在不在线、什么时候先问你，最下面是吊销。 */
-function ComputerDetail({
+/**
+ * 一台电脑：名字和在不在线、什么时候先问你、吊销，一组排下来。电脑页最上面那台和点进去的那一页都是它。
+ * 远程控制只有手机上有（云端也只让手机看远程桌面），这里不放。
+ */
+function ComputerPanel({
   computer,
+  here,
   owner,
   actor,
   onRevoke,
   onSetPolicy
 }: {
   computer: ComputerView;
+  /** 就是眼前这台电脑（电脑 App 里）。 */
+  here: boolean;
   /** 主人的邮箱。 */
   owner: string | null;
   actor: Actor | null | undefined;
@@ -874,43 +870,35 @@ function ComputerDetail({
   onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
 }) {
   const row = useRowAction();
+  const policy = useRowAction();
   return (
-    <>
-      <Group>
-        <div className="flex min-h-control items-center gap-3 px-4 py-2.5">
-          <Dot online={computer.online} />
-          <span className="min-w-0 flex-1 truncate text-body">
-            {[computerLabel(computer), owner, computer.screen ? "屏幕已授权" : null].filter(Boolean).join(" · ")}
+    <section className="flex flex-col gap-1.5" data-computer={computer.id}>
+      <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <ComputerIcon className="shrink-0 text-[26px]" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-body font-semibold">{computer.name}</span>
+            <span className="flex items-center gap-1.5 text-subheadline text-muted">
+              <Dot online={computer.online} />
+              <span className="truncate">
+                {[computerLabel(computer), here ? "这台电脑" : owner, computer.screen ? "屏幕已授权" : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </span>
           </span>
         </div>
-      </Group>
-      <Group title="什么时候先问你">
-        <div role="radiogroup" aria-label={`「${computer.name}」上什么时候先问你`} className="contents">
-          {POLICIES.map(([policy, label]) => {
-            const selected = computer.policy === policy;
-            const allowed = mayChangePolicy(computer.policy, policy, actor, computer.ownerId);
-            return (
-              <button
-                key={policy}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                disabled={row.sending || !allowed}
-                onClick={() => {
-                  if (!selected) void row.run(() => onSetPolicy(policy));
-                }}
-                className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4 disabled:opacity-60"
-              >
-                <span className="min-w-0 flex-1 text-body">{label}</span>
-                {selected && <CheckIcon className="shrink-0 text-[16px]" />}
-              </button>
-            );
-          })}
+        <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
+          <span className="min-w-0 flex-1 text-body">Pupu 用它之前问我</span>
+          <PolicySelect
+            computer={computer}
+            actor={actor}
+            sending={policy.sending}
+            onChange={(next) => void policy.run(() => onSetPolicy(next))}
+          />
         </div>
-      </Group>
-      {mayRevoke(actor, computer.ownerId) && (
-        <Group>
-          {row.confirming ? (
+        {mayRevoke(actor, computer.ownerId) &&
+          (row.confirming ? (
             <div className="px-4 py-3">
               <ConfirmPanel
                 text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
@@ -926,13 +914,12 @@ function ComputerDetail({
               onClick={row.confirm}
               className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body text-danger-ink hover:bg-foreground/4"
             >
-              吊销这台电脑
+              吊销
             </button>
-          )}
-        </Group>
-      )}
-      <RowError error={row.error} />
-    </>
+          ))}
+      </div>
+      <RowError error={policy.error ?? row.error} />
+    </section>
   );
 }
 

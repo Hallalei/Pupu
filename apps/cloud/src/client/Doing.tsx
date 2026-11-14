@@ -6,15 +6,15 @@ import { ChevronDownIcon } from "./icons";
 
 /**
  * 聊天顶上的「正在做」，`rows` 是 `busyComputers` 的结果。把内容往下挤，不盖住对话。
- * 默认只摊开第一行：屏幕控制开着的排最前，收起时「收回」也露在外面。
+ * 默认只摊开第一行：屏幕控制开着的排最前，收起时「收回」也露在外面。点一行去对话里那台电脑的任务卡。
  */
 export function Doing({
   rows,
-  onOpenProject,
+  onOpen,
   onTakeback
 }: {
   rows: readonly ComputerActivity[];
-  onOpenProject: (id: string) => void;
+  onOpen: (activity: ComputerActivity) => void;
   onTakeback: (computerId: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -31,7 +31,7 @@ export function Doing({
         <DoingRow
           key={activity.computerId}
           activity={activity}
-          onOpenProject={onOpenProject}
+          onOpen={onOpen}
           onTakeback={onTakeback}
           trailing={
             index === 0 &&
@@ -55,12 +55,12 @@ export function Doing({
 
 function DoingRow({
   activity,
-  onOpenProject,
+  onOpen,
   onTakeback,
   trailing
 }: {
   activity: ComputerActivity;
-  onOpenProject: (id: string) => void;
+  onOpen: (activity: ComputerActivity) => void;
   onTakeback: (computerId: string) => Promise<void>;
   trailing?: ReactNode;
 }) {
@@ -104,13 +104,9 @@ function DoingRow({
 
   return (
     <div className="strong flex items-center gap-3 rounded-row px-4 py-2">
-      {project ? (
-        <button type="button" onClick={() => onOpenProject(project.id)} className={main}>
-          {summary}
-        </button>
-      ) : (
-        <div className={main}>{summary}</div>
-      )}
+      <button type="button" onClick={() => onOpen(activity)} className={main}>
+        {summary}
+      </button>
       {activity.screen && (
         <Button size="sm" variant="secondary" isPending={takingBack} onPress={() => void takeback()}>
           收回

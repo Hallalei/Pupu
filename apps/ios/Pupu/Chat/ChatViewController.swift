@@ -164,6 +164,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let errors = registration(ErrorCell.self)
         let reports = registration(ReportCell.self)
         let browsers = registration(BrowserCardCell.self)
+        let computers = registration(ComputerCardCell.self)
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
@@ -171,7 +172,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             case .assistant: return view.dequeueConfiguredReusableCell(using: assistants, for: path, item: id)
             case .typing: return view.dequeueConfiguredReusableCell(using: typing, for: path, item: id)
             case .projectTag: return view.dequeueConfiguredReusableCell(using: tags, for: path, item: id)
-            case .tool, .toolGroup: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
+            case .tool: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
+            case .computer: return view.dequeueConfiguredReusableCell(using: computers, for: path, item: id)
             case .notice, .handoff: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
             case .report: return view.dequeueConfiguredReusableCell(using: reports, for: path, item: id)
             case .browser: return view.dequeueConfiguredReusableCell(using: browsers, for: path, item: id)
@@ -467,7 +469,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .assistant: 1
         case .typing: 2
         case .projectTag: 3
-        case .tool, .toolGroup: 4
+        case .tool: 4
+        case .computer: 10
         case .notice, .handoff: 5
         case .error: 6
         case .report: 7
@@ -509,10 +512,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             cell.configure(step: step, width: width)
             let canOpen = !step.output.isBlank || step.outputPath != nil
             cell.onToggle = canOpen ? { [weak self] in self?.toggle(id) } : nil
-        case .toolGroup(let group):
-            guard let cell = cell as? ToolCell else { return }
-            cell.configure(group: group, width: width)
+        case .computer(let task):
+            guard let cell = cell as? ComputerCardCell else { return }
+            cell.configure(task: task, width: width / Theme.Size.bubbleMax)
             cell.onToggle = { [weak self] in self?.toggle(id) }
+            cell.onTakeOver = takeOver(task)
         case .notice(let text):
             (cell as? NoticeCell)?.configure(heading: nil, body: text, width: width)
         case .handoff(let task):
@@ -563,6 +567,38 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         } else {
             cell.accessibilityCustomActions = nil
         }
+    }
+
+    /// 电脑任务卡上的「接手」：打开这台电脑的远程桌面。只给自己名下、在线的电脑，云端也只让主人的手机看。
+    private func takeOver(_ task: ComputerTask) -> (() -> Void)? {
+        let store = Store.shared
+        guard let id = task.computerId, let computer = store.computer(id: id), computer.online else { return nil }
+        let me = store.members.first(where: \.current)?.id
+        guard computer.ownerId == nil || computer.ownerId == me else { return nil }
+        return { [weak self] in
+            guard let self, let endpoint = Connection.shared.endpoint, let latest = Store.shared.computer(id: id) else { return }
+            RemoteDesktopViewController.open(latest, endpoint: endpoint, from: self)
+        }
+    }
+
+    /// 「正在做」里点了这台电脑：滚到它最近的那张任务卡，闪一下。这条对话里没有就返回 false。
+    @discardableResult
+    func showComputerCard(_ computerId: String) -> Bool {
+        guard let id = rowIDs.last(where: { id in
+            if case .computer(let task) = rowsByID[id]?.kind { return task.computerId == computerId }
+            return false
+        }), let index = rowIDs.firstIndex(of: id) else { return false }
+        let path = IndexPath(item: index, section: 0)
+        stick = false
+        collectionView.scrollToItem(at: path, at: .centeredVertically, animated: true)
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let bubble = (self?.collectionView.cellForItem(at: path) as? ChatCell)?.bubbleView else { return }
+            UIView.animate(withDuration: 0.15) { bubble.alpha = 0.35 } completion: { _ in
+                UIView.animate(withDuration: 0.35) { bubble.alpha = 1 }
+            }
+        }
+        return true
     }
 
     private func reconfigureAll() {
