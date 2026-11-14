@@ -84,12 +84,15 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         form.setCustomSpacing(Theme.Space.s2, after: waitTitle)
         form.setCustomSpacing(Theme.Space.s4, after: waitNote)
         form.isLayoutMarginsRelativeArrangement = true
+        // 下面 34 已经让开了 Home 指示条，不再叠加安全区。
+        form.insetsLayoutMarginsFromSafeArea = false
         // 内边距上 24、左右 16、下 34（让开 Home 指示条）。
         form.directionalLayoutMargins = NSDirectionalEdgeInsets(top: Theme.Space.s6, leading: Theme.Space.s4, bottom: 34, trailing: Theme.Space.s4)
         form.translatesAutoresizingMaskIntoConstraints = false
 
         // 字号调大时卡片往上长，放不下整页能滚。
         scroll.keyboardDismissMode = .interactive
+        scroll.contentInsetAdjustmentBehavior = .never
         scroll.showsVerticalScrollIndicator = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(form)

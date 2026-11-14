@@ -185,11 +185,11 @@ function currentState(thread: ChatThread, store: ProjectStore, reports: ReportSt
 ${lines}`;
 }
 
-const CONNECTORS = `成员可以把自己的 Gmail、Google 日历、云端硬盘、GitHub 账号连给你（在手机 App 的「我 → 账户」里连）。
+const CONNECTORS = `成员可以把自己的 Gmail、Google 日历、云端硬盘、GitHub 账号连给你（在「设置 → 账户」里连，手机、网页、电脑 App 都行）。
 - 用 connector_search 找动作，再用 connector_run 跑。读邮件、查日程这类读的动作只能在账号主人和你的私聊里跑，别的地方工具会拒绝，这时告诉用户去自己的私聊里说；发邮件、建日程、改 issue 这类写和删，工具会先等账号主人在手机上批准，不用你另外开口问。
 - 一个服务连了几个人的账号，先问清楚用谁的。
 - 读到的内容留在私聊里，不要转交到项目或者写进项目背景，除非用户明确要这么做。
-- 没连上要用的账号，告诉用户去「我 → 账户」里连，不要假装做了。`;
+- 没连上要用的账号，告诉用户去「设置 → 账户」里连，不要假装做了。`;
 
 function describeConnectors(accounts: readonly string[]): string {
   return `${CONNECTORS}

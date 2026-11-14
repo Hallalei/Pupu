@@ -251,3 +251,39 @@ describe("电脑任务卡", () => {
     assert.equal(dividerTime(new Date(2025, 0, 2, 8, 0).getTime(), now), "2025年1月2日 08:00");
   });
 });
+
+describe("派活的那一行", () => {
+  const context: RowContext = {
+    projectTags: false,
+    projects: new Map(),
+    computers: [],
+    approvals: [],
+    members: [],
+    toggled: new Set()
+  };
+  const delegate: TranscriptMessage = {
+    id: "a-d1",
+    role: "assistant",
+    timestamp: 1,
+    parts: [{ type: "tool-call", id: "d1", name: "delegate", arguments: { title: "检查死链", task: "看一下官网有没有死链" } }]
+  };
+  const children = (messages: TranscriptMessage[], running: boolean) =>
+    buildRows({ ...EMPTY_VIEW, messages, running }, context).flatMap((row) => (row.kind === "child" ? [row] : []));
+
+  test("还没回来时画「正在派」那一行", () => {
+    const rows = children([delegate], true);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.session, null);
+    assert.equal(rows[0]?.title, "检查死链");
+  });
+
+  test("派失败了不画，免得一直挂着「正在派」", () => {
+    const failed: TranscriptMessage = {
+      id: "r-d1",
+      role: "tool",
+      timestamp: 2,
+      parts: [{ type: "tool-result", id: "d1", name: "delegate", content: [{ type: "text", text: "Tool delegate is not available" }], error: true }]
+    };
+    assert.deepEqual(children([delegate, failed], false), []);
+  });
+});

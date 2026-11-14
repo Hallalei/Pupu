@@ -525,10 +525,7 @@ final class DesktopControlsViewController: UIViewController {
         stack.addArrangedSubview(row("只看，不操作", toggle))
 
         if let latency {
-            let label = UILabel()
-            label.font = .preferredFont(forTextStyle: .body)
-            label.textColor = Theme.inkMuted
-            label.text = "\(latency) ms"
+            let label = UILabel(text: "\(latency) ms", style: .body, color: Theme.inkMuted)
             stack.addArrangedSubview(row("网络往返", label))
         }
 
@@ -552,10 +549,7 @@ final class DesktopControlsViewController: UIViewController {
     }
 
     private func row(_ title: String, _ control: UIView) -> UIView {
-        let label = UILabel()
-        label.text = title
-        label.font = .preferredFont(forTextStyle: .body)
-        label.textColor = Theme.ink
+        let label = UILabel(text: title, style: .body)
         let row = UIStackView(arrangedSubviews: [label, control])
         row.alignment = .center
         row.distribution = .equalSpacing

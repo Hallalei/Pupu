@@ -371,7 +371,7 @@ final class TypingCell: ChatCell {
 /// 回复上方的项目标签：这件事交给了哪个空间，点一下过去。规范没画，和网页一样照 SpaceMark 加名字：
 /// `surface-inset` 底，高 32，标记方块离左边 6，外圆角跟着方块（6 加 6），名字 `footnote`。
 final class TagCell: ChatCell {
-    private let button = UIControl()
+    private let button = TapControl()
     private let mark = SpaceMarkView()
     private let name = UILabel(style: .footnote)
     var onTap: (() -> Void)?

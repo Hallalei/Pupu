@@ -47,7 +47,7 @@ final class TaskListCell: ChatCell {
 }
 
 /// TaskList 的一行。还没派出去（没有子会话）时是灰点和「正在派」，点不了。
-private final class TaskRowView: UIControl {
+private final class TaskRowView: TapControl {
     private let rule = UIView()
     private let mark = UIView()
     private let check = UIImageView(image: UIImage(systemName: "checkmark"))

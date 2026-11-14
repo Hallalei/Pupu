@@ -62,17 +62,23 @@ final class DesktopStageView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .black
+        backgroundColor = Theme.island
         clipsToBounds = true
         isMultipleTouchEnabled = true
         content.isUserInteractionEnabled = false
         addSubview(content)
+        // 点哪按哪的圆环（规范 RemoteDesktop）：28 的环、2pt `on-island`，外面再一圈 1pt `island`，亮的暗的画面上都看得见。
         tapMark.isUserInteractionEnabled = false
-        tapMark.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
-        tapMark.layer.cornerRadius = 14
-        tapMark.layer.borderWidth = 2
-        tapMark.layer.borderColor = UIColor.white.cgColor
-        tapMark.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        tapMark.frame = CGRect(x: 0, y: 0, width: 30, height: 30)
+        tapMark.layer.cornerRadius = 15
+        tapMark.layer.borderWidth = 1
+        tapMark.layer.borderColor = Theme.island.cgColor
+        let ring = UIView(frame: CGRect(x: 1, y: 1, width: 28, height: 28))
+        ring.isUserInteractionEnabled = false
+        ring.layer.cornerRadius = 14
+        ring.layer.borderWidth = 2
+        ring.layer.borderColor = Theme.onIsland.cgColor
+        tapMark.addSubview(ring)
         tapMark.alpha = 0
         addSubview(tapMark)
     }

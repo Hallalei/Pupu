@@ -235,11 +235,13 @@ final class SettingsViewController: UICollectionViewController {
             config.backgroundColor = Theme.surfaceSheet
             config.separatorConfiguration.color = Theme.line
             config.headerMode = titled ? .supplementary : .none
-            config.headerTopPadding = 0
+            // 标题离上一组 20 放在标题上面；section 的 contentInsets.top 会落在标题和组之间。
+            config.headerTopPadding = index == 0 ? Theme.Space.s2 : Theme.Space.s5
             config.footerMode = .none
             if section == .note { config.showsSeparators = false }
             let layout = NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
-            layout.contentInsets.top = index == 0 ? Theme.Space.s2 : section == .note ? 0 : titled ? Theme.Space.s5 : 14
+            // 有标题的组：标题底下自带 4，组本身不再往下推。
+            layout.contentInsets.top = titled || section == .note ? 0 : index == 0 ? Theme.Space.s2 : 14
             layout.contentInsets.bottom = 0
             return layout
         }

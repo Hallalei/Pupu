@@ -161,10 +161,12 @@ final class DocsViewController: UIViewController, UICollectionViewDelegate {
             config.showsSeparators = grouped
             config.separatorConfiguration.color = Theme.line
             config.headerMode = grouped ? .supplementary : .none
-            config.headerTopPadding = 0
+            // 组之间的 20 放在组标题上面；section 的 contentInsets.top 会落在标题和组之间，那里只要标题自带的 4。
+            let gap = index == 0 ? Theme.Space.s1 : Theme.Space.s5
+            config.headerTopPadding = gap
             let layout = NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
             layout.contentInsets = NSDirectionalEdgeInsets(
-                top: index == 0 ? Theme.Space.s1 : Theme.Space.s5,
+                top: grouped ? 0 : gap,
                 leading: Theme.Space.s4,
                 bottom: 0,
                 trailing: Theme.Space.s4

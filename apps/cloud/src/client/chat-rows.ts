@@ -351,6 +351,8 @@ function toolRow(
   }
   if (part.name === "delegate") {
     const session = typeof result?.details.session === "string" ? result.details.session : null;
+    // 派失败了（工具报错，没有子会话）就不画这一行，不然一直挂着「正在派」；为什么没派成由回复的话说。
+    if (!session && result?.error) return null;
     const title = String(args.title ?? result?.details.title ?? "").trim() || "没起名的事";
     return { id: `child:${part.id}`, kind: "child", session, title };
   }

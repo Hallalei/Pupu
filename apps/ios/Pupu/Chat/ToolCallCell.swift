@@ -86,7 +86,7 @@ final class ToolCallCell: ChatCell {
 
 /// 工具卡片的一行：动作图标（`ink-muted`）、一句话（`subheadline`，截成一行）、结果、`chevron.right`（`ink-faint`，展开时转 90°）。
 /// 有输出才能点。
-final class ToolHeadView: UIControl {
+final class ToolHeadView: TapControl {
     enum Result {
         /// 一步的结果：成功不写字，失败 `danger-ink`，等批是 warning 小胶囊，进行中是小转圈。
         case step(ToolStep.Status)

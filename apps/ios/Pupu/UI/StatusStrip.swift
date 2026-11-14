@@ -285,7 +285,7 @@ final class StatusStripView: UIView {
 }
 
 /// 状态条上的胶囊：高 28，`surface-inset` 底，`footnote`。「正在做」前面 8pt 圆点、后面一个会转的 chevron。
-private final class StripChip: UIControl {
+private final class StripChip: TapControl {
     let dot = UIView()
     let title = UILabel(style: .footnote)
     let chevron = UIImageView(image: UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)))

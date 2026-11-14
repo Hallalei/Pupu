@@ -179,7 +179,7 @@ final class ComputerCardCell: ChatCell {
 }
 
 /// 电脑卡里的一步（规范 StepLine）：左边记号，`subheadline` 的一句话，下一行 `caption` 写时间，没做成的跟上原因；有输出的点开看。
-final class StepLineView: UIControl {
+final class StepLineView: TapControl {
     private let mark = UIView()
     private let check = UIImageView(image: UIImage(systemName: "checkmark"))
     private let cross = UIImageView(image: UIImage(systemName: "xmark"))

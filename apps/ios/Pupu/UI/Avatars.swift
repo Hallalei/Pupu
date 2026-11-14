@@ -48,7 +48,8 @@ final class Avatars {
     /// 首字头像的底色和字色是动态色：浅色、深色各画一张放进同一个 UIImageAsset，图片视图跟着主题自己换。
     static func round(_ image: UIImage?, letter: String, size: CGFloat, pixelArt: Bool, fill: UIColor = Theme.surfaceInset, ink: UIColor = Theme.ink) -> UIImage {
         let bounds = CGRect(x: 0, y: 0, width: size, height: size)
-        let renderer = UIGraphicsImageRenderer(size: bounds.size)
+        let format = UIGraphicsImageRendererFormat.preferred()
+        let renderer = UIGraphicsImageRenderer(size: bounds.size, format: format)
         if let image {
             return renderer.image { context in
                 UIBezierPath(ovalIn: bounds).addClip()
@@ -56,9 +57,13 @@ final class Avatars {
                 image.draw(in: bounds)
             }
         }
+        // 注册时带上屏幕倍数：只按深浅色注册，取回来的图会变成 1 倍，30 的头像就画成 90。
         let asset = UIImageAsset()
         for style in [UIUserInterfaceStyle.light, .dark] {
-            let traits = UITraitCollection(userInterfaceStyle: style)
+            let traits = UITraitCollection { traits in
+                traits.userInterfaceStyle = style
+                traits.displayScale = format.scale
+            }
             let drawn = renderer.image { context in
                 UIBezierPath(ovalIn: bounds).addClip()
                 fill.resolvedColor(with: traits).setFill()

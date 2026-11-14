@@ -678,7 +678,7 @@ final class SpaceSettingsViewController: UIViewController, UITextFieldDelegate {
 }
 
 /// 色板和图标的圆：选中的外面隔 2 再描 2 的 `ink`（中间露出 sheet 底）；色板没选中时往里描一圈很淡的边。
-private final class SwatchControl: UIControl {
+private final class SwatchControl: TapControl {
     let image = UIImageView()
     private let ring = CAShapeLayer()
     private let edge: Bool

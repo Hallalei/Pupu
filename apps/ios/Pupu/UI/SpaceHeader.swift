@@ -6,7 +6,7 @@ import UIKit
 
 /// 顶栏左边的圆按钮：`selected` 底加 `shadow-selected`。切换（≡）和返回（‹）都是它。
 /// 看得见的圆是 40（规范 SpaceHeader），点按区补到 44（tokens 的 `control`）。
-final class BarButton: UIControl {
+final class BarButton: TapControl {
     static let side: CGFloat = 40
 
     private let icon = UIImageView()
@@ -141,7 +141,7 @@ final class PlaceTitleView: UIView {
 
 /// 顶栏右边的成员胶囊：高 40，`selected` 底加 `shadow-selected`，点开空间设置。
 /// 全组织看得到的空间画楼，别的画成员头像叠（22，描一圈 `selected`）。没什么可设的时候只是一块标识，不能点。
-final class MembersCapsule: UIControl {
+final class MembersCapsule: TapControl {
     private let building = UIImageView(image: UIImage(systemName: "building.2", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16)))
     private let avatars = SpaceAvatarStack(size: Theme.Size.avatarSmall, ring: Theme.selected)
     var onTap: (() -> Void)?

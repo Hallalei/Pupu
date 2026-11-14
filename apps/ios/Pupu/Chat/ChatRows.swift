@@ -335,6 +335,8 @@ nonisolated enum ChatRows {
             return ChatRow(id: "tag:\(callId)", kind: .projectTag(name: projectName, projectId: project?.id))
         case "delegate":
             guard let session = result?.details?["session"]?.idString else {
+                // 派失败了（工具报错，没有子会话）就不画这一行，不然一直挂着「正在派」；为什么没派成由回复的话说。和网页 chat-rows.ts 一起改。
+                if result?.error == true { return nil }
                 let title = arguments["title"]?.string ?? "派出去的事"
                 return ChatRow(id: "task:\(callId)", kind: .task(SpaceTask(session: "", title: title, status: .working, line: "正在派")))
             }
