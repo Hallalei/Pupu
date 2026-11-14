@@ -219,7 +219,7 @@ function Viewer({
     }
   }, [computerId, where, passkeys, quality]);
 
-  // 从「接手」点进来的，接着这次点击弹通行密钥。
+  // 从「接手」点进来的，接着这次点击弹通行密钥；不用确认的直接连。
   const started = useRef(false);
   useEffect(() => {
     if (started.current || !auto || !where) return;
@@ -227,7 +227,17 @@ function Viewer({
     void connect();
   }, [auto, where, connect]);
 
-  useEffect(() => () => sessionRef.current?.end(), []);
+  // 卸下时断开。开发时 StrictMode 会先卸一次再挂上：不用确认的已经连上了、被这一下断掉，放开 started 好再连一次；
+  // 还在按通行密钥的不动，免得弹两次。
+  useEffect(
+    () => () => {
+      if (!sessionRef.current) return;
+      sessionRef.current.end();
+      sessionRef.current = null;
+      started.current = false;
+    },
+    []
+  );
 
   const close = () => {
     sessionRef.current?.end();
