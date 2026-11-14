@@ -16,7 +16,7 @@ import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
 import { BROWSER_CANCEL_TEXT, quotedMessage, type Sender } from "../messages";
 import { MemberAvatar } from "./Avatar";
-import { TaskCard } from "./Spaces";
+import { SpaceMark, TaskList, type TaskItem } from "./Spaces";
 import type { ChildView } from "../server";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
@@ -25,6 +25,8 @@ import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
 import { offerBrowserCancel } from "./BrowserTakeover";
 import {
   buildRows,
+  clockTime,
+  dividerTime,
   stepText,
   type BrowserTask,
   type ChatRow,
@@ -75,6 +77,8 @@ export type ChatContext = {
   readonly handoffFrom?: string;
   /** 拉状态出错了（多半是连不上）：输入栏上方那一行写它，不弹 toast。 */
   readonly stateError?: string | null;
+  /** 开着的子会话（宽屏开在右边）。任务列表里它那一行铺 surface-inset。 */
+  readonly openChild?: string | null;
 };
 
 type ChatProps = {
@@ -255,11 +259,17 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
                 )}
               </div>
             )}
-            {rows.map((row) => (
-              <div key={row.id} className={row.gap === 12 ? "mt-3" : row.gap === 8 ? "mt-2" : ""}>
-                <Row row={row} context={context} onMenu={openMenu} onToggle={toggle} browser={browser} />
-              </div>
-            ))}
+            {groupTasks(rows).map((item) =>
+              item.kind === "tasks" ? (
+                <div key={item.id} className={GAPS[item.gap]}>
+                  <TaskList tasks={item.tasks} children={context.children} open={context.openChild ?? null} onOpen={context.onOpenChild} />
+                </div>
+              ) : (
+                <div key={item.row.id} className={GAPS[item.row.gap]}>
+                  <Row row={item.row} context={context} onMenu={openMenu} onToggle={toggle} browser={browser} />
+                </div>
+              )
+            )}
             {/* 没发出去：跟在对话最后，写清楚怎么了。字已经放回输入框。 */}
             {outbox.status === "failed" && (
               <div className={rows.length > 0 ? "mt-3" : ""}>
@@ -408,6 +418,30 @@ export function usePressMenu(onMenu: (anchor: HTMLElement, point?: MenuPoint) =>
  */
 const CARD_FRAMES = { current: new Map<string, BrowserFrameView>() };
 
+/** 行和上一行的间距：同一条消息里 space-2，消息之间 space-3。 */
+const GAPS = { 0: "", 8: "mt-2", 12: "mt-3" } as const;
+
+type ChildRow = Extract<ChatRow, { kind: "child" }>;
+type RowItem =
+  | { readonly kind: "row"; readonly row: ChatRow }
+  | { readonly kind: "tasks"; readonly id: string; readonly gap: ChatRow["gap"]; readonly tasks: TaskItem[] };
+
+/** 连着派出去的几件事（TaskList）列成一块，挂在那条回复下面。 */
+function groupTasks(rows: readonly ChatRow[]): RowItem[] {
+  const items: RowItem[] = [];
+  for (const row of rows) {
+    const last = items.at(-1);
+    if (row.kind !== "child") items.push({ kind: "row", row });
+    else if (last?.kind === "tasks") last.tasks.push(taskItem(row));
+    else items.push({ kind: "tasks", id: row.id, gap: row.gap, tasks: [taskItem(row)] });
+  }
+  return items;
+}
+
+function taskItem(row: ChildRow): TaskItem {
+  return { id: row.id, title: row.title, session: row.session };
+}
+
 type MenuPoint = { readonly x: number; readonly y: number };
 type MenuOpener = (anchor: HTMLElement, text: string, point?: MenuPoint) => void;
 
@@ -459,9 +493,27 @@ function Row({
     case "project-tag":
       return <ProjectTag name={row.name} projectId={row.projectId} context={context} />;
     case "tool":
-      return <ToolCard step={row.step} onToggle={() => onToggle(row.id)} />;
+      // computerCards 已经把每一步合进了卡片，这里只是兜底：画成一步的 ToolCallCard。
+      return (
+        <div className="bg-surface-inset w-full overflow-hidden rounded-row">
+          <ToolHead
+            icon={STEP_ICONS[row.step.icon]}
+            title={row.step.title}
+            result={<StepResult status={row.step.status} />}
+            expanded={row.step.expanded}
+            onToggle={row.step.output ? () => onToggle(row.id) : undefined}
+          />
+          {row.step.expanded && <ToolOutput step={row.step} />}
+        </div>
+      );
     case "computer":
-      return <ComputerCard task={row.task} onToggle={onToggle} />;
+      return row.task.usesScreen ? (
+        <ComputerCard task={row.task} onToggle={onToggle} />
+      ) : (
+        <ToolCallCard task={row.task} onToggle={onToggle} />
+      );
+    case "time":
+      return <TimeDivider at={row.at} />;
     case "notice":
       return (
         <div className="flex justify-center">
@@ -471,27 +523,18 @@ function Row({
         </div>
       );
     case "handoff":
+      // SubSession 的「从主会话派来」：对话最上面一块，第一行从哪来，下面是派来时的那段话。
       return (
-        <div className="flex justify-center">
-          <div className="bg-surface-inset flex max-w-[85%] flex-col gap-0.5 rounded-row px-3 py-2 text-center">
-            <span className="text-footnote text-ink-muted">{context.handoffFrom ?? "从聊天转来"}</span>
-            <span className="text-subheadline whitespace-pre-wrap">{row.text}</span>
-          </div>
+        <div className="bg-surface-inset flex w-full flex-col gap-0.5 rounded-[14px] px-3.5 py-2.5 text-footnote">
+          <span className="font-semibold">{context.handoffFrom ?? "从聊天转来"}</span>
+          <span className="whitespace-pre-wrap text-ink-muted">{row.text}</span>
         </div>
       );
     case "report":
       return <ReportBubble card={row.card} context={context} onMenu={onMenu} />;
-    case "child": {
-      const session = row.session;
-      const open = context.onOpenChild;
-      return (
-        <TaskCard
-          title={row.title}
-          child={session === null ? undefined : context.children?.get(session)}
-          onOpen={session !== null && open ? () => open(session) : undefined}
-        />
-      );
-    }
+    case "child":
+      // 平常在 groupTasks 里和相邻的几件合成一块，这里只是兜底。
+      return <TaskList tasks={[taskItem(row)]} children={context.children} open={context.openChild ?? null} onOpen={context.onOpenChild} />;
     case "error":
       return <ErrorRow text={row.text} />;
   }
@@ -601,7 +644,10 @@ function Typing({ retrying }: { retrying: boolean }) {
   );
 }
 
-/** 回复上方的项目标签：这件事交给了哪个项目，点一下过去。 */
+/**
+ * 回复上方的项目标签：这件事交给了哪个空间，点一下过去。规范没画，照 SpaceMark 加名字：
+ * surface-inset 底，标记方块离边 6，外圆角跟着方块（6 加 6）。
+ */
 function ProjectTag({
   name,
   projectId,
@@ -611,14 +657,15 @@ function ProjectTag({
   projectId: string | null;
   context: ChatContext;
 }) {
+  const space = (projectId ? context.projects.get(projectId) : undefined) ?? { name };
   return (
     <button
       type="button"
       disabled={!projectId}
       onClick={() => projectId && context.onOpenProject(projectId)}
-      className="bg-surface-inset flex h-8 items-center gap-2 rounded-tag px-3 text-footnote pointer-fine:h-7"
+      className="bg-surface-inset tap flex h-8 items-center gap-2 rounded-[12px] pr-3 pl-1.5 text-footnote pointer-fine:h-7 pointer-fine:rounded-[10px] pointer-fine:pl-1"
     >
-      <FolderIcon className="text-[15px] pointer-fine:text-[13px]" />
+      <SpaceMark space={space} />
       {name}
     </button>
   );
@@ -638,10 +685,10 @@ function ReportBubble({ card, context, onMenu }: { card: ReportCard; context: Ch
       className="pressable bg-surface-inset flex w-full max-w-[85%] flex-col gap-1 rounded-row px-3 py-2.5 text-left sm:max-w-96"
     >
       <span className="flex w-full items-center gap-2">
-        <FolderIcon className="shrink-0 text-[15px] text-ink-muted pointer-fine:text-[13px]" />
+        <SpaceMark space={context.projects.get(card.projectId) ?? { name: card.projectName }} />
         <span className="min-w-0 flex-1 truncate text-footnote font-semibold">{card.projectName}</span>
         <ReportStatusMark status={card.status} />
-        <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted pointer-fine:text-[12px]" />
+        <ChevronRightIcon className="shrink-0 text-[14px] text-ink-faint pointer-fine:text-[12px]" />
       </span>
       <span className="text-subheadline [overflow-wrap:anywhere]">{card.summary}</span>
       {card.more > 0 && <span className="text-caption text-ink-muted">还有 {card.more} 条</span>}
@@ -674,28 +721,149 @@ const STEP_ICONS: Record<StepIcon, ReactNode> = {
   cursor: <CursorIcon />
 };
 
-/** 一步操作：收起时一行，点开看输出。只能看，不能操作。 */
-function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
+/** 时间分隔线：隔了一段时间才出现，居中的 footnote、ink-muted，两边 line 细线。 */
+function TimeDivider({ at }: { at: number }) {
   return (
-    <StepCard
-      icon={STEP_ICONS[step.icon]}
-      title={step.title}
-      status={step.status}
-      failures={0}
-      expanded={step.expanded}
-      onToggle={step.output ? onToggle : undefined}
-    >
+    <div role="separator" className="flex items-center gap-2 text-footnote text-ink-muted">
+      <span aria-hidden="true" className="h-px flex-1 bg-line" />
+      <time dateTime={new Date(at).toISOString()}>{dividerTime(at)}</time>
+      <span aria-hidden="true" className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
+
+/**
+ * 只跑命令、读写文件的那几步（ToolCallCard）：surface-inset 底、radius-row，占满内容列，不加阴影。
+ * 一步一张「在「mbpro」上跑了 npm test」，有输出的点开看；连着几步合成一组「在「mbpro」上做了 3 件事」，点开再看每一件。
+ * 失败的默认展开。只能看，停止在输入栏。用过屏幕的那几步是上面的 ComputerCard。
+ */
+function ToolCallCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: string) => void }) {
+  const only = task.steps.length === 1 ? task.steps[0]! : null;
+  const where = task.computer ? `在「${task.computer}」上` : "在电脑上";
+  return (
+    <div data-tool-card={task.computerId ?? ""} data-state={task.state} className="bg-surface-inset w-full overflow-hidden rounded-row">
+      {only ? (
+        <>
+          <ToolHead
+            icon={STEP_ICONS[only.icon]}
+            title={only.title}
+            result={<StepResult status={only.status} />}
+            expanded={only.expanded}
+            onToggle={only.output ? () => onToggle(`tool:${only.callId}`) : undefined}
+          />
+          {only.expanded && <ToolOutput step={only} />}
+        </>
+      ) : (
+        <>
+          <ToolHead
+            icon={<TerminalIcon />}
+            title={`${where}做了 ${task.steps.length} 件事`}
+            result={<GroupResult task={task} />}
+            expanded={task.expanded}
+            onToggle={() => onToggle(task.id)}
+          />
+          {task.expanded && (
+            <ol aria-label="每一件" className="flex flex-col pb-1">
+              {task.steps.map((step) => (
+                <li key={step.callId} className="flex flex-col">
+                  <ToolHead
+                    nested
+                    icon={STEP_ICONS[step.icon]}
+                    title={stepText(step)}
+                    result={<StepResult status={step.status} />}
+                    expanded={step.expanded}
+                    onToggle={step.output ? () => onToggle(`tool:${step.callId}`) : undefined}
+                  />
+                  {step.expanded && <ToolOutput step={step} />}
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** ToolCallCard 的一行：动作图标（ink-muted）、一句话（subheadline，截成一行）、结果、chevron（ink-faint，展开时转 90°）。 */
+function ToolHead({
+  icon,
+  title,
+  result,
+  expanded,
+  onToggle,
+  nested = false
+}: {
+  icon: ReactNode;
+  title: string;
+  result: ReactNode;
+  expanded: boolean;
+  onToggle?: () => void;
+  /** 组里的一件：上下收一点。 */
+  nested?: boolean;
+}) {
+  const body = (
+    <>
+      <span className="shrink-0 text-[18px] text-ink-muted pointer-fine:text-[15px]">{icon}</span>
+      <span className="min-w-0 flex-1 truncate text-left text-subheadline">{title}</span>
+      {result}
+      {onToggle && (
+        <ChevronRightIcon
+          className={`shrink-0 text-[14px] text-ink-faint transition-transform pointer-fine:text-[12px] ${expanded ? "rotate-90" : ""}`}
+        />
+      )}
+    </>
+  );
+  const box = `flex w-full items-center gap-2 pr-3 pl-4 ${nested ? "py-2" : "py-3"}`;
+  return onToggle ? (
+    <button type="button" aria-expanded={expanded} onClick={onToggle} className={`${box} pointer-fine:hover:bg-line`}>
+      {body}
+    </button>
+  ) : (
+    <div className={box}>{body}</div>
+  );
+}
+
+/** 展开后的输出：code 字、surface 底（嵌在卡片的 surface-inset 里），最多 12 行，超出在块里滚；最后写完整输出在哪。 */
+function ToolOutput({ step }: { step: ToolStep }) {
+  if (!step.output && !step.outputPath) return null;
+  return (
+    <div className="px-3 pb-3">
       {step.output && (
-        <pre className="mx-3 mb-3 max-h-58 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
+        <pre className="m-0 max-h-58 overflow-auto rounded-tag bg-surface px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
           {step.output}
         </pre>
       )}
       {step.outputPath && (
-        <div className="mx-3 mb-3 -mt-1 text-caption break-all text-ink-muted">
-          完整输出在 <span className="font-mono">{step.outputPath}</span>
+        <div className="mt-2 text-caption break-all text-ink-muted">
+          完整输出：<span className="font-mono">{step.outputPath}</span>
         </div>
       )}
-    </StepCard>
+    </div>
+  );
+}
+
+/** 一步的结果：成功不写字，失败 danger-ink，等批是 warning 小胶囊，进行中是小转圈。 */
+function StepResult({ status }: { status: StepStatus }) {
+  if (status === "running") return <Spinner size="sm" aria-label="在做" className="size-3.5 shrink-0" />;
+  if (status === "waiting") return <WaitingMark />;
+  const note = STEP_NOTES[status];
+  if (!note) return null;
+  return <span className={`shrink-0 text-caption ${status === "failed" ? "text-danger-ink" : "text-ink-muted"}`}>{note}</span>;
+}
+
+/** 一组的结果：还在做是转圈，等批是小胶囊，有没成的写几件没成。 */
+function GroupResult({ task }: { task: ComputerTask }) {
+  if (task.state === "live") return <Spinner size="sm" aria-label="在做" className="size-3.5 shrink-0" />;
+  if (task.state === "waiting") return <WaitingMark />;
+  if (!task.status) return null;
+  const failed = task.steps.some((step) => step.status === "failed");
+  return <span className={`shrink-0 text-caption ${failed ? "text-danger-ink" : "text-ink-muted"}`}>{task.status}</span>;
+}
+
+function WaitingMark() {
+  return (
+    <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">等你批准</span>
   );
 }
 
@@ -812,15 +980,22 @@ function StepMark({ status }: { status: StepStatus }) {
   );
 }
 
-/** 卡片里的一步（StepLine）：记号、subheadline 的一句话，下一行 caption；有输出的点开看输出。 */
+/** 卡片里的一步（StepLine）：记号、subheadline 的一句话，下一行 caption 写时间，没做成的跟上原因；有输出的点开看。 */
 function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
   const note = STEP_NOTES[step.status];
+  const time = step.at > 0 ? clockTime(step.at) : null;
   const header = (
     <>
       <StepMark status={step.status} />
       <span className="flex min-w-0 flex-1 flex-col text-left">
         <span className="text-subheadline break-words">{stepText(step)}</span>
-        {note && <span className={`text-caption ${step.status === "failed" ? "text-danger-ink" : "text-ink-muted"}`}>{note}</span>}
+        {(time || note) && (
+          <span className="text-caption text-ink-muted">
+            {time}
+            {time && note && " · "}
+            {note && <span className={step.status === "failed" ? "text-danger-ink" : ""}>{note}</span>}
+          </span>
+        )}
       </span>
     </>
   );
@@ -850,81 +1025,4 @@ function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
       )}
     </li>
   );
-}
-
-function StepCard({
-  icon,
-  title,
-  status,
-  failures,
-  expanded,
-  onToggle,
-  children
-}: {
-  icon: ReactNode;
-  title: string;
-  status: StepStatus;
-  failures: number;
-  expanded: boolean;
-  onToggle?: () => void;
-  children?: ReactNode;
-}) {
-  const header = (
-    <>
-      <span className="shrink-0 text-[16px] pointer-fine:text-[14px]">{icon}</span>
-      <span className="min-w-0 flex-1 text-left text-subheadline break-words">{title}</span>
-      <StepStatusMark status={status} failures={failures} />
-      {onToggle && (
-        <span className="shrink-0 text-[14px] text-ink-muted pointer-fine:text-[12px]">
-          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-        </span>
-      )}
-    </>
-  );
-  return (
-    <div className={`bg-surface-inset max-w-[85%] rounded-row ${expanded && children ? "w-full" : "w-fit"}`}>
-      {onToggle ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={onToggle}
-          className="flex min-h-10 w-full items-center gap-2 rounded-row px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
-        >
-          {header}
-        </button>
-      ) : (
-        <div className="flex min-h-10 items-center gap-2 px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2">
-          {header}
-        </div>
-      )}
-      {expanded && children}
-    </div>
-  );
-}
-
-function StepStatusMark({ status, failures }: { status: StepStatus; failures: number }) {
-  switch (status) {
-    case "waiting":
-      return (
-        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">
-          等你批准
-        </span>
-      );
-    case "running":
-      return <Spinner size="sm" aria-label="在做" className="shrink-0" />;
-    case "done":
-      return null;
-    case "failed":
-      return (
-        <span className="shrink-0 text-caption text-danger-ink">
-          {failures > 1 ? `${failures} 件没成` : "失败"}
-        </span>
-      );
-    case "denied":
-      return <span className="shrink-0 text-caption text-ink-muted">已拒绝</span>;
-    case "expired":
-      return <span className="shrink-0 text-caption text-ink-muted">没人批，作废了</span>;
-    case "unfinished":
-      return <span className="shrink-0 text-caption text-ink-muted">没做完</span>;
-  }
 }

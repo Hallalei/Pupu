@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import type { ApprovalView } from "../src/bridge/approvals.ts";
 import type { ComputerView } from "../src/bridge/protocol.ts";
 import { ABORTED, blockedText } from "../src/bridge/blocked.ts";
-import { buildRows, readable, type RowContext, type StepStatus } from "../src/client/chat-rows.ts";
+import { buildRows, dividerTime, readable, TIME_GAP, type RowContext, type StepStatus } from "../src/client/chat-rows.ts";
 import type { TranscriptMessage } from "../src/protocol.ts";
 import { EMPTY_VIEW } from "../src/view.ts";
 import { noticeMessage } from "../src/messages.ts";
@@ -190,7 +190,8 @@ describe("电脑任务卡", () => {
     assert.equal(task?.computerId, "mac");
     assert.equal(task?.steps.length, 3);
     assert.equal(task?.state, "done");
-    assert.equal(task?.status, "用完了 · 3 步");
+    assert.equal(task?.usesScreen, true);
+    assert.equal(task?.status, "用完了");
     assert.equal(task?.latest, "看了窗口");
     assert.equal(task?.screen?.data, "second");
   });
@@ -199,13 +200,54 @@ describe("电脑任务卡", () => {
     assert.equal(cards([call("c1"), result("c1", "ok", false), say("u1", "再跑一次", "user"), call("c2"), result("c2", "ok", false)]).length, 2);
   });
 
-  test("一步也是一张卡；这一轮还在跑时是正在做，最后一步出错是出错了并默认展开", () => {
+  test("只跑命令的一步也是一张卡（ToolCallCard）；还在跑时是正在做，出错了写失败并默认展开", () => {
     const [live] = cards([call("c1")], true);
     assert.equal(live?.state, "live");
+    assert.equal(live?.usesScreen, false);
     assert.equal(live?.status, "正在做");
     assert.equal(live?.screen, null);
     const [failed] = cards([call("c1"), result("c1", "找不到 npm", true)]);
     assert.equal(failed?.state, "failed");
+    assert.equal(failed?.status, "失败");
     assert.equal(failed?.expanded, true);
+    const [done] = cards([call("c1"), result("c1", "ok", false)]);
+    assert.equal(done?.status, "");
+  });
+
+  test("几步里有一步没成，组上写几件没成；用过屏幕的这一轮还在跑时是正在用", () => {
+    const [group] = cards([call("c1"), result("c1", "找不到 npm", true), call("c2"), result("c2", "ok", false)]);
+    assert.equal(group?.state, "done");
+    assert.equal(group?.status, "1 件没成");
+    const [screen] = cards([look("l1"), shot("l1", "first"), call("c1")], true);
+    assert.equal(screen?.usesScreen, true);
+    assert.equal(screen?.status, "正在用");
+  });
+
+  test("隔了半小时以上的消息前面有一条时间分隔线，分隔线也把卡片断开", () => {
+    const at = (message: TranscriptMessage, timestamp: number): TranscriptMessage => ({ ...message, timestamp });
+    const rows = buildRows(
+      {
+        ...EMPTY_VIEW,
+        messages: [at(call("c1"), 1_000), at(result("c1", "ok", false), 1_001), at(call("c2"), 1_000 + TIME_GAP), at(result("c2", "ok", false), 1_002 + TIME_GAP)],
+        running: false
+      },
+      context
+    );
+    assert.deepEqual(
+      rows.map((row) => row.kind),
+      ["computer", "time", "computer"]
+    );
+    const time = rows[1]!;
+    assert.equal(time.kind === "time" ? time.at : null, 1_000 + TIME_GAP);
+    const steps = rows.flatMap((row) => (row.kind === "computer" ? row.task.steps.map((step) => step.at) : []));
+    assert.deepEqual(steps, [1_000, 1_000 + TIME_GAP]);
+  });
+
+  test("分隔线上的字：今天、昨天、今年只写月日，往年带年份", () => {
+    const now = new Date(2026, 10, 14, 16, 30).getTime();
+    assert.equal(dividerTime(new Date(2026, 10, 14, 14, 2).getTime(), now), "今天 14:02");
+    assert.equal(dividerTime(new Date(2026, 10, 13, 9, 5).getTime(), now), "昨天 09:05");
+    assert.equal(dividerTime(new Date(2026, 10, 2, 8, 0).getTime(), now), "11月2日 08:00");
+    assert.equal(dividerTime(new Date(2025, 0, 2, 8, 0).getTime(), now), "2025年1月2日 08:00");
   });
 });

@@ -743,22 +743,59 @@ export function SpaceSettings({
   );
 }
 
-/** 主会话里派出去的一件事：状态点、标题、状态和结果一句，点进子会话。 */
-export function TaskCard({ title, child, onOpen }: { title: string; child: ChildView | undefined; onOpen?: () => void }) {
-  const detail = !child ? "正在派" : child.summary && childState(child) === "done" ? `${childLabel(child)} · ${child.summary}` : childLabel(child);
+/** 派出去的一件事：任务列表里的一行。`session` 是子会话，工具还没回时是 null。 */
+export type TaskItem = { readonly id: string; readonly title: string; readonly session: string | null };
+
+/**
+ * Pupu 在空间里派出去的子会话，列成一块挂在它的回复下面（TaskList）：1pt line 外框、radius-row，不填底。
+ * 每行高 44（电脑 36）、左右 14：状态圆点、名字、状态词、chevron；行之间 1pt line，开着的那行铺 surface-inset。
+ * 做完了是 online 对勾，其余是 ChildDot；状态词一定写出来。
+ */
+export function TaskList({
+  tasks,
+  children,
+  open,
+  onOpen
+}: {
+  tasks: readonly TaskItem[];
+  children: ReadonlyMap<string, ChildView> | undefined;
+  /** 开着的子会话。 */
+  open: string | null;
+  onOpen?: (session: string) => void;
+}) {
   return (
-    <button
-      type="button"
-      disabled={!child || !onOpen}
-      onClick={onOpen}
-      className="bg-surface-inset flex w-full max-w-[85%] items-center gap-3 rounded-row px-4 py-3 text-left sm:max-w-120"
-    >
-      {child ? <ChildDot child={child} /> : <span className="size-2 shrink-0 rounded-full bg-offline" />}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-body font-semibold">{title}</span>
-        <span className="truncate text-subheadline text-ink-muted">{detail}</span>
-      </span>
-      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
-    </button>
+    <ul aria-label="派出去的事" className="flex w-full flex-col overflow-hidden rounded-row border border-line sm:max-w-120">
+      {tasks.map((task, index) => {
+        const session = task.session;
+        const child = session === null ? undefined : children?.get(session);
+        const current = session !== null && session === open;
+        return (
+          <li key={task.id}>
+            <button
+              type="button"
+              disabled={!child || !onOpen}
+              aria-current={current ? "true" : undefined}
+              onClick={() => session !== null && onOpen?.(session)}
+              className={`flex h-11 w-full items-center gap-2.5 px-3.5 text-left pointer-fine:h-9 ${
+                index > 0 ? "shadow-[inset_0_1px_0_var(--color-line)]" : ""
+              } ${current ? "bg-surface-inset" : "pointer-fine:enabled:hover:bg-surface-inset"}`}
+            >
+              <span aria-hidden="true" className="grid w-3 shrink-0 place-items-center">
+                {child && childState(child) === "done" ? (
+                  <CheckIcon className="text-[12px] text-online" />
+                ) : child ? (
+                  <ChildDot child={child} />
+                ) : (
+                  <span className="size-2 rounded-full bg-offline" />
+                )}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-subheadline">{task.title}</span>
+              <span className="shrink-0 text-footnote text-ink-muted">{child ? childLabel(child) : "正在派"}</span>
+              <ChevronRightIcon aria-hidden="true" className="shrink-0 text-[14px] text-ink-faint pointer-fine:text-[12px]" />
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

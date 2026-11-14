@@ -184,9 +184,10 @@ export function App() {
       },
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity,
-      stateError: error
+      stateError: error,
+      openChild: route.kind === "project" ? (route.child ?? null) : null
     }),
-    [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind, inEveryone, project?.session, error]
+    [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route, inEveryone, project?.session, error]
   );
 
   // App 里跟着系统的浅色深色；只有登录页（品牌层）铺夜空，衬着左边的大图。

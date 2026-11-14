@@ -35,6 +35,10 @@ export type ToolStep = {
   readonly expanded: boolean;
   /** 这一步带回来的截图（看窗口、看屏幕那几种），没有是 null。 */
   readonly image: StepImage | null;
+  /** 用了屏幕（`computer_` 开头的工具）。用过屏幕的那几步画成 ComputerCard，只跑命令、读写文件的画成 ToolCallCard。 */
+  readonly screen: boolean;
+  /** 发起这一步的那条回复的时间（毫秒），不知道是 0。 */
+  readonly at: number;
 };
 
 export type StepImage = { readonly data: string; readonly mimeType: string };
@@ -48,14 +52,20 @@ export type ComputerTaskState = "live" | "waiting" | "done" | "failed" | "stoppe
 /**
  * Pupu 在一台电脑上连着做的几步，画成一张卡：在哪台电脑上、在做什么、状态，有截图时带画面，点开看每一步。
  * 和浏览器卡片一样的合并法：卡片放在第一步的位置，中间说的话照常显示。
+ * 用过屏幕的是 ComputerCard（`usesScreen`）；只跑命令、读写文件的是 ToolCallCard，一步一张，几步合成一组。
  */
 export type ComputerTask = {
   readonly id: string;
   readonly computerId: string | null;
   readonly computer: string | null;
   readonly state: ComputerTaskState;
-  /** 右上角那几个字：「正在做」「等你批准」「用完了 · 3 步」。 */
+  /**
+   * 右上角那几个字。ComputerCard：「正在用」「等你批准」「用完了」「出错了」「已停下」。
+   * ToolCallCard：做完了不写字；「等你批准」「失败」「2 件没成」「没做完」；正在做是转圈。
+   */
   readonly status: string;
+  /** 这几步里有用屏幕的。 */
+  readonly usesScreen: boolean;
   /** 卡片下沿那一行：最近的一步，说成人话，不带电脑名。 */
   readonly latest: string;
   readonly steps: readonly ToolStep[];
@@ -117,7 +127,12 @@ export type ChatRow = {
   /** 协调模式的主会话派出去的一件事。`session` 是子会话，工具还没回时是 null。 */
   | { readonly kind: "child"; readonly session: string | null; readonly title: string }
   | { readonly kind: "error"; readonly text: string }
+  /** 时间分隔线：和上一条消息隔了 `TIME_GAP` 以上的那条前面画一条。 */
+  | { readonly kind: "time"; readonly at: number }
 );
+
+/** 两条消息隔了这么久，中间画一条时间分隔线（规范只说「隔了一段时间」，没给数）。 */
+export const TIME_GAP = 30 * 60_000;
 
 export type RowContext = {
   /** 只有聊天里挂项目标签。 */
@@ -169,6 +184,8 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
 
   const reports = [...(context.reports ?? [])];
   let rows: Row[] = [];
+  /** 上一条有时间的消息是什么时候，决定要不要画时间分隔线。 */
+  let lastAt = 0;
   /** 浏览器的那几步：按行 id 记下动作和参数，下面合成卡片。 */
   const browserMarks = new Map<string, BrowserMark>();
   for (const message of messages) {
@@ -205,7 +222,7 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
             own.push({ id, kind: "assistant", text: "" });
             return;
           }
-          const row = toolRow(part, results.get(part.id), outputs.get(part.id), view.running, context);
+          const row = toolRow(part, results.get(part.id), outputs.get(part.id), view.running, context, message.timestamp);
           if (row) {
             if (part.name.startsWith("browser_")) browserMarks.set(row.id, { op: part.name.slice(8), args: asRecord(part.arguments) });
             own.push(row);
@@ -221,6 +238,12 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
         browserMarks.set(id, { op: "aborted", args: {} });
         own.push({ id, kind: "assistant", text: "" });
       }
+    }
+    if (own.length > 0 && message.timestamp > 0 && (message.role === "user" || message.role === "assistant")) {
+      if (lastAt > 0 && message.timestamp - lastAt >= TIME_GAP) {
+        rows.push({ id: `time:${message.id}`, gap: 12, kind: "time", at: message.timestamp });
+      }
+      lastAt = message.timestamp;
     }
     rows.push(...own.map((row, index) => ({ ...row, gap: index === 0 ? 12 : 8 }) as Row));
   }
@@ -316,7 +339,8 @@ function toolRow(
   result: Result | undefined,
   output: string | undefined,
   running: boolean,
-  context: RowContext
+  context: RowContext,
+  at: number
 ): Draft | null {
   const args = asRecord(part.arguments);
   if (part.name === "create_project") {
@@ -361,7 +385,9 @@ function toolRow(
       output: readable((result?.text ?? output ?? "").slice(0, 4000), status),
       outputPath: typeof result?.details.outputPath === "string" ? result.details.outputPath : null,
       expanded: (status === "failed") !== context.toggled.has(id),
-      image: result?.image ?? null
+      image: result?.image ?? null,
+      screen: part.name.startsWith("computer_"),
+      at
     }
   };
 }
@@ -608,7 +634,14 @@ function computerCards(rows: readonly Row[], running: boolean, context: RowConte
       open.steps.push(row.step);
       continue;
     }
-    if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report" || row.kind === "browser") {
+    if (
+      row.kind === "user" ||
+      row.kind === "handoff" ||
+      row.kind === "notice" ||
+      row.kind === "report" ||
+      row.kind === "browser" ||
+      row.kind === "time"
+    ) {
       open = null;
     }
     result.push(row);
@@ -625,30 +658,34 @@ function computerTask(id: string, steps: readonly ToolStep[], context: RowContex
   const name = steps[0]?.computer ?? null;
   const computer = context.computers.find((item) => item.name === name || item.id === name);
   const latest = steps.at(-1);
+  const usesScreen = steps.some((step) => step.screen);
   let state: ComputerTaskState;
-  let status: string;
-  if (steps.some((step) => step.status === "waiting")) {
-    state = "waiting";
-    status = "等你批准";
-  } else if (steps.some((step) => step.status === "running") || (live && latest?.status === "done")) {
-    state = "live";
-    status = "正在做";
-  } else if (latest?.status === "failed") {
-    state = "failed";
-    status = "出错了";
-  } else if (latest && latest.status !== "done") {
-    state = "stopped";
-    status = "已停下";
-  } else {
-    state = "done";
-    status = `用完了 · ${steps.length} 步`;
-  }
+  if (steps.some((step) => step.status === "waiting")) state = "waiting";
+  else if (steps.some((step) => step.status === "running") || (live && latest?.status === "done")) state = "live";
+  else if (latest?.status === "failed") state = "failed";
+  else if (latest && latest.status !== "done") state = "stopped";
+  else state = "done";
+  const failures = steps.filter((step) => step.status === "failed").length;
+  const status = usesScreen
+    ? { waiting: "等你批准", live: "正在用", failed: "出错了", stopped: "已停下", done: "用完了" }[state]
+    : state === "waiting"
+      ? "等你批准"
+      : state === "live"
+        ? "正在做"
+        : failures > 0
+          ? failures > 1 || steps.length > 1
+            ? `${failures} 件没成`
+            : "失败"
+          : state === "stopped"
+            ? "没做完"
+            : "";
   return {
     id,
     computerId: computer?.id ?? null,
     computer: computer?.name ?? name,
     state,
     status,
+    usesScreen,
     latest: latest ? stepText(latest) : "",
     steps,
     screen: [...steps].reverse().find((step) => step.image)?.image ?? null,
@@ -742,4 +779,23 @@ function clip(text: string): string {
 function number(value: unknown): string {
   if (typeof value !== "number") return "?";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** 几点几分：「14:03」。 */
+export function clockTime(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 时间分隔线上的字：「今天 14:02」「昨天 09:15」「11月12日 14:02」，不是今年的带年份。 */
+export function dividerTime(at: number, now = Date.now()): string {
+  const date = new Date(at);
+  const today = new Date(now);
+  const clock = clockTime(at);
+  const startOf = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((startOf(today) - startOf(date)) / 86_400_000);
+  if (days === 0) return `今天 ${clock}`;
+  if (days === 1) return `昨天 ${clock}`;
+  const day = `${date.getMonth() + 1}月${date.getDate()}日`;
+  return date.getFullYear() === today.getFullYear() ? `${day} ${clock}` : `${date.getFullYear()}年${day} ${clock}`;
 }
