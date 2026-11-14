@@ -405,7 +405,6 @@ extension UploadDocViewController: UITextViewDelegate {
 /// App 的凭据在请求头里，页面拿不到。页面里点链接交给 Safari，自己只显示这一页。和网页的 PAGE_SANDBOX 是一个意思。
 final class PageView: UIView, WKNavigationDelegate, WKUIDelegate {
     private let web: WKWebView
-    private var loaded = false
 
     init(html: String) {
         let configuration = WKWebViewConfiguration()
@@ -431,21 +430,19 @@ final class PageView: UIView, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        // 第一次是载入这页；页面里的 iframe 和页内锚点（还是 about:blank）照常；别的跳转交给 Safari。
-        if !loaded || action.targetFrame?.isMainFrame == false || action.request.url?.scheme == "about" {
+        // 只放行这一页自己（about:blank 和页内锚点）和页面里的 iframe。主框架要换成别的地址一律不让：
+        // 人点的链接交给 Safari，脚本自己跳的直接丢掉，免得页面一载入就把人带走。
+        if action.targetFrame?.isMainFrame == false || action.request.url?.scheme == "about" {
             decisionHandler(.allow)
             return
         }
         decisionHandler(.cancel)
-        open(action.request.url)
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        loaded = true
+        if action.navigationType == .linkActivated { open(action.request.url) }
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        open(action.request.url)
+        // target=_blank 的链接也走这里；只认人点的。
+        if action.navigationType == .linkActivated { open(action.request.url) }
         return nil
     }
 
