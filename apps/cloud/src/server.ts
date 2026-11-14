@@ -1234,8 +1234,8 @@ export class Pupu extends DurableObject<Env> {
   /**
    * 同一个人从别的 Pupu 切进来。目录已经核对过他在这里（`home`）。门照这个 Pupu 自己的来：
    * - 浏览器和电脑 App 的窗口直接发一张同种的凭据（和 Google 登录发的一样，都只认他是不是成员）；
-   * - 手机发一个一次性的码，手机带自己的 verifier 去 `/api/auth/redeem` 换，走 `redeemStep`：
-   *   这里已经有手机了，就要已有的手机点允许，和新手机用 Google 登录一样。
+   * - 手机发一个一次性的码，手机带自己的 verifier 去 `/api/auth/redeem` 换。不用这里已有的手机点允许：
+   *   来切的是他在别的 Pupu 里已经连上的手机（`me.kind` 来自那台设备的凭据），切换不加确认。
    */
   async switchIn(input: {
     email: string;
@@ -1259,7 +1259,8 @@ export class Pupu extends DurableObject<Env> {
       client: "phone",
       email: member.email,
       challenge: input.challenge,
-      now: Date.now()
+      now: Date.now(),
+      approved: true
     });
     return { kind: "code", code };
   }
