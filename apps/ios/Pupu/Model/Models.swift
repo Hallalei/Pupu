@@ -9,11 +9,69 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
     /// 最新进展一句：Pupu 在这个项目里最后一次回复的第一行。还没回复过是空串；旧版云端不给。
     let progress: String?
     let createdAt: Double
+    /// 密级 L2/L3/L4（见云端 access.ts）。旧版云端不给，算 L2。
+    let level: String?
+    /// 建这个空间的成员。老项目和旧版云端是 nil，谁都改不了。
+    let ownerId: String?
+    /// 空间成员的 id。L2 全组织可见，这张名单只在 L3、L4 决定谁能看。
+    let members: [String]?
+    /// direct 或 coordinator（主会话只委派）。
+    let mode: String?
+    /// 协调模式下派出去的子会话。
+    let children: [SpaceChild]?
 
     /// 列表第二行：有进展说进展，没有说目标。都没有是 nil。
     var summary: String? {
         if let progress, !progress.isBlank { return progress }
         return goal.isBlank ? nil : goal
+    }
+
+    /// 全组织都看得到（L2、L1，旧版云端）。
+    var isOpen: Bool { level == nil || level == "L1" || level == "L2" }
+    var memberIds: [String] { members ?? [] }
+    var spaceChildren: [SpaceChild] { children ?? [] }
+
+    func isOwner(_ member: String?) -> Bool { member != nil && ownerId == member }
+
+    func child(session: String) -> SpaceChild? { spaceChildren.first { $0.session == session } }
+}
+
+/// 空间里的一个子会话：主会话派出去的一件事。云端 server.ts 的 ChildView。
+nonisolated struct SpaceChild: Decodable, Sendable, Hashable {
+    enum Status: Sendable {
+        case working, waiting, done, idle
+
+        var label: String {
+            switch self {
+            case .working: "正在做"
+            case .waiting: "等你批准"
+            case .done: "做完了"
+            case .idle: "还没开始"
+            }
+        }
+    }
+
+    let session: String
+    let title: String
+    let createdAt: Double
+    /// 派了活、还没回报。
+    let busy: Bool
+    /// 子会话里有电脑动作在等批准。
+    let waiting: Bool?
+    let reportedAt: Double?
+    /// 最近一次回投的第一行。
+    let summary: String?
+
+    var status: Status {
+        if waiting == true { return .waiting }
+        if busy { return .working }
+        return reportedAt == nil ? .idle : .done
+    }
+
+    /// 卡上的第二行：「做完了 · 价格卡改成竖排」。
+    var line: String {
+        if status == .done, let summary, !summary.isBlank { return "\(status.label) · \(summary)" }
+        return status.label
     }
 }
 

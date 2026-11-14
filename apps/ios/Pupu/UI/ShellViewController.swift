@@ -1,9 +1,9 @@
 import UIKit
 
-/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边打开整页项目列表。
+/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边 ≡ 打开切换空间的 sheet。
 /// 电脑不在主界面上：列表、配对、远程控制都在设置里，Pupu 用电脑时对话里出一张电脑任务卡。
 /// 顶栏下方是等你批准的请示（哪一页都在）和聊天段的「正在做」，出现时把页面内容往下挤，不盖住对话。
-/// 项目名胶囊盖在内容上，不挤内容。
+/// 空间名胶囊盖在内容上，不挤内容；胶囊上有成员头像，建的人还有「邀请」，点了打开邀请 sheet。
 /// 一个主界面只属于一个身份：换了 Pupu 或者重新配对，RootViewController 整个换一个新的。
 final class ShellViewController: UIViewController {
     private let settingsButton = UIBarButtonItem()
@@ -28,7 +28,6 @@ final class ShellViewController: UIViewController {
     /// 顶栏下方那一叠占的高度，加给当前页面的安全区。
     private var topInset: CGFloat = 0
     private var lane: Lane = .main
-    private var switcherOpen = false
     /// 项目对话滚到了最新的消息：胶囊淡出。
     private var atLatest = false
     private var storeToken: StoreToken?
@@ -40,20 +39,12 @@ final class ShellViewController: UIViewController {
             self?.view.layoutIfNeeded()
         }
     )
-    private lazy var switcher = ProjectSwitcher(
-        open: { [weak self] project in
-            UISelectionFeedbackGenerator().selectionChanged()
-            self?.open(project)
-        },
-        create: { [weak self] in self?.createProject() }
-    )
     private lazy var projectList = UIBarButtonItem(
         image: UIImage(systemName: "line.3.horizontal"),
-        primaryAction: UIAction { [weak self] _ in
-            guard let self else { return }
-            self.setSwitcher(open: !self.switcherOpen)
-        }
+        primaryAction: UIAction { [weak self] _ in self?.openSwitcher() }
     )
+    /// 现在打开的空间。
+    private var currentProject: String?
     /// 两条聊天都留着，切回来不用等快照。
     private var laneChats: [Lane: ChatViewController] = [:]
     private var projectChat: ChatViewController?
@@ -96,16 +87,11 @@ final class ShellViewController: UIViewController {
         avatarToken = NotificationCenter.default.addObserver(forName: Avatars.loaded, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateMe() }
         }
-        projectList.accessibilityLabel = "全部项目"
+        projectList.accessibilityLabel = "切换空间"
 
         container.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(container)
         container.pin(to: view)
-
-        switcher.alpha = 0
-        switcher.isHidden = true
-        view.addSubview(switcher)
-        switcher.pin(to: view)
 
         top.axis = .vertical
         top.spacing = Theme.Space.s2
@@ -114,6 +100,7 @@ final class ShellViewController: UIViewController {
         top.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(top)
         pill.alpha = 0
+        pill.onTap = { [weak self] in self?.openInvite() }
         pill.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(pill)
         pillTop = pill.topAnchor.constraint(equalTo: top.bottomAnchor)
@@ -138,7 +125,6 @@ final class ShellViewController: UIViewController {
         guard abs(height - topInset) > 0.5 else { return }
         topInset = height
         shown?.additionalSafeAreaInsets.top = height
-        switcher.topInset = height
     }
 
     /// 右上角的「我」：换过头像的显示头像。
@@ -173,11 +159,7 @@ final class ShellViewController: UIViewController {
     private func show(_ next: Section) {
         segments.select(next.rawValue, animated: true)
         navigationItem.setLeftBarButton(next == .projects ? projectList : nil, animated: true)
-        if next == .projects {
-            atLatest = false
-        } else {
-            setSwitcher(open: false)
-        }
+        if next == .projects { atLatest = false }
         render()
     }
 
@@ -253,8 +235,8 @@ final class ShellViewController: UIViewController {
             display(noProject)
             return
         }
-        pill.name = project.name
-        switcher.current = project.id
+        pill.show(project, me: Store.shared.members.first(where: \.current)?.id)
+        currentProject = project.id
         lastProject = project.id
         if projectChat?.session != project.session {
             let chat = ChatViewController(
@@ -269,33 +251,63 @@ final class ShellViewController: UIViewController {
                 self?.atLatest = atLatest
                 self?.updatePill()
             }
+            chat.onOpenChild = { [weak self] session in
+                guard let project = Store.shared.project(id: project.id), let child = project.child(session: session) else { return }
+                self?.openChild(child, in: project)
+            }
             projectChat = chat
         }
         if let projectChat { display(projectChat) }
     }
 
-    /// 只在项目页、有当前项目时出现。切到项目后显示，滚到最新时淡出，往回翻时再出现。
+    /// 只在项目页、有当前项目时出现。有主人的空间一直在（成员和邀请在上面）；
+    /// 老项目只写名字，切到项目后显示，滚到最新时淡出，往回翻时再出现。
     private func updatePill() {
-        let alpha: CGFloat = section == .projects && shown === projectChat && !switcherOpen && !atLatest ? 1 : 0
+        let alpha: CGFloat = section == .projects && shown === projectChat && (pill.managed || !atLatest) ? 1 : 0
         guard pill.alpha != alpha else { return }
         UIView.animate(withDuration: 0.2) { self.pill.alpha = alpha }
     }
 
-    /// 打开时对话和输入栏淡出，列表淡入；收起时反过来。
-    private func setSwitcher(open: Bool) {
-        guard switcherOpen != open else { return }
-        switcherOpen = open
-        if open {
-            view.endEditing(true)
-            switcher.isHidden = false
+    /// ≡：切换空间的 sheet。第一行回到自己的 Pupu（私聊）。
+    private func openSwitcher() {
+        view.endEditing(true)
+        let switcher = SpaceSwitcherViewController(
+            current: currentProject,
+            openPupu: { [weak self] in
+                guard let self else { return }
+                if Store.shared.chats.private != nil { self.setLane(.private) }
+                self.show(.chat)
+            },
+            open: { [weak self] project in self?.open(project) },
+            openChild: { [weak self] project, child in
+                self?.open(project)
+                self?.openChild(child, in: project)
+            },
+            create: { [weak self] in self?.createProject() }
+        )
+        if let sheet = switcher.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = Theme.Radius.panel
         }
-        UIView.animate(withDuration: 0.2) {
-            self.switcher.alpha = open ? 1 : 0
-            self.shown?.view.alpha = open ? 0 : 1
-        } completion: { _ in
-            if !self.switcherOpen { self.switcher.isHidden = true }
+        present(switcher, animated: true)
+    }
+
+    /// 空间名胶囊：成员和邀请。老项目没有主人，不弹。
+    private func openInvite() {
+        guard let id = currentProject, let project = Store.shared.project(id: id), project.ownerId != nil else { return }
+        let invite = InviteSheetViewController(projectId: project.id)
+        if let sheet = invite.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = Theme.Radius.panel
         }
-        updatePill()
+        present(invite, animated: true)
+    }
+
+    private func openChild(_ child: SpaceChild, in project: Project) {
+        view.endEditing(true)
+        navigationController?.pushViewController(ChildSessionViewController(identity: identity, project: project, child: child), animated: true)
     }
 
     private func display(_ next: UIViewController) {
@@ -332,7 +344,7 @@ final class ShellViewController: UIViewController {
         swap()
         next.view.alpha = 0
         UIView.animate(withDuration: 0.2) {
-            next.view.alpha = self.switcherOpen ? 0 : 1
+            next.view.alpha = 1
             previous?.view.alpha = 0
         } completion: { _ in
             remove()
@@ -346,7 +358,6 @@ final class ShellViewController: UIViewController {
 
     private func open(_ project: Project) {
         lastProject = project.id
-        setSwitcher(open: false)
         show(.projects)
     }
 
@@ -371,7 +382,7 @@ final class ShellViewController: UIViewController {
     }
 
     private func createProject() {
-        let alert = UIAlertController(title: "新项目", message: "项目是一件要持续推进的事。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "新空间", message: "一件要持续推进的事。先只有你和 Pupu，可以再邀请同事。", preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = "名字，比如 登录页改版"
             field.returnKeyType = .next
@@ -381,13 +392,13 @@ final class ShellViewController: UIViewController {
             field.returnKeyType = .done
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "建项目", style: .default) { [weak self, weak alert] _ in
+        alert.addAction(UIAlertAction(title: "建立", style: .default) { [weak self, weak alert] _ in
             let name = alert?.textFields?[0].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let goal = alert?.textFields?[1].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !name.isEmpty, let api = Store.shared.api else { return }
             Task {
                 do {
-                    let project = try await api.createProject(name: name, goal: goal)
+                    let project = try await api.createSpace(name: name, goal: goal)
                     Store.shared.added(project)
                     Store.shared.refresh()
                     self?.open(project)
@@ -425,7 +436,7 @@ final class NoProjectViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         label.textAlignment = .center
-        let button = UIButton.glass(title: "新项目", image: "plus")
+        let button = UIButton.glass(title: "新空间", image: "plus")
         button.configuration?.imagePadding = Theme.Space.s2
         button.addAction(UIAction { [weak self] _ in self?.create() }, for: .primaryActionTriggered)
         let stack = UIStackView(arrangedSubviews: [label, button])
@@ -444,34 +455,59 @@ final class NoProjectViewController: UIViewController {
 
     private func update() {
         label.text = loaded
-            ? "还没有项目。在聊天里说要做的事，Pupu 会问你要不要建一个；也可以自己建。"
+            ? "还没有空间。在聊天里说要做的事，Pupu 会问你要不要建一个；也可以自己建。"
             : "加载中…"
     }
 }
 
-/// 项目页顶栏下方的小胶囊，只写项目名，不接点击。
-final class ProjectPill: UIView {
+/// 项目页顶栏下方的小胶囊：空间名，L3、L4 带成员头像，建的人还有「邀请」。有主人的空间点了打开邀请 sheet；老项目只写名字，不接点击。
+final class ProjectPill: UIControl {
     static let height: CGFloat = 28
 
     private let label = UILabel(style: .footnote)
-
-    var name = "" {
-        didSet { label.text = name }
-    }
+    private let avatars = SpaceAvatarStack(size: 20)
+    private let building = UIImageView(image: UIImage(systemName: "building.2"))
+    private let invite = UILabel(text: "邀请", style: .footnote)
+    var onTap: (() -> Void)?
+    /// 有主人的空间：成员和邀请在胶囊上，胶囊一直显示。
+    private(set) var managed = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false
         let glass = GlassView()
+        glass.isUserInteractionEnabled = false
         addSubview(glass)
         glass.pin(to: self)
         label.lineBreakMode = .byTruncatingTail
-        addSubview(label)
-        label.pin(to: self, insets: UIEdgeInsets(top: 0, left: Theme.Space.s3, bottom: 0, right: Theme.Space.s3))
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        invite.font = Theme.font(.footnote, weight: .semibold)
+        building.tintColor = Theme.ink
+        building.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
+        let row = UIStackView(arrangedSubviews: [label, building, avatars, invite])
+        row.spacing = Theme.Space.s2
+        row.alignment = .center
+        row.isUserInteractionEnabled = false
+        addSubview(row)
+        row.pin(to: self, insets: UIEdgeInsets(top: 0, left: Theme.Space.s3, bottom: 0, right: Theme.Space.s3))
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
+        addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
+        isAccessibilityElement = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ project: Project, me: String?) {
+        label.text = project.name
+        managed = project.ownerId != nil
+        isUserInteractionEnabled = managed
+        building.isHidden = !(managed && project.isOpen)
+        if managed && !project.isOpen { avatars.show(project.memberIds) } else { avatars.show([]) }
+        let owner = project.isOwner(me)
+        invite.isHidden = !owner
+        accessibilityLabel = project.name
+        accessibilityTraits = managed ? .button : .staticText
+        accessibilityHint = managed ? (owner ? "邀请和成员" : "看成员") : nil
+    }
 }
 
 /// 自己不接点击、只让子视图接的容器：顶栏下方那一叠的空白处，点到的是下面的内容。

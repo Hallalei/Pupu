@@ -19,6 +19,16 @@ nonisolated struct API: Sendable {
         try await send("api/projects", method: "POST", body: ["name": name, "goal": goal])
     }
 
+    /// 建一个私有空间（L3），只有自己和 Pupu。
+    func createSpace(name: String, goal: String) async throws -> Project {
+        try await send("api/spaces", method: "POST", body: ["name": name, "goal": goal])
+    }
+
+    /// 主人改空间。`change` 是 {kind: add|remove, memberId} / {kind: level, level} / {kind: mode, mode}。
+    func changeSpace(_ id: String, _ change: [String: String]) async throws {
+        let _: Done = try await send("api/spaces/\(id)", method: "POST", body: change)
+    }
+
     /// 打开了这个项目：它报回聊天的结果都算看过。
     func markSeen(project id: String) async throws {
         let _: Done = try await send("api/projects/\(id)/seen", method: "POST", body: [:])

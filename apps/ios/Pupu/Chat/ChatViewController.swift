@@ -9,11 +9,17 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     enum Opening {
         case intro(String)
         case project(Project)
+        /// 空间的子会话：第一条就是派来的事，不用开场。
+        case child
     }
 
     let session: String
     /// 用户滚动时告诉外面到没到最新的消息。
     var onScroll: ((Bool) -> Void)?
+    /// 点了协调模式主会话里的任务卡：打开那个子会话。
+    var onOpenChild: ((String) -> Void)?
+    /// 转来的第一条上面写的字。子会话里是「从「空间」派来」。
+    var handoffHeading = "从聊天转来"
     private let placeholder: String
     private let projectTags: Bool
     private let opening: Opening
@@ -163,6 +169,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         let notices = registration(NoticeCell.self)
         let errors = registration(ErrorCell.self)
         let reports = registration(ReportCell.self)
+        let tasks = registration(TaskCardCell.self)
         let browsers = registration(BrowserCardCell.self)
         let computers = registration(ComputerCardCell.self)
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
@@ -177,6 +184,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             case .notice, .handoff: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
             case .report: return view.dequeueConfiguredReusableCell(using: reports, for: path, item: id)
             case .browser: return view.dequeueConfiguredReusableCell(using: browsers, for: path, item: id)
+            case .task: return view.dequeueConfiguredReusableCell(using: tasks, for: path, item: id)
             case .error, nil: return view.dequeueConfiguredReusableCell(using: errors, for: path, item: id)
             }
         }
@@ -222,6 +230,8 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             stack.pin(to: card.contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: Theme.Space.s4, bottom: Theme.Space.s4, right: Theme.Space.s4))
             empty.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: empty.widthAnchor).isActive = true
+        case .child:
+            break
         case .intro(let text):
             let greeting = UILabel(text: "我是 Pupu", style: .greeting, color: Theme.inkSky)
             greeting.accessibilityTraits = .header
@@ -476,6 +486,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .report: 7
         case .other: 8
         case .browser: 9
+        case .task: 11
         }
     }
 
@@ -520,7 +531,11 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .notice(let text):
             (cell as? NoticeCell)?.configure(heading: nil, body: text, width: width)
         case .handoff(let task):
-            (cell as? NoticeCell)?.configure(heading: "从聊天转来", body: task, width: width)
+            (cell as? NoticeCell)?.configure(heading: handoffHeading, body: task, width: width)
+        case .task(let task):
+            guard let cell = cell as? TaskCardCell else { return }
+            cell.configure(task: task, width: width)
+            cell.onOpen = { [weak self] in self?.onOpenChild?(task.session) }
         case .error(let text):
             (cell as? ErrorCell)?.configure(text, width: width)
         case .report(let card):

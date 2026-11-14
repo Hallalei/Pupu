@@ -25,6 +25,8 @@ nonisolated struct ChatRow: Equatable, Sendable {
         case handoff(String)
         /// 聊天里，项目报回来的结果。
         case report(ReportCard)
+        /// 协调模式的主会话派出去的一件事，点进子会话。
+        case task(SpaceTask)
         case error(String)
     }
 
@@ -96,6 +98,15 @@ nonisolated struct ComputerTask: Equatable, Sendable {
     /// 最近一张截图。
     let screen: StepImage?
     var expanded: Bool
+}
+
+/// 主会话里的一张任务卡：派给哪个子会话、现在怎样了。状态从项目的 children 里查。
+nonisolated struct SpaceTask: Equatable, Sendable {
+    let session: String
+    let title: String
+    let status: SpaceChild.Status
+    /// 第二行：「正在做」「做完了 · 一句结果」。
+    let line: String
 }
 
 /// 拼行时要用到的会话之外的东西。
@@ -297,6 +308,15 @@ nonisolated enum ChatRows {
             guard context.projectTags, let projectName = arguments["name"]?.string, !projectName.isBlank else { return nil }
             let project = context.projects.first { $0.name == projectName }
             return ChatRow(id: "tag:\(callId)", kind: .projectTag(name: projectName, projectId: project?.id))
+        case "delegate":
+            guard let session = result?.details?["session"]?.idString else {
+                let title = arguments["title"]?.string ?? "派出去的事"
+                return ChatRow(id: "task:\(callId)", kind: .task(SpaceTask(session: "", title: title, status: .working, line: "正在派")))
+            }
+            let child = context.projects.lazy.compactMap { $0.child(session: session) }.first
+            let title = child?.title ?? result?.details?["title"]?.string ?? arguments["title"]?.string ?? "派出去的事"
+            let status = child?.status ?? .working
+            return ChatRow(id: "task:\(callId)", kind: .task(SpaceTask(session: session, title: title, status: status, line: child?.line ?? status.label)))
         case "hand_off_to_project":
             guard context.projectTags,
                   let id = arguments["project_id"]?.idString,
