@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { AVATAR_PRESETS } from "../src/avatar-presets.ts";
+import { AVATAR_PRESETS, PUPU_AVATAR_PRESETS } from "../src/avatar-presets.ts";
 import { AvatarStore, avatarUrl, pupuAvatarUrl, checkUpload, formatChoice, imageInfo, isPreset, MAX_AVATAR_BYTES, parseChoice } from "../src/avatars.ts";
 import { MemberStore, memberView } from "../src/members.ts";
 import { sqlStorage } from "./sql-memory.ts";
@@ -75,7 +75,12 @@ describe("收不收上传", () => {
 describe("头像的值和地址", () => {
   test("预设只认清单里的 id", () => {
     assert.ok(AVATAR_PRESETS.length >= 8 && AVATAR_PRESETS.length <= 12);
+    assert.ok(PUPU_AVATAR_PRESETS.length >= 8 && PUPU_AVATAR_PRESETS.length <= 12);
     assert.equal(isPreset(AVATAR_PRESETS[0]?.id), true);
+    // 以前成员选的猫要照常认
+    assert.equal(isPreset(PUPU_AVATAR_PRESETS[0]?.id), true);
+    const ids = [...AVATAR_PRESETS, ...PUPU_AVATAR_PRESETS].map((preset) => preset.id);
+    assert.equal(new Set(ids).size, ids.length);
     assert.equal(isPreset("../../etc/passwd"), false);
     assert.equal(parseChoice("preset:nope"), null);
   });

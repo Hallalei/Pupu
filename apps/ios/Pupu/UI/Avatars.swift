@@ -152,10 +152,15 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
         return card
     }
 
+    /// 成员挑小人，Pupu 挑猫。
+    private var presets: [AvatarPreset] {
+        target == .pupu ? Store.shared.pupuAvatarPresets : Store.shared.avatarPresets
+    }
+
     private func buildGrid() {
         grid.arrangedSubviews.forEach { $0.removeFromSuperview() }
         buttons = []
-        let presets = Store.shared.avatarPresets
+        let presets = self.presets
         for start in stride(from: 0, to: presets.count, by: 4) {
             let row = UIStackView()
             row.distribution = .fillEqually
@@ -183,7 +188,7 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
     private func render() {
         let me = Store.shared.members.first(where: \.current)
         let current = target == .pupu ? Store.shared.pupuAvatar : me?.avatar
-        if buttons.count != Store.shared.avatarPresets.count { buildGrid() }
+        if buttons.count != presets.count { buildGrid() }
         if target == .pupu {
             let pupu = Avatars.shared.pupu()
             preview.layer.magnificationFilter = pupu.pixelArt ? .nearest : .linear

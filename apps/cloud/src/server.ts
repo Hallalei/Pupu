@@ -134,7 +134,7 @@ import {
   type RelyingParty
 } from "./passkeys";
 import { handbackNotice, handoffMessage, noticeMessage, type Sender } from "./messages";
-import { AVATAR_PRESETS } from "./avatar-presets";
+import { AVATAR_PRESETS, PUPU_AVATAR_PRESETS } from "./avatar-presets";
 import {
   AvatarStore,
   checkUpload,
@@ -237,7 +237,10 @@ export type PupuState = {
   /** 这个人能进的两条聊天。没有成员身份时没有私聊。 */
   readonly chats: ChatsView;
   /** 成员能选的预设头像，`url` 相对这个 Pupu 的网址。 */
+  /** 成员挑的预设头像。 */
   readonly avatarPresets: readonly { readonly id: string; readonly name: string; readonly url: string }[];
+  /** Pupu 换头像时挑的。 */
+  readonly pupuAvatarPresets: readonly { readonly id: string; readonly name: string; readonly url: string }[];
   /** Pupu 自己的头像，相对地址。null 是没换过，用各端自带的。 */
   readonly pupuAvatar: string | null;
   /** 用哪个模型，没有 key。`mayEdit`：这个人能不能改（只有创建者）。 */
@@ -1041,6 +1044,7 @@ export class Pupu extends DurableObject<Env> {
       reports: this.#reportCards(own),
       chats: this.threads.chats(own),
       avatarPresets: AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
+      pupuAvatarPresets: PUPU_AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
       pupuAvatar: pupuAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null),
       model: { current: modelView(this.modelChoice.get()), mayEdit: mayChangeModel(this.#actor(current)) },
       passkeys:

@@ -1,12 +1,12 @@
-"""出成员的预设头像。
+"""出两套预设头像：成员用的像素小人（people.py），Pupu 用的像素猫（presets.py）。
 
     python3 design/avatars/export.py
 
 要 Pillow（系统自带的 python3 已经装了）。出这些文件：
 
-- apps/cloud/public/avatars/<id>.png：256×256 方图，带底色，各端自己裁成圆；
-- apps/cloud/src/avatar-presets.ts：id 清单，云端只认清单里的 id；
-- design/avatars/out/overview.png：总览图，按 32px 圆形缩小的样子也放了一排，看耳朵有没有被切掉。
+- apps/cloud/public/avatars/<id>.png：256×256 方图，带底色，各端自己裁成圆；两套 id 不能重；
+- apps/cloud/src/avatar-presets.ts：两份 id 清单，云端只认清单里的 id；
+- design/avatars/out/people.png、out/overview.png：两套的总览图，按 32px 圆形缩小的样子也放了一排。
 """
 import os
 import sys
@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, "design/icon"))
 
 from pixels import MAIN, PALETTE  # noqa: E402
+import people  # noqa: E402
 from presets import ACCESSORIES, BACKGROUNDS, BUBBLES, EXPRESSIONS, EXTRA, FURS, MARKINGS, PRESETS  # noqa: E402
 
 WEB = os.path.join(ROOT, "apps/cloud/public/avatars")
@@ -80,6 +81,36 @@ def circle(im, size):
     return out.resize((size, size), Image.LANCZOS)
 
 
+def person_grid(person):
+    """成员头像：同一张脸，换头发、眼睛、衣服。"""
+    _id, _name, hair, _hair_colors, eyes, _iris, _clothes, style, _bg = person
+    canvas = [[None] * GRID for _ in range(GRID)]
+    ox, oy = OFFSET
+    for y, row in enumerate(people.FACE):
+        for x, ch in enumerate(row):
+            if ch != ".":
+                canvas[y + oy][x + ox] = ch
+
+    def put(cells, only=None):
+        for x, y, ch in cells:
+            cx, cy = x + ox, y + oy
+            if not (0 <= cx < GRID and 0 <= cy < GRID):
+                raise ValueError(f"{_id} 出了画布：{(x, y)}")
+            if only and canvas[cy][cx] not in only:
+                continue
+            canvas[cy][cx] = ch
+
+    put(people.clothes(style), only=set("Cc"))
+    put(people.EYES[eyes])
+    put(people.HAIR[hair])
+    return canvas
+
+
+def person_palette(person):
+    _id, _name, _hair, (h, a), _eyes, iris, (c, c_dark, d), _style, _bg = person
+    return {**people.SKIN, **people.EXTRA, "H": h, "A": a, "I": iris, "C": c, "c": c_dark, "D": d}
+
+
 def font(size):
     for path in ("/System/Library/Fonts/Hiragino Sans GB.ttc", "/System/Library/Fonts/STHeiti Medium.ttc"):
         if os.path.exists(path):
@@ -104,10 +135,15 @@ def overview(images):
 
 def manifest():
     lines = [
-        "// 由 design/avatars/export.py 生成，别手改。加头像改 design/avatars/presets.py 再跑一遍。",
+        "// 由 design/avatars/export.py 生成，别手改。加头像改 design/avatars/people.py 或 presets.py 再跑一遍。",
         "",
-        "/** 成员能选的预设头像。图在 public/avatars/<id>.png。 */",
+        "/** 成员能选的预设头像：像素小人。图在 public/avatars/<id>.png。 */",
         "export const AVATAR_PRESETS = [",
+        *[f'  {{ id: "{p[0]}", name: "{p[1]}" }},' for p in people.PEOPLE],
+        "] as const;",
+        "",
+        "/** Pupu 能换的预设头像：Pupu 衍生的像素猫。 */",
+        "export const PUPU_AVATAR_PRESETS = [",
         *[f'  {{ id: "{p[0]}", name: "{p[1]}" }},' for p in PRESETS],
         "] as const;",
         "",
@@ -116,8 +152,8 @@ def manifest():
 
 
 def main():
-    ids = [p[0] for p in PRESETS]
-    assert len(ids) == len(set(ids)), "id 重复了"
+    ids = [p[0] for p in PRESETS] + [p[0] for p in people.PEOPLE]
+    assert len(ids) == len(set(ids)), "id 重复了（两套也不能重）"
     os.makedirs(WEB, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
     images = []
@@ -128,9 +164,15 @@ def main():
         im.convert("RGB").save(os.path.join(WEB, f"{pid}.png"), optimize=True)
         images.append((preset, im))
     overview(images).convert("RGB").save(os.path.join(OUT, "overview.png"), optimize=True)
+    faces = []
+    for person in people.PEOPLE:
+        im = render(person_grid(person), person_palette(person), person[8])
+        im.convert("RGB").save(os.path.join(WEB, f"{person[0]}.png"), optimize=True)
+        faces.append((person, im))
+    overview(faces).convert("RGB").save(os.path.join(OUT, "people.png"), optimize=True)
     with open(MANIFEST, "w") as f:
         f.write(manifest())
-    print(f"{len(PRESETS)} 个头像 → {os.path.relpath(WEB, ROOT)}")
+    print(f"{len(people.PEOPLE)} 个成员头像、{len(PRESETS)} 个 Pupu 头像 → {os.path.relpath(WEB, ROOT)}")
 
 
 if __name__ == "__main__":
