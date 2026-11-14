@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { DocStore, docScope, viewerScope, viewerTarget } from "../src/docs.ts";
+import { DocStore, docScope, mayDeleteDoc, viewerScope, viewerTarget } from "../src/docs.ts";
 import { createDocTools, writeTarget } from "../src/docs-tools.ts";
 import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { renderPrompt } from "../src/prompt.ts";
@@ -249,3 +249,24 @@ test("两条会话的工具调用 id 一样，各存各的", async () => {
   assert.notEqual(a.details!.id, b.details!.id);
   assert.equal(pupu.docs.current(String(b.details!.id))!.title, "乙");
 });
+
+describe("资料：谁能删", () => {
+  const space = { ownerId: "owner" };
+  test("上传的人自己能删", () => {
+    assert.equal(mayDeleteDoc({ authorId: "amy", spaceId: "s1" }, "amy", space, false), true);
+    assert.equal(mayDeleteDoc({ authorId: "amy", spaceId: null }, "amy", undefined, false), true);
+  });
+  test("空间主人能删空间里别人传的，别人不能", () => {
+    assert.equal(mayDeleteDoc({ authorId: "amy", spaceId: "s1" }, "owner", space, false), true);
+    assert.equal(mayDeleteDoc({ authorId: "amy", spaceId: "s1" }, "bob", space, false), false);
+    assert.equal(mayDeleteDoc({ authorId: null, spaceId: "s1" }, "bob", space, true), false);
+  });
+  test("组织层：创建者能删，Pupu 写的也只有创建者能删", () => {
+    assert.equal(mayDeleteDoc({ authorId: null, spaceId: null }, "boss", undefined, true), true);
+    assert.equal(mayDeleteDoc({ authorId: null, spaceId: null }, "bob", undefined, false), false);
+  });
+  test("没有成员身份不能删", () => {
+    assert.equal(mayDeleteDoc({ authorId: null, spaceId: null }, null, undefined, false), false);
+  });
+});
+

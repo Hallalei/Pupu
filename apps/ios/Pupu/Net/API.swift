@@ -170,6 +170,29 @@ nonisolated struct API: Sendable {
         return grant.code
     }
 
+    /// 资料：看得到的，和上传能放到哪。和网页的 Docs.tsx 一样。
+    func docs() async throws -> DocsView {
+        try await send("api/docs")
+    }
+
+    func doc(_ id: String) async throws -> DocView {
+        try await send("api/docs/\(id)")
+    }
+
+    /// 删资料：上传的人或空间主人，不弹确认。
+    func deleteDoc(_ id: String) async throws {
+        let _: Done = try await send("api/docs/\(id)", method: "DELETE", raw: nil, type: "application/json")
+    }
+
+    /// 上传文字资料。`operation` 去重：网络重试不多传一份。
+    func uploadDoc(title: String, summary: String, body: String, skill: Bool, spaceId: String?, operation: String) async throws -> DocMeta {
+        let json: [String: Any] = [
+            "title": title, "summary": summary, "body": body, "kind": skill ? "skill" : "doc",
+            "spaceId": spaceId.map { $0 as Any } ?? NSNull(), "operation": operation
+        ]
+        return try await send("api/docs", method: "POST", raw: try JSONSerialization.data(withJSONObject: json), type: "application/json")
+    }
+
     private struct OrgGrant: Decodable { let code: String }
     private struct Started: Decodable { let url: String }
     private struct Created: Decodable { let code: String }

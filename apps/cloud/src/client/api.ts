@@ -14,8 +14,8 @@ import type { Purpose } from "../passkeys";
 import type { SpaceChange } from "../spaces";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
-import type { Doc, DocKind, DocMeta } from "../docs";
-import type { DocsView, OrgList, ProjectView, PupuState } from "../server";
+import type { DocKind, DocMeta } from "../docs";
+import type { DocsView, DocView, OrgList, ProjectView, PupuState } from "../server";
 import { MAIN_SESSION, type ChatsView } from "../threads";
 import { createSnapshotOrder } from "./snapshot-order";
 
@@ -69,7 +69,9 @@ export const api = {
     request<{ ok: true }>(`/api/spaces/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(change) }),
   /** 资料：看得到的，和上传能放到哪。 */
   docs: () => request<DocsView>("/api/docs"),
-  doc: (id: string) => request<Doc>(`/api/docs/${encodeURIComponent(id)}`),
+  doc: (id: string) => request<DocView>(`/api/docs/${encodeURIComponent(id)}`),
+  /** 删资料：上传的人或空间主人，不弹确认。 */
+  deleteDoc: (id: string) => request<{ ok: true }>(`/api/docs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   uploadDoc: (input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string }) =>
     request<DocMeta>("/api/docs", { method: "POST", body: JSON.stringify(input) }),
   /** 打开了这个项目：它报回聊天的结果都算看过。 */

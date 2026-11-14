@@ -470,3 +470,34 @@ nonisolated struct AvatarPreset: Decodable, Sendable, Hashable {
     let name: String
     let url: String
 }
+
+/// 一份资料（云端 docs.ts 的 DocMeta）。正文另外拿。
+nonisolated struct DocMeta: Decodable, Sendable, Hashable {
+    let id: String
+    /// 属于哪个空间，nil 是组织层。
+    let spaceId: String?
+    let kind: String
+    let title: String
+    let summary: String
+    var isSkill: Bool { kind == "skill" }
+}
+
+/// 资料页：看得到的资料，和上传能放到哪（第一个是组织）。
+nonisolated struct DocsView: Decodable, Sendable {
+    nonisolated struct Place: Decodable, Sendable, Hashable {
+        let id: String?
+        let name: String
+    }
+    let docs: [DocMeta]
+    let places: [Place]
+}
+
+/// 打开的一份资料。`mayDelete`：上传的人或空间主人（老云端没有这一项，当作不能删）。
+nonisolated struct DocView: Decodable, Sendable {
+    let id: String
+    let title: String
+    let summary: String
+    let body: String
+    let mayDelete: Bool?
+}
+

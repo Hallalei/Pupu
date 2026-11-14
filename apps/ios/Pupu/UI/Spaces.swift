@@ -171,21 +171,23 @@ private class SheetRow: UIControl {
 /// 当前空间下面的子会话：缩进，点 + 名字 + 状态字。
 private final class SheetSubRow: SheetRow {}
 
-/// 切换空间的 sheet：「我的 Pupu」一行，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
+/// 切换空间的 sheet：「我的 Pupu」和「资料」，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
 final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
     private let everyoneUnread: Bool
     private let openPupu: () -> Void
+    private let openDocs: () -> Void
     private let open: (Project) -> Void
     private let openChild: (Project, SpaceChild) -> Void
     private let create: () -> Void
     private let content = UIStackView()
     private var token: StoreToken?
 
-    init(current: String?, everyoneUnread: Bool, openPupu: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void) {
+    init(current: String?, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void) {
         self.current = current
         self.everyoneUnread = everyoneUnread
         self.openPupu = openPupu
+        self.openDocs = openDocs
         self.open = open
         self.openChild = openChild
         self.create = create
@@ -230,8 +232,14 @@ final class SpaceSwitcherViewController: UIViewController {
         shown = shownNow
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let avatar = UIImageView(image: Avatars.round(pupu.image, letter: "P", size: 28, pixelArt: pupu.pixelArt))
+        let docsIcon = UIImageView(image: UIImage(systemName: "doc.text"))
+        docsIcon.tintColor = Theme.ink
+        docsIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
+        docsIcon.contentMode = .center
+        docsIcon.widthAnchor.constraint(equalToConstant: 28).isActive = true
         content.addArrangedSubview(SheetGroup([
-            SheetRow(leading: avatar, title: "我的 Pupu", weight: .semibold) { [weak self] in self?.finish { $0.openPupu() } }
+            SheetRow(leading: avatar, title: "我的 Pupu", weight: .semibold) { [weak self] in self?.finish { $0.openPupu() } },
+            SheetRow(leading: docsIcon, title: "资料") { [weak self] in self?.finish { $0.openDocs() } }
         ]))
 
         let label = UILabel(text: "空间", style: .footnote, color: Theme.inkMuted)

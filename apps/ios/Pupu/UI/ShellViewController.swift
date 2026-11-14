@@ -266,6 +266,7 @@ final class ShellViewController: UIViewController {
             current: currentProject,
             everyoneUnread: chats.private != nil && !inEveryone && isUnread(chats.main),
             openPupu: { [weak self] in self?.show(.chat) },
+            openDocs: { [weak self] in self?.openDocs() },
             open: { [weak self] project in self?.open(project) },
             openChild: { [weak self] project, child in
                 self?.open(project)
@@ -279,6 +280,21 @@ final class ShellViewController: UIViewController {
             sheet.preferredCornerRadius = Theme.Radius.panel
         }
         present(switcher, animated: true)
+    }
+
+    /// 资料：组织层和看得到的空间里的。整页 sheet，里面可以推进去读一份。
+    private func openDocs() {
+        view.endEditing(true)
+        let docs = DocsViewController(identity: identity)
+        docs.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak docs] _ in docs?.dismiss(animated: true) })
+        let nav = UINavigationController(rootViewController: docs)
+        nav.navigationBar.prefersLargeTitles = true
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = Theme.Radius.panel
+        }
+        present(nav, animated: true)
     }
 
     /// 空间名胶囊：成员和邀请；全员是设置（只有组织创建者打得开）。老项目没有主人，不弹。

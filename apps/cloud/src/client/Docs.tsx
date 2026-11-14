@@ -1,10 +1,10 @@
 import { Button, Input, Label, Modal, Spinner, Switch, TextArea } from "@heroui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { Doc, DocMeta } from "../docs";
-import type { DocsView } from "../server";
+import type { DocMeta } from "../docs";
+import type { DocView, DocsView } from "../server";
 import { api } from "./api";
-import { ChevronDownIcon, ChevronLeftIcon, FileIcon, PlusIcon } from "./icons";
+import { ChevronDownIcon, ChevronLeftIcon, FileIcon, PlusIcon, TrashIcon } from "./icons";
 
 /** 资料：组织层和看得到的空间里的，按地方分组。点开读正文；上传放文字。图片和设计稿以后再说。 */
 export function Docs({ version, open, onOpen }: { version: unknown; open: string | undefined; onOpen: (id: string | undefined) => void }) {
@@ -17,7 +17,18 @@ export function Docs({ version, open, onOpen }: { version: unknown; open: string
   // 空间变了（拉人、移人、改密级）看得到的也跟着变，重新拿一次。
   useEffect(load, [load, version]);
 
-  if (open) return <DocPage id={open} onBack={() => onOpen(undefined)} />;
+  if (open) {
+    return (
+      <DocPage
+        id={open}
+        onBack={() => onOpen(undefined)}
+        onDeleted={() => {
+          load();
+          onOpen(undefined);
+        }}
+      />
+    );
+  }
   if (!view) {
     return (
       <div className="grid h-full place-items-center">
@@ -85,23 +96,53 @@ function DocRow({ doc, onOpen }: { doc: DocMeta; onOpen: () => void }) {
   );
 }
 
-function DocPage({ id, onBack }: { id: string; onBack: () => void }) {
-  const [doc, setDoc] = useState<Doc | null | undefined>(undefined);
+function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; onDeleted: () => void }) {
+  const [doc, setDoc] = useState<DocView | null | undefined>(undefined);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setDoc(undefined);
+    setError(null);
     api.doc(id).then(setDoc, () => setDoc(null));
   }, [id]);
+
+  async function remove() {
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deleteDoc(id);
+      onDeleted();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <article className="mx-auto flex max-w-2xl flex-col gap-3 px-4 pb-10">
-        <button
-          type="button"
-          aria-label="回到资料"
-          onClick={onBack}
-          className="glass lift tap grid size-bar place-items-center rounded-full text-[20px]"
-        >
-          <ChevronLeftIcon />
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-label="回到资料"
+            onClick={onBack}
+            className="glass lift tap grid size-bar place-items-center rounded-full text-[20px]"
+          >
+            <ChevronLeftIcon />
+          </button>
+          {doc?.mayDelete && (
+            <Button
+              variant="ghost"
+              aria-label="删除"
+              isPending={deleting}
+              onPress={() => void remove()}
+              className="glass lift tap size-bar min-w-0 rounded-full p-0 text-[19px] text-danger-ink"
+            >
+              <TrashIcon />
+            </Button>
+          )}
+        </div>
+        {error && <div className="text-subheadline text-danger-ink">{error}</div>}
         {doc === undefined && <Spinner size="sm" aria-label="正在打开" />}
         {doc === null && <div className="text-message text-ink-sky">没有这份资料</div>}
         {doc && (

@@ -394,9 +394,12 @@ export function App() {
                 aria-label="全部空间"
                 aria-expanded={listOpen}
                 onClick={() => setListOpen((open) => !open)}
-                className="glass lift tap grid size-bar place-items-center rounded-full text-[20px] lg:invisible"
+                className="glass lift tap relative grid size-bar place-items-center rounded-full text-[20px] lg:invisible"
               >
                 <MenuIcon />
+                {lines.unread.everyone && !inEveryone && (
+                  <span className="absolute top-1.5 right-1.5 size-2.5 rounded-full bg-danger outline-2 outline-background" />
+                )}
               </button>
             ) : (
               <div className="size-bar" />
@@ -405,6 +408,7 @@ export function App() {
               section={section}
               onSection={(kind) => go({ kind })}
               unread={lines.unread.own}
+              everyoneUnread={lines.unread.everyone && section === "chat"}
               avatar={pupuAvatar}
             />
             <button
@@ -579,11 +583,14 @@ function SectionSwitch({
   section,
   onSection,
   unread,
+  everyoneUnread,
   avatar
 }: {
   section: Section;
   onSection: (section: Section) => void;
   unread: boolean;
+  /** 全员有新消息、人在聊天段：窄屏没有侧栏，红点挂在「项目」上。到了项目段改挂在 ≡ 上。 */
+  everyoneUnread: boolean;
   /** Pupu 换过的头像，没换过是 null。 */
   avatar: string | null;
 }) {
@@ -603,8 +610,13 @@ function SectionSwitch({
             </span>
             {indicator}
           </Tabs.Tab>
-          <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}>
+          <Tabs.Tab
+            id="projects"
+            aria-label={everyoneUnread ? "项目，全员有新消息" : "项目"}
+            className={`${segment} relative w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}
+          >
             项目
+            {everyoneUnread && <span className="absolute top-0.5 right-0.5 size-2.5 rounded-full bg-danger outline-2 outline-background lg:hidden" />}
             {indicator}
           </Tabs.Tab>
         </Tabs.List>

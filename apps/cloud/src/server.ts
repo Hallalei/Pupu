@@ -161,7 +161,7 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
-import { DOC_BODY_LIMIT, DocStore, docScope, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
+import { DOC_BODY_LIMIT, DocStore, docScope, mayDeleteDoc, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
 import { createOrgTools } from "./org.ts";
 import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
@@ -207,6 +207,8 @@ export type ChildView = {
 
 /** 资料页：看得到的资料，和上传时能选的地方（id 为 null 是组织层）。 */
 export type DocsView = { docs: DocMeta[]; places: { id: string | null; name: string }[] };
+/** 打开的一份资料，带上这个人能不能删。 */
+export type DocView = Doc & { mayDelete: boolean };
 
 /** 状态里的空间：项目本身加上它的子会话。 */
 export type ProjectView = Project & { readonly children: readonly ChildView[] };
@@ -2068,9 +2070,26 @@ export class Pupu extends DurableObject<Env> {
     };
   }
 
-  async readDoc(id: string, device: string | null = null): Promise<Doc | undefined> {
+  async readDoc(id: string, device: string | null = null): Promise<DocView | undefined> {
     await this.lifecycle.start();
-    return this.docs.read(viewerScope(this.#viewer(device), this.store.listProjects()), id);
+    const doc = this.docs.read(viewerScope(this.#viewer(device), this.store.listProjects()), id);
+    return doc ? { ...doc, mayDelete: this.#mayDeleteDoc(doc, device) } : undefined;
+  }
+
+  #mayDeleteDoc(doc: Doc, device: string | null): boolean {
+    const space = doc.spaceId === null ? undefined : this.store.getProject(doc.spaceId);
+    return mayDeleteDoc(doc, this.#viewer(device), space, this.#actor(device)?.role === "creator");
+  }
+
+  /** 删一份资料。看不到的当作没有；看得到但不是上传人或管事的，forbidden。 */
+  async deleteDoc(id: string, device: string | null = null): Promise<"ok" | "missing" | "forbidden"> {
+    await this.lifecycle.start();
+    const doc = this.docs.read(viewerScope(this.#viewer(device), this.store.listProjects()), id);
+    if (!doc) return "missing";
+    if (!this.#mayDeleteDoc(doc, device)) return "forbidden";
+    this.docs.end(id, Date.now());
+    this.#changed();
+    return "ok";
   }
 
   /** 人上传一份资料。放到哪由他选，只能是他看得到的地方；算他写的。 */
@@ -2954,6 +2973,12 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     const found = await caller.pupu.readDoc(decodeURIComponent(doc[1] ?? ""), caller.device);
     if (!found) return Response.json({ error: "没有这份资料" }, { status: 404 });
     return Response.json(found);
+  }
+  if (doc && method === "DELETE") {
+    const verdict = await caller.pupu.deleteDoc(decodeURIComponent(doc[1] ?? ""), caller.device);
+    if (verdict === "missing") return Response.json({ error: "没有这份资料" }, { status: 404 });
+    if (verdict === "forbidden") return Response.json({ error: "只有上传的人和空间主人能删" }, { status: 403 });
+    return Response.json({ ok: true });
   }
   if (pathname === "/api/projects" && method === "POST") {
     const body = await readJson<{ name?: string; goal?: string }>(request);

@@ -70,6 +70,21 @@ export function mayPromote(space: SpaceAccess | undefined): boolean {
   return space !== undefined && isOpen(space.level);
 }
 
+/**
+ * 人能不能删一份资料：上传的人自己，或者它所在地方的管事的（空间主人；组织层是组织的创建者）。
+ * Pupu 写的（没有上传人）只有管事的能删。删不弹确认，删了能从旧版本里找回（只标 ended_at）。
+ */
+export function mayDeleteDoc(
+  doc: Pick<DocMeta, "authorId" | "spaceId">,
+  viewer: string | null,
+  space: { readonly ownerId: string | null } | undefined,
+  creator: boolean
+): boolean {
+  if (viewer === null) return false;
+  if (doc.authorId === viewer) return true;
+  return doc.spaceId === null ? creator : space?.ownerId === viewer;
+}
+
 type Row = Record<string, SqlStorageValue>;
 
 function toMeta(row: Row): DocMeta {
