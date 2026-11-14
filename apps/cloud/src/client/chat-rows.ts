@@ -33,6 +33,35 @@ export type ToolStep = {
   readonly output: string;
   readonly outputPath: string | null;
   readonly expanded: boolean;
+  /** 这一步带回来的截图（看窗口、看屏幕那几种），没有是 null。 */
+  readonly image: StepImage | null;
+};
+
+export type StepImage = { readonly data: string; readonly mimeType: string };
+
+/**
+ * live：这一轮还在跑，这是最后一张电脑卡。waiting：有一步在等批。done：都做完了。
+ * failed：最后一步出错了。stopped：这一轮停在半路（被停掉、没批准、作废了）。
+ */
+export type ComputerTaskState = "live" | "waiting" | "done" | "failed" | "stopped";
+
+/**
+ * Pupu 在一台电脑上连着做的几步，画成一张卡：在哪台电脑上、在做什么、状态，有截图时带画面，点开看每一步。
+ * 和浏览器卡片一样的合并法：卡片放在第一步的位置，中间说的话照常显示。
+ */
+export type ComputerTask = {
+  readonly id: string;
+  readonly computerId: string | null;
+  readonly computer: string | null;
+  readonly state: ComputerTaskState;
+  /** 右上角那几个字：「正在做」「等你批准」「用完了 · 3 步」。 */
+  readonly status: string;
+  /** 卡片下沿那一行：最近的一步，说成人话，不带电脑名。 */
+  readonly latest: string;
+  readonly steps: readonly ToolStep[];
+  /** 最近一张截图。 */
+  readonly screen: StepImage | null;
+  readonly expanded: boolean;
 };
 
 export type BrowserPlanStep = { readonly text: string; readonly done: boolean };
@@ -81,13 +110,7 @@ export type ChatRow = {
   | { readonly kind: "project-tag"; readonly name: string; readonly projectId: string | null }
   | { readonly kind: "tool"; readonly step: ToolStep }
   | { readonly kind: "browser"; readonly task: BrowserTask }
-  | {
-      readonly kind: "tool-group";
-      readonly title: string;
-      readonly status: StepStatus;
-      readonly failures: number;
-      readonly expanded: boolean;
-    }
+  | { readonly kind: "computer"; readonly task: ComputerTask }
   | { readonly kind: "notice"; readonly text: string }
   | { readonly kind: "handoff"; readonly text: string }
   | { readonly kind: "report"; readonly card: ReportCard }
@@ -109,10 +132,12 @@ export type RowContext = {
 
 type RowView = Pick<SessionView, "messages" | "live" | "running" | "tools" | "retry" | "error">;
 
-type Result = { readonly text: string; readonly details: Record<string, unknown>; readonly error: boolean };
-
-/** 连着这么多步就合成一组。 */
-const GROUP_MINIMUM = 3;
+type Result = {
+  readonly text: string;
+  readonly details: Record<string, unknown>;
+  readonly error: boolean;
+  readonly image: StepImage | null;
+};
 
 type Row = ChatRow;
 type WithoutGap<T> = T extends unknown ? Omit<T, "gap"> : never;
@@ -125,10 +150,12 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
     if (message.role !== "tool") continue;
     for (const part of message.parts) {
       if (part.type !== "tool-result") continue;
+      const image = [...part.content].reverse().find((item) => item.type === "image");
       results.set(part.id, {
         text: part.content.map((item) => (item.type === "text" ? item.text : "")).join(""),
         details: asRecord(part.details),
-        error: part.error
+        error: part.error,
+        image: image ? { data: image.data, mimeType: image.mimeType } : null
       });
     }
   }
@@ -197,7 +224,7 @@ export function buildRows(view: RowView, context: RowContext): Row[] {
   }
   rows.push(...reports.map(reportRow));
   rows = browserCards(rows, browserMarks, view.running, context);
-  rows = grouped(rows, context);
+  rows = computerCards(rows, view.running, context);
   if (view.running && !hasText(view.live)) {
     rows.push({ id: "typing", gap: 12, kind: "typing", retrying: view.retry !== null });
   }
@@ -326,7 +353,8 @@ function toolRow(
       status,
       output: readable((result?.text ?? output ?? "").slice(0, 4000), status),
       outputPath: typeof result?.details.outputPath === "string" ? result.details.outputPath : null,
-      expanded: (status === "failed") !== context.toggled.has(id)
+      expanded: (status === "failed") !== context.toggled.has(id),
+      image: result?.image ?? null
     }
   };
 }
@@ -554,55 +582,76 @@ export function browserDoing(mark: BrowserMark): string {
   }
 }
 
-/** 连着的几步合成一组，点开再看每一步。 */
-function grouped(rows: readonly Row[], context: RowContext): Row[] {
+/**
+ * 把电脑上的几步合成卡片：卡片放在第一步的位置，后面同一台电脑上的步骤收进去，中间说的话照常显示。
+ * 用户发了新消息、项目报回结果、系统通知、浏览器任务，或者换了一台电脑，就另起一张。和 iOS 的 ChatRows.swift 一起改。
+ */
+function computerCards(rows: readonly Row[], running: boolean, context: RowContext): Row[] {
+  type Open = { index: number; id: string; computer: string | null; steps: ToolStep[] };
   const result: Row[] = [];
-  let run: Row[] = [];
-
-  function flush() {
-    const steps = run.flatMap((row) => (row.kind === "tool" ? [row.step] : []));
-    if (steps.length < GROUP_MINIMUM) {
-      result.push(...run);
-      run = [];
-      return;
-    }
-    const id = `group:${steps[0]!.callId}`;
-    const expanded = context.toggled.has(id);
-    const names = new Set(steps.flatMap((step) => (step.computer ? [step.computer] : [])));
-    const place = names.size === 1 ? `在「${[...names][0]}」上` : "在电脑上";
-    const failures = steps.filter((step) => ["failed", "denied", "expired"].includes(step.status)).length;
-    const status: StepStatus = steps.some((step) => step.status === "waiting")
-      ? "waiting"
-      : steps.some((step) => step.status === "running")
-        ? "running"
-        : failures > 0
-          ? "failed"
-          : steps.some((step) => step.status === "unfinished")
-            ? "unfinished"
-            : "done";
-    result.push({
-      id,
-      gap: run[0]!.gap,
-      kind: "tool-group",
-      title: `${place}做了 ${steps.length} 件事`,
-      status,
-      failures,
-      expanded
-    });
-    if (expanded) result.push(...run.map((row) => ({ ...row, gap: 8 as const })));
-    run = [];
-  }
-
+  const cards: Open[] = [];
+  let open: Open | null = null;
   for (const row of rows) {
     if (row.kind === "tool") {
-      run.push(row);
-    } else {
-      flush();
-      result.push(row);
+      if (!open || open.computer !== row.step.computer) {
+        open = { index: result.length, id: `computer:${row.step.callId}`, computer: row.step.computer, steps: [] };
+        cards.push(open);
+        result.push(row);
+      }
+      open.steps.push(row.step);
+      continue;
     }
+    if (row.kind === "user" || row.kind === "handoff" || row.kind === "notice" || row.kind === "report" || row.kind === "browser") {
+      open = null;
+    }
+    result.push(row);
   }
-  flush();
+  cards.forEach((card, position) => {
+    const first = result[card.index]!;
+    const task = computerTask(card.id, card.steps, context, running && position === cards.length - 1);
+    result[card.index] = { id: card.id, gap: first.gap, kind: "computer", task };
+  });
   return result;
+}
+
+function computerTask(id: string, steps: readonly ToolStep[], context: RowContext, live: boolean): ComputerTask {
+  const name = steps[0]?.computer ?? null;
+  const computer = context.computers.find((item) => item.name === name || item.id === name);
+  const latest = steps.at(-1);
+  let state: ComputerTaskState;
+  let status: string;
+  if (steps.some((step) => step.status === "waiting")) {
+    state = "waiting";
+    status = "等你批准";
+  } else if (steps.some((step) => step.status === "running") || (live && latest?.status === "done")) {
+    state = "live";
+    status = "正在做";
+  } else if (latest?.status === "failed") {
+    state = "failed";
+    status = "出错了";
+  } else if (latest && latest.status !== "done") {
+    state = "stopped";
+    status = "已停下";
+  } else {
+    state = "done";
+    status = `用完了 · ${steps.length} 步`;
+  }
+  return {
+    id,
+    computerId: computer?.id ?? null,
+    computer: computer?.name ?? name,
+    state,
+    status,
+    latest: latest ? stepText(latest) : "",
+    steps,
+    screen: [...steps].reverse().find((step) => step.image)?.image ?? null,
+    expanded: (state === "failed") !== context.toggled.has(id)
+  };
+}
+
+/** 一步的标题去掉开头的「在「mbpro」上」，卡片上已经写了是哪台电脑。 */
+export function stepText(step: ToolStep): string {
+  return step.title.replace(/^在「[^」]*」上|^在电脑上/, "");
 }
 
 /** 电脑上的一步，画成「在「mbpro」上跑了 npm test」。动词后面的英文和路径前面带空格。 */

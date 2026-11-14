@@ -14,8 +14,10 @@ nonisolated struct ChatRow: Equatable, Sendable {
         /// Pupu 还没出字：一个只有三个点的气泡。
         case typing(retrying: Bool)
         case projectTag(name: String, projectId: String?)
+        /// 电脑上的一步。只在电脑任务卡展开时出现在卡片下面。
         case tool(ToolStep)
-        case toolGroup(ToolGroup)
+        /// Pupu 在一台电脑上连着做的几步，画成一张卡。
+        case computer(ComputerTask)
         /// 一段连着的浏览器操作，画成一张卡片：实时画面、状态、计划、做完后的一句结果。
         case browser(BrowserTask)
         case notice(String)
@@ -46,6 +48,8 @@ nonisolated struct ToolStep: Equatable, Sendable {
     let output: String
     let outputPath: String?
     var expanded: Bool
+    /// 这一步带回来的截图，没有是 nil。
+    var image: StepImage? = nil
 }
 
 /// 浏览器任务卡片。和网页的 chat-rows.ts 里的 BrowserTask 是同一套规则，两边一起改。
@@ -73,11 +77,24 @@ nonisolated struct BrowserTask: Equatable, Sendable {
     var holding: Bool { state == .handover }
 }
 
-/// 连着好几步，合成一组。
-nonisolated struct ToolGroup: Equatable, Sendable {
-    let title: String
-    let status: ToolStep.Status
-    let failures: Int
+/// 电脑任务卡：在哪台电脑上、在做什么、状态；带回过截图就显示最近的画面，点「步骤」看每一步。
+/// 和网页的 chat-rows.ts 里的 ComputerTask 是同一套规则，两边一起改。
+nonisolated struct ComputerTask: Equatable, Sendable {
+    /// live：这一轮还在跑，这是最后一张电脑卡。waiting：有一步在等批。done：都做完了。
+    /// failed：最后一步出错了。stopped：这一轮停在半路。
+    enum State: Equatable, Sendable { case live, waiting, done, failed, stopped }
+
+    let id: String
+    let computerId: String?
+    let computer: String?
+    let state: State
+    /// 右上角那几个字：「正在做」「等你批准」「用完了 · 3 步」。
+    let status: String
+    /// 卡片下沿那一行：最近的一步，不带电脑名。
+    let latest: String
+    let steps: [ToolStep]
+    /// 最近一张截图。
+    let screen: StepImage?
     var expanded: Bool
 }
 
@@ -96,20 +113,18 @@ nonisolated struct ChatContext: Sendable {
 }
 
 nonisolated enum ChatRows {
-    /// 连着这么多步就合成一组。
-    static let groupMinimum = 3
-
     private struct Result {
         let text: String
         let details: JSON?
         let error: Bool
+        let image: StepImage?
     }
 
     static func build(_ view: SessionView, context: ChatContext) -> [ChatRow] {
         var results: [String: Result] = [:]
         for message in view.messages where message.role == .tool {
-            for case let .toolResult(id, _, text, details, error) in message.parts {
-                results[id] = Result(text: text, details: details, error: error)
+            for case let .toolResult(id, _, text, details, error, image) in message.parts {
+                results[id] = Result(text: text, details: details, error: error, image: image)
             }
         }
         let outputs = Dictionary(view.tools.map { ($0.callId, $0.output) }, uniquingKeysWith: { _, last in last })
@@ -200,7 +215,7 @@ nonisolated enum ChatRows {
         }
         rows += reports.map(reportRow)
         rows = browserCards(rows, marks: marks, running: view.running, context: context)
-        rows = grouped(rows, context: context)
+        rows = computerCards(rows, running: view.running, context: context)
         if view.running && !(view.live?.hasText ?? false) {
             rows.append(ChatRow(id: "typing", kind: .typing(retrying: view.retry != nil)))
         }
@@ -306,7 +321,8 @@ nonisolated enum ChatRows {
                 status: status,
                 output: readable(String((result?.text ?? output ?? "").prefix(4000)), status: status),
                 outputPath: result?.details?["outputPath"]?.string,
-                expanded: (status == .failed) != context.toggled.contains(id)
+                expanded: (status == .failed) != context.toggled.contains(id),
+                image: result?.image
             )))
         }
     }
@@ -517,53 +533,93 @@ nonisolated enum ChatRows {
         }
     }
 
-    /// 连着的几步合成一组，点开再看每一步。
-    private static func grouped(_ rows: [ChatRow], context: ChatContext) -> [ChatRow] {
+    /// 把电脑上的几步合成卡片：卡片放在第一步的位置，后面同一台电脑上的步骤收进去，中间说的话照常显示。
+    /// 用户发了新消息、项目报回结果、系统通知、浏览器任务，或者换了一台电脑，就另起一张。
+    /// 卡片展开时，每一步排在卡片下面，点开看输出。和网页的 chat-rows.ts 一起改。
+    private static func computerCards(_ rows: [ChatRow], running: Bool, context: ChatContext) -> [ChatRow] {
+        struct Open {
+            let index: Int
+            let id: String
+            let computer: String?
+            var steps: [ToolStep] = []
+        }
         var result: [ChatRow] = []
-        var run: [ChatRow] = []
-
-        func flush() {
-            defer { run = [] }
-            let steps = run.compactMap { row -> ToolStep? in
-                if case .tool(let step) = row.kind { return step }
-                return nil
-            }
-            guard steps.count >= groupMinimum else {
-                result += run
-                return
-            }
-            let id = "group:\(steps[0].callId)"
-            let expanded = context.toggled.contains(id)
-            let names = Set(steps.compactMap(\.computer))
-            let place = names.count == 1 ? "在「\(names.first!)」上" : "在电脑上"
-            let failures = steps.filter { [.failed, .denied, .expired].contains($0.status) }.count
-            let status: ToolStep.Status =
-                if steps.contains(where: { $0.status == .waiting }) { .waiting }
-                else if steps.contains(where: { $0.status == .running }) { .running }
-                else if failures > 0 { .failed }
-                else if steps.contains(where: { $0.status == .unfinished }) { .unfinished }
-                else { .done }
-            let group = ToolGroup(title: "\(place)做了 \(steps.count) 件事", status: status, failures: failures, expanded: expanded)
-            result.append(ChatRow(id: id, kind: .toolGroup(group), gap: run[0].gap))
-            if expanded {
-                result += run.map { row in
-                    var row = row
-                    row.gap = 8
-                    return row
-                }
-            }
-        }
-
+        var cards: [Open] = []
+        var open: Int?
         for row in rows {
-            if case .tool = row.kind {
-                run.append(row)
-            } else {
-                flush()
-                result.append(row)
+            switch row.kind {
+            case .tool(let step):
+                if open == nil || cards[open!].computer != step.computer {
+                    cards.append(Open(index: result.count, id: "computer:\(step.callId)", computer: step.computer))
+                    open = cards.count - 1
+                    result.append(row)
+                }
+                cards[open!].steps.append(step)
+                continue
+            case .user, .other, .handoff, .notice, .report, .browser:
+                open = nil
+            default:
+                break
+            }
+            result.append(row)
+        }
+        var inserted = 0
+        for (position, card) in cards.enumerated() {
+            let index = card.index + inserted
+            let task = computerTask(card.id, steps: card.steps, context: context, live: running && position == cards.count - 1)
+            result[index] = ChatRow(id: card.id, kind: .computer(task), gap: result[index].gap)
+            if task.expanded {
+                // 卡片上已经写了是哪台电脑，下面每一步不再重复。
+                let steps = card.steps.map { step in
+                    let short = ToolStep(
+                        callId: step.callId, computer: step.computer, icon: step.icon, title: stepText(step),
+                        status: step.status, output: step.output, outputPath: step.outputPath, expanded: step.expanded, image: step.image
+                    )
+                    return ChatRow(id: "tool:\(step.callId)", kind: .tool(short), gap: 8)
+                }
+                result.insert(contentsOf: steps, at: index + 1)
+                inserted += steps.count
             }
         }
-        flush()
         return result
+    }
+
+    private static func computerTask(_ id: String, steps: [ToolStep], context: ChatContext, live: Bool) -> ComputerTask {
+        let name = steps.first?.computer
+        let computer = context.computers.first { $0.name == name || $0.id == name }
+        let latest = steps.last
+        let state: ComputerTask.State
+        let status: String
+        if steps.contains(where: { $0.status == .waiting }) {
+            (state, status) = (.waiting, "等你批准")
+        } else if steps.contains(where: { $0.status == .running }) || (live && latest?.status == .done) {
+            (state, status) = (.live, "正在做")
+        } else if latest?.status == .failed {
+            (state, status) = (.failed, "出错了")
+        } else if let latest, latest.status != .done {
+            (state, status) = (.stopped, "已停下")
+        } else {
+            (state, status) = (.done, "用完了 · \(steps.count) 步")
+        }
+        return ComputerTask(
+            id: id,
+            computerId: computer?.id,
+            computer: computer?.name ?? name,
+            state: state,
+            status: status,
+            latest: latest.map(stepText) ?? "",
+            steps: steps,
+            screen: steps.last { $0.image != nil }?.image,
+            expanded: (state == .failed) != context.toggled.contains(id)
+        )
+    }
+
+    /// 一步的标题去掉开头的「在「mbpro」上」，卡片上已经写了是哪台电脑。
+    static func stepText(_ step: ToolStep) -> String {
+        if let range = step.title.range(of: #"^(在「[^」]*」上|在电脑上)"#, options: .regularExpression) {
+            return String(step.title[range.upperBound...])
+        }
+        return step.title
     }
 }
 

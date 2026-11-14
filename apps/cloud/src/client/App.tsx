@@ -10,7 +10,6 @@ import { Approvals, WaitingChip } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
-import { useDesktopComputer } from "./desktop";
 import { Doing } from "./Doing";
 import { CheckIcon, MenuIcon, PlusIcon } from "./icons";
 import { Login } from "./Login";
@@ -114,7 +113,6 @@ export function App() {
   const section = sectionOf(route);
   const lines = useChatLines(chats, route.kind === "chat");
   const { line, session, canSwitch } = lines;
-  const thisComputer = useDesktopComputer();
   // 允许和放宽权限要电脑主人亲手确认。本机开发没设访问口令时没有「这台设备」，照常能点。
   const current = devices.find((device) => device.current);
   const confirmBy = confirmWhere(current?.kind ?? null, passkeys);
@@ -257,8 +255,6 @@ export function App() {
         current={project?.id}
         onOpen={(id) => go({ kind: "project", id })}
         onCreate={() => setCreating(true)}
-        thisComputer={thisComputer}
-        onOpenThisComputer={() => setSettings("this")}
       />
       <div className="relative flex min-w-0 flex-1 flex-col">
         <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)]">
@@ -320,7 +316,10 @@ export function App() {
           {route.kind === "chat" && (
             <Doing
               rows={doing}
-              onOpenProject={(id) => go({ kind: "project", id })}
+              onOpen={(activity) => {
+                if (activity.project) go({ kind: "project", id: activity.project.id });
+                else if (!showComputerCard(activity.computerId)) setSettings({ computer: activity.computerId });
+              }}
               onTakeback={async (id) => {
                 await api.takeback(id);
                 await refresh();
@@ -399,6 +398,16 @@ export function App() {
       />
     </div>
   );
+}
+
+/** 把对话里这台电脑最近的那张任务卡滚到眼前，闪一下。对话里没有这张卡就返回 false。 */
+function showComputerCard(computerId: string): boolean {
+  const cards = document.querySelectorAll<HTMLElement>(`[data-computer-card="${CSS.escape(computerId)}"]`);
+  const card = cards[cards.length - 1];
+  if (!card) return false;
+  card.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  card.animate([{ outline: "2px solid var(--color-foreground)" }, { outline: "2px solid transparent" }], { duration: 1200 });
+  return true;
 }
 
 /** 顶部切换。聊天那段是 Pupu：写着当前那条聊天，长按、右键或在已选中时再点一下，换大家和私聊。 */
@@ -488,27 +497,22 @@ function SectionSwitch({
 
 /**
  * 宽屏的左侧栏：就是窄窗口里 ≡ 打开的那页项目列表，常驻在左边。第一行「新项目」，下面是全部项目，最近活动的在前。
- * 导航属于控件层，用和顶栏一样的玻璃。这台电脑没连上时，底下露一行，点开设置里的「这台电脑」。
+ * 导航属于控件层，用和顶栏一样的玻璃。电脑不在这里，在设置里。
  */
 function Sidebar({
   projects,
   waiting,
   current,
   onOpen,
-  onCreate,
-  thisComputer,
-  onOpenThisComputer
+  onCreate
 }: {
   projects: readonly Project[];
   waiting: ReadonlySet<string>;
   current: string | undefined;
   onOpen: (id: string) => void;
   onCreate: () => void;
-  thisComputer: ReturnType<typeof useDesktopComputer>;
-  onOpenThisComputer: () => void;
 }) {
   const row = "flex min-h-control w-full shrink-0 items-center gap-2 rounded-tag px-3 py-1.5 text-left text-body";
-  const trouble = thisComputer && (!thisComputer.paired || thisComputer.status === "offline");
   return (
     <aside className="sidebar glass relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-panel lg:flex">
       <nav aria-label="全部项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
@@ -535,16 +539,6 @@ function Sidebar({
           );
         })}
       </nav>
-      {trouble && (
-        <button
-          type="button"
-          onClick={onOpenThisComputer}
-          className="m-2 mt-0 flex shrink-0 items-center gap-2 rounded-tag px-3 py-2 text-left text-subheadline text-muted hover:bg-foreground/6"
-        >
-          <span className="size-2 shrink-0 rounded-full bg-offline" aria-hidden="true" />
-          {thisComputer.paired ? "这台电脑没连上 Pupu" : "这台电脑的授权被吊销了"}
-        </button>
-      )}
     </aside>
   );
 }

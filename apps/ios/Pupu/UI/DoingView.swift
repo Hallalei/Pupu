@@ -20,7 +20,7 @@ final class DoingView: SurfaceView {
 
     private let stack = UIStackView()
     private let more = UIButton(configuration: .plain())
-    private let openProject: (Project) -> Void
+    private let open: (ComputerActivity) -> Void
     private let relayout: () -> Void
     private var activity: [ComputerActivity] = []
     private var lines: [Line] = []
@@ -29,8 +29,9 @@ final class DoingView: SurfaceView {
     private var takebacks: [String: Takeback] = [:]
 
     /// relayout 在 Shell 里排版：新高度要加给页面的安全区，内容才跟着动画挤开。
-    init(openProject: @escaping (Project) -> Void, relayout: @escaping () -> Void) {
-        self.openProject = openProject
+    /// open：点了一行。去对话里那台电脑的任务卡，带项目的去那个项目。
+    init(open: @escaping (ComputerActivity) -> Void, relayout: @escaping () -> Void) {
+        self.open = open
         self.relayout = relayout
         super.init(.strong, radius: Theme.Radius.row, lifted: true)
         isHidden = true
@@ -139,7 +140,7 @@ final class DoingView: SurfaceView {
         }
     }
 
-    /// 一行：在做什么，第二行是哪台电脑、哪个项目、做了多久。带项目的点开去那个项目。
+    /// 一行：在做什么，第二行是哪台电脑、哪个项目、做了多久。点开去这台电脑的任务卡。
     private func row(_ line: Line, more: UIView?) -> UIView {
         let activity = line.activity
         let title = activity.doing ?? "闲着，屏幕控制还开着"
@@ -163,13 +164,8 @@ final class DoingView: SurfaceView {
         content.pin(to: body, insets: UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s4, bottom: Theme.Space.s2, right: 0))
         body.isAccessibilityElement = true
         body.accessibilityLabel = "\(title)，\(line.detail)\(activity.currentState == .waiting ? "，等你批准" : "")"
-        if let ref = activity.project {
-            body.accessibilityTraits = .button
-            // 点的时候才找项目：activity 帧可能比项目列表先到，这一行不会因此重建。
-            body.addAction(UIAction { [weak self] _ in
-                if let project = Store.shared.project(id: ref.id) { self?.openProject(project) }
-            }, for: .touchUpInside)
-        }
+        body.accessibilityTraits = .button
+        body.addAction(UIAction { [weak self] _ in self?.open(activity) }, for: .touchUpInside)
 
         let items = [body, activity.screen ? takebackButton(line) : nil, more].compactMap { $0 }
         let bar = UIStackView(arrangedSubviews: items)

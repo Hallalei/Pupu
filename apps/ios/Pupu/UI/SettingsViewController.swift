@@ -223,8 +223,9 @@ final class SettingsViewController: UICollectionViewController {
         let connectors = store.connectors
         let accounts = connectors.accounts.isEmpty ? (connectors.enabled ? "未连接" : "未开启") : "\(connectors.accounts.count) 个"
         let online = store.computers.filter(\.online).count
-        let computers = store.computers.isEmpty ? "没有" : online > 0 ? "\(online) 台在线" : "都离线"
-        var first: [Item] = [.link(.accounts, summary: accounts), .link(.computers, summary: computers)]
+        let computers = store.computers.isEmpty ? "没有" : "\(store.computers.count) 台 · \(online) 台在线"
+        // 电脑从主界面挪进了设置，排在第一行。
+        var first: [Item] = [.link(.computers, summary: computers), .link(.accounts, summary: accounts)]
         // 创建者能换 Pupu 的头像。没开 Google 登录（没有成员）时，云端把没主人的设备都当创建者，见 members.ts 的 actorOf。
         if me?.isCreator == true || store.members.isEmpty { first.insert(.pupuAvatar(store.pupuAvatar), at: 0) }
         // 没开 Google 登录、还没有创建者时没有成员，不显示这一行。
@@ -265,7 +266,7 @@ final class SettingsViewController: UICollectionViewController {
     private func renderComputers(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         let store = Store.shared
         snapshot.appendSections([.computers])
-        snapshot.appendItems(store.computers.isEmpty ? [.noComputer] : store.computers.map(Item.computer), toSection: .computers)
+        snapshot.appendItems(store.computers.isEmpty ? [.noComputer] : store.computers.map { .computer($0.settled) }, toSection: .computers)
         renderPair(&snapshot)
     }
 
@@ -280,7 +281,7 @@ final class SettingsViewController: UICollectionViewController {
         let me = Store.shared.members.first(where: \.current)
         if computer.ownerId == nil || computer.ownerId == me?.id {
             snapshot.appendSections([.remoteDesktop])
-            snapshot.appendItems([.remoteDesktop(computer)], toSection: .remoteDesktop)
+            snapshot.appendItems([.remoteDesktop(computer.settled)], toSection: .remoteDesktop)
         }
         snapshot.appendSections([.policy(computerId: id), .abilities])
         snapshot.appendItems(Computer.Policy.allCases.map {
@@ -291,7 +292,7 @@ final class SettingsViewController: UICollectionViewController {
         ], toSection: .abilities)
         if mayRevoke(owner: computer.ownerId) {
             snapshot.appendSections([.revokeComputer])
-            snapshot.appendItems([.revokeComputer(computer)], toSection: .revokeComputer)
+            snapshot.appendItems([.revokeComputer(computer.settled)], toSection: .revokeComputer)
         }
     }
 
@@ -371,6 +372,8 @@ final class SettingsViewController: UICollectionViewController {
         content.secondaryTextProperties.numberOfLines = 0
         content.imageProperties.tintColor = Theme.ink
         cell.accessories = []
+        cell.backgroundConfiguration = cell.defaultBackgroundConfiguration()
+        cell.accessibilityTraits = []
         switch item {
         case .profile(let title, let detail, let avatar, let member):
             content.text = title
@@ -451,11 +454,19 @@ final class SettingsViewController: UICollectionViewController {
             content.text = "还没有授权的电脑"
             content.secondaryText = "在下面生成配对码，在电脑上配对之后，这里会显示它在不在线。"
         case .remoteDesktop(let computer):
-            content.text = "远程桌面"
-            content.secondaryText = computer.online ? "看这台电脑的屏幕，用手机操作" : "这台电脑离线，连上才能打开"
-            content.image = UIImage(systemName: "display")
-            content.imageProperties.tintColor = Theme.ink
-            cell.accessories = computer.online ? [.disclosureIndicator()] : []
+            // 墨色的主操作：整行就是按钮。不用 Pupu 正在用这台电脑。
+            content = UIListContentConfiguration.cell()
+            content.text = computer.online ? "远程控制" : "离线，连上才能远程控制"
+            content.textProperties.font = Theme.font(.body, weight: .semibold)
+            content.textProperties.color = Theme.onAction
+            content.textProperties.alignment = .center
+            content.image = computer.online ? UIImage(systemName: "cursorarrow") : nil
+            content.imageProperties.tintColor = Theme.onAction
+            var background = UIBackgroundConfiguration.listCell()
+            background.backgroundColor = computer.online ? Theme.action : Theme.action.withAlphaComponent(0.35)
+            background.cornerRadius = Theme.Size.control / 2
+            cell.backgroundConfiguration = background
+            cell.accessibilityTraits = computer.online ? .button : [.button, .notEnabled]
         case .policy(let computerId, let policy, let selected):
             content.text = policy.title
             let allowed = Store.shared.computer(id: computerId).map { mayChangePolicy($0, to: policy) } ?? false
@@ -1002,5 +1013,14 @@ private extension Push.Status {
         case .notAsked: "未打开"
         case .off: "已关闭"
         }
+    }
+}
+
+private extension Computer {
+    /// 放进列表格子的样子：在线时去掉每次心跳都变的 lastSeenAt（在线时也不显示它）。
+    /// 不去掉的话，每次心跳格子都被删了重建，正点着的那一下就丢了。
+    var settled: Computer {
+        guard online, lastSeenAt != nil else { return self }
+        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen)
     }
 }
