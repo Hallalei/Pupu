@@ -187,7 +187,11 @@ function Viewer({
       }
       const base = `${location.origin.replace(/^http/, "ws")}/api/desktop/${encodeURIComponent(computerId)}`;
       const session = new RemoteDesktopSession(ticket ? `${base}?ticket=${encodeURIComponent(ticket)}` : base, quality, {
-        onState: setState,
+        onState: (next) => {
+          setState(next);
+          // 视频接上了：盖在上面的那张 JPEG 拿掉。
+          if (next.kind === "live") setStill(null);
+        },
         onStream: (next) => {
           setStream(next);
           setStill(null);
@@ -464,7 +468,7 @@ function Stage({
   }, [stream]);
 
   /** 画面实际画在哪：object-contain 留了黑边，按画面自己的宽高比算。 */
-  const ratio = (clientX: number, clientY: number): { x: number; y: number } | null => {
+  const ratio = (clientX: number, clientY: number, clamp = false): { x: number; y: number } | null => {
     const showing = still ? image.current : video.current;
     if (!showing) return null;
     const box = showing.getBoundingClientRect();
@@ -478,6 +482,7 @@ function Stage({
     const top = box.top + (box.height - shownHeight) / 2;
     const x = (clientX - left) / shownWidth;
     const y = (clientY - top) / shownHeight;
+    if (clamp) return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
     return x < 0 || x > 1 || y < 0 || y > 1 ? null : { x, y };
   };
 
@@ -504,14 +509,18 @@ function Stage({
     wasEnabled.current = enabled;
   }, [enabled]);
 
+  /** 按下的那颗键还没松：拖到画面外也照样跟着，松开一定发 up，免得电脑上一直按着。 */
+  const pressed = useRef(false);
   const pointer = (kind: "move" | "down" | "up") => (event: React.PointerEvent) => {
     if (!enabled) return;
-    const at = ratio(event.clientX, event.clientY);
+    const at = ratio(event.clientX, event.clientY, pressed.current);
     if (kind === "down") {
       typing.current?.focus({ preventScroll: true });
       surface.current?.setPointerCapture(event.pointerId);
     }
     if (!at) return;
+    if (kind === "down") pressed.current = true;
+    if (kind === "up") pressed.current = false;
     if (kind === "move") onInput({ t: "move", ...at });
     else onInput({ t: kind, ...at, b: event.button === 2 ? 2 : event.button === 1 ? 1 : 0 });
   };
@@ -531,7 +540,10 @@ function Stage({
       onPointerMove={pointer("move")}
       onPointerDown={pointer("down")}
       onPointerUp={pointer("up")}
-      onPointerCancel={() => onInput({ t: "release" })}
+      onPointerCancel={() => {
+        pressed.current = false;
+        onInput({ t: "release" });
+      }}
       onContextMenu={(event) => event.preventDefault()}
     >
       <video

@@ -211,6 +211,8 @@ export class RemoteDesktopSession {
         break;
       }
       case "frame":
+        // 视频已经接上以后晚到的 JPEG 不要，免得盖住视频。
+        if (this.#picture.kind !== "stills") return;
         if (typeof message.data === "string") this.#events.onImage(`data:image/jpeg;base64,${message.data}`);
         this.#frameArrived();
         break;
