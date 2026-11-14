@@ -1,0 +1,15 @@
+#!/bin/sh
+# 推送前跑这次改到的 app 的类型检查和测试。启用：git config core.hooksPath .githooks
+# 推的是分支当前的提交，查的是工作目录，两者不一致时以提交后的干净目录为准再推。
+zero=0000000000000000000000000000000000000000
+base=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha" 2>/dev/null; then
+    base=origin/main
+  else
+    base=$remote_sha
+  fi
+done
+[ -z "$base" ] && exit 0
+exec node "$(git rev-parse --show-toplevel)/scripts/check.mjs" --since "$base"

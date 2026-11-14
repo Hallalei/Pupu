@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const cloud = join(repo, "apps/cloud");
 const port = process.env.PUPU_VERIFY_PORT ?? "5199";
-const state = process.env.PUPU_VERIFY_STATE ?? "/tmp/pupu-verify/state";
+// 数据目录跟着端口走：启动和退出都会清空它，两个实例共用一个目录会互相删数据。
+const state = process.env.PUPU_VERIFY_STATE ?? (port === "5199" ? "/tmp/pupu-verify/state" : `/tmp/pupu-verify-${port}/state`);
 // 浏览器的 cookie 按主机名不按端口：localhost 上另一个验证实例种的 cookie 会带过来，被当成坏凭据。并行验证时换成 127.0.0.1。
 const host = process.env.PUPU_VERIFY_HOST;
 const scaffold = join(cloud, "node_modules/.pupu-verify");
