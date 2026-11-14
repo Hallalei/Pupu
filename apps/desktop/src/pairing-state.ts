@@ -1,18 +1,20 @@
 import type { Credential, Pairing } from "./credentials.ts";
 
 /**
- * 这台电脑（桥）的授权，托盘、配对窗口和设置里「这台电脑」那一页都从这里分：
+ * 这台电脑（桥）的授权，托盘、配对窗口和设置里「这台电脑」那一页都从这里分。看的是发生过什么，不只是手上剩哪份凭据：
  * - `ok`：有凭据。只是窗口的凭据没了也算，桥照样在跑；
- * - `first`：窗口和这台电脑的凭据都没有，要从头配对；
+ * - `first`：两份凭据都没有，也没被吊销过，要从头配对；
  * - `unfinished`：窗口的凭据拿到了，这台电脑的还没拿到。配对半路出了错，再试一次就好；
- * - `revoked`：云端拒了这台电脑的凭据。只有这种是规范 ThisComputer 里的「授权被吊销」。
+ * - `revoked`：云端拒了这台电脑的凭据，或者两份都没了而且是被吊销掉的（比如成员被移出组织）。
+ *   只有这种是规范 ThisComputer 里的「授权被吊销」。
  */
 export type ComputerAuth = "ok" | "first" | "unfinished" | "revoked";
 
 export function computerAuth(pairing: Pairing): ComputerAuth {
   if (pairing.computer) return "ok";
-  if (!pairing.desktop) return "first";
-  return pairing.computerRevoked ? "revoked" : "unfinished";
+  if (pairing.computerRevoked) return "revoked";
+  if (pairing.desktop) return "unfinished";
+  return pairing.desktopRevoked ? "revoked" : "first";
 }
 
 /** 云端拒了这台电脑的凭据：丢掉它，记下是被吊销了。 */
@@ -26,14 +28,26 @@ export function withComputer(pairing: Pairing, computer: Credential): Pairing {
   return { ...rest, computer };
 }
 
+/** 云端确认窗口的凭据被吊销了：丢掉它，记下来。 */
+export function rejectDesktop(pairing: Pairing): Pairing {
+  return { ...pairing, desktop: null, desktopRevoked: true };
+}
+
+/** 拿到了窗口的新凭据，被吊销的记号跟着去掉。 */
+export function withDesktop(pairing: Pairing, desktop: Credential): Pairing {
+  const { desktopRevoked: _revoked, ...rest } = pairing;
+  return { ...rest, desktop };
+}
+
 /**
- * 为什么要配对，跟着手上的凭据变：
- * - `first`：两份凭据都没有；
- * - `desktop`：窗口的凭据被吊销了，要一个新码；
+ * 为什么要配对：
+ * - `first`：两份凭据都没有，也没被吊销过；
+ * - `desktop`：窗口的凭据被吊销了，这台电脑的还在，要一个新码；
+ * - `revoked`：两份都没了，是被吊销掉的，要一个新码；
  * - `computer`：窗口还能用，云端拒了这台电脑的凭据，点一下就重新配对，不用码；
  * - `unfinished`：窗口还能用，这台电脑的凭据上次没拿到，点一下再试，不用码。
  */
-export type PairingReason = "first" | "desktop" | "computer" | "unfinished";
+export type PairingReason = "first" | "desktop" | "revoked" | "computer" | "unfinished";
 
 /** 正在做的那一次：用码配对，或者在浏览器里等 Google 登录。 */
 export type PairingBusy = "code" | "google";
@@ -45,8 +59,9 @@ export type PairingStatus = {
 };
 
 export function reasonOf(pairing: Pairing): PairingReason {
-  if (!pairing.desktop) return pairing.computer ? "desktop" : "first";
-  return computerAuth(pairing) === "revoked" ? "computer" : "unfinished";
+  const auth = computerAuth(pairing);
+  if (!pairing.desktop) return auth === "ok" ? "desktop" : auth === "revoked" ? "revoked" : "first";
+  return auth === "revoked" ? "computer" : "unfinished";
 }
 
 /**

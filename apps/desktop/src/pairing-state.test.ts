@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Pairing } from "./credentials.ts";
-import { computerAuth, PairingRun, reasonOf, rejectComputer, withComputer, type PairingBusy } from "./pairing-state.ts";
+import {
+  computerAuth,
+  PairingRun,
+  reasonOf,
+  rejectComputer,
+  rejectDesktop,
+  withComputer,
+  withDesktop,
+  type PairingBusy
+} from "./pairing-state.ts";
 
 const credential = { id: "d1", name: "mbpro", token: "secret" };
 const computer = { id: "c1", name: "mbpro", token: "bridge-secret" };
@@ -80,4 +89,40 @@ test("云端拒了这台电脑的凭据才算被吊销，重启后也是；重�
   assert.equal(computerAuth(repaired), "ok");
   // 再被拒一次，又是被吊销；不是半路没做完。
   assert.equal(computerAuth(rejectComputer(repaired)), "revoked");
+});
+
+test("两份都被吊销（先吊这台电脑、再吊窗口）：还是「授权被吊销」，不是还没配对；配对窗口要码", () => {
+  const both = rejectDesktop(rejectComputer({ desktop: credential, computer }));
+  assert.deepEqual([both.desktop, both.computer], [null, null]);
+  assert.equal(computerAuth(both), "revoked");
+  assert.equal(reasonOf(both), "revoked");
+  // 重启后从凭据文件读回来还是被吊销。
+  assert.equal(computerAuth(JSON.parse(JSON.stringify(both)) as Pairing), "revoked");
+});
+
+test("两份都被吊销（先吊窗口、再吊这台电脑，比如成员被移出组织）：同样是「授权被吊销」", () => {
+  const windowGone = rejectDesktop({ desktop: credential, computer });
+  assert.equal(computerAuth(windowGone), "ok");
+  assert.equal(reasonOf(windowGone), "desktop");
+  const both = rejectComputer(windowGone);
+  assert.equal(computerAuth(both), "revoked");
+  assert.equal(reasonOf(both), "revoked");
+});
+
+test("配对没做完时窗口又被吊销：两份都没了，是被吊销掉的", () => {
+  const both = rejectDesktop({ desktop: credential, computer: null });
+  assert.equal(computerAuth(both), "revoked");
+  assert.equal(reasonOf(both), "revoked");
+});
+
+test("两份都被吊销后重新配好：两个记号都去掉；只拿回窗口的那一半算没做完，不算被吊销", () => {
+  const both = rejectDesktop(rejectComputer({ desktop: credential, computer }));
+  const halfway = withDesktop(both, { ...credential, id: "d2" });
+  assert.equal(halfway.desktopRevoked, undefined);
+  // 这台电脑的记号还在：它确实被吊销过，没重新拿到之前照旧是被吊销。
+  assert.equal(computerAuth(halfway), "revoked");
+  assert.equal(reasonOf(halfway), "computer");
+  const repaired = withComputer(halfway, { ...computer, id: "c2" });
+  assert.deepEqual(repaired, { desktop: { ...credential, id: "d2" }, computer: { ...computer, id: "c2" } });
+  assert.equal(computerAuth(repaired), "ok");
 });

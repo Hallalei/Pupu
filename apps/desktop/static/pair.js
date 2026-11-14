@@ -31,7 +31,7 @@ function oneClick() {
 
 /**
  * 天空上一直只有 Pupu 和那句话，换的是卡片里的东西：
- * - 默认：「用 Google 登录」、「或」、配对码、「继续」；窗口的凭据失效了时，顶上多一句为什么。
+ * - 默认：「用 Google 登录」、「或」、配对码、「继续」；窗口的凭据失效了、或者两份都被吊销了时，顶上多一句为什么。
  * - 在浏览器里等 Google 登录：一句话和「取消」，这时没有主操作。
  * - 整台电脑的授权被吊销：一句话和「重新配对」，不用填码。
  * - 配对半路没做完（窗口的凭据拿到了，这台电脑的没拿到）：一句话和「再试一次」，不用填码。
@@ -42,7 +42,9 @@ function render() {
   const waiting = status.busy === "google";
   const pairing = status.busy === "code";
   const fields = !oneClick() && !waiting;
-  show($("notice"), fields && status.reason === "desktop");
+  show($("notice"), fields && (status.reason === "desktop" || status.reason === "revoked"));
+  $("notice").textContent =
+    status.reason === "revoked" ? "这台电脑的授权被吊销了，要用就重新配对。" : "这个窗口的授权失效了，重新配对一次就好。";
   show($("message"), oneClick() || waiting);
   $("message").textContent = waiting
     ? "在打开的浏览器里选你的 Google 账号，登录好了会自动回到这里。"

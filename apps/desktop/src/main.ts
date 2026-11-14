@@ -36,7 +36,16 @@ import { credentialsPath, readPairing, writePairing, type Credential, type Pairi
 import { debugSwitches, devVariables } from "./env.ts";
 import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
 import { desktopStatus, googleEnabled, pairComputer, pairDesktop, redeemSignIn } from "./pairing.ts";
-import { computerAuth, PairingRun, reasonOf, rejectComputer, withComputer, type PairingStatus } from "./pairing-state.ts";
+import {
+  computerAuth,
+  PairingRun,
+  reasonOf,
+  rejectComputer,
+  rejectDesktop,
+  withComputer,
+  withDesktop,
+  type PairingStatus
+} from "./pairing-state.ts";
 import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
@@ -418,7 +427,7 @@ async function pairWithCode(request: PairingRequest): Promise<string | null> {
       const code = request.code.trim();
       if (!code && !isLocalOrigin(origin)) return "先填配对码。";
       desktop = await pairDesktop(origin, code, computerName());
-      pairing = { ...pairing, desktop };
+      pairing = withDesktop(pairing, desktop);
       await savePairing();
     }
     if (!computer) {
@@ -471,7 +480,7 @@ async function signInWithGoogle(request: GoogleRequest, signal: AbortSignal): Pr
     const adopted = !computer && request.adopt ? await cliComputer() : null;
     const result = await redeemSignIn(origin, { code, verifier, name: computerName(), computer: !computer && !adopted });
     desktop = result.desktop;
-    pairing = { ...pairing, desktop };
+    pairing = withDesktop(pairing, desktop);
     await savePairing();
     if (!computer) {
       computer = adopted ?? result.computer ?? (await pairComputer(origin, desktop.token, computerName()));
@@ -513,7 +522,7 @@ async function checkDesktop(): Promise<void> {
   try {
     if ((await desktopStatus(origin, desktop.token)) !== "revoked") return;
     log(`窗口的凭据「${desktop.name}」被吊销了。`);
-    pairing = { ...pairing, desktop: null };
+    pairing = rejectDesktop(pairing);
     await savePairing();
     await windowSession().cookies.remove(`${origin}/`, TOKEN_COOKIE);
     await clearOrgCookies();

@@ -21,6 +21,11 @@ export type Pairing = {
    * 窗口的凭据已经存下，这台电脑的还没拿到。老版本存的没有这一项。
    */
   readonly computerRevoked?: boolean;
+  /**
+   * 网页拿到 401、再问云端确认窗口的凭据被吊销了，还没重新配好。两份都没了时靠它和 `computerRevoked`
+   * 分清「被吊销了」和「从没配过」。老版本存的没有这一项。
+   */
+  readonly desktopRevoked?: boolean;
 };
 
 type Stored = { readonly version: 1; readonly servers: Readonly<Record<string, Pairing>> };
