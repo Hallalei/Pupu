@@ -270,6 +270,28 @@
 @utility shadow-raised {
   box-shadow: var(--shadow-raised);
 }
+/* 小按钮的触控区在手机上补到 44（规范：触控区都不小于 control · 44）。按钮本身要是 relative。 */
+@utility hit-44 {
+  @media (pointer: coarse) {
+    &::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+/* 浮在画面上的实色控件（规范 BrowserCard）：surface 底、ink 字，往里收 1pt line 再加 shadow-raised。两层阴影要写在一起。 */
+@utility float-control {
+  background: var(--surface);
+  color: var(--color-ink);
+  box-shadow:
+    inset 0 0 0 1px var(--color-line),
+    var(--shadow-raised);
+}
 
 /*
  * 三层结构的后两层（第一层窗框是 body 的底）。`layer-card`：浮在窗框上的白卡片，圆角和外面的窗口同心
@@ -483,15 +505,118 @@ body {
 }
 
 /*
- * 登录页（品牌层）左边的 3D 场景（pupu-art.ts）。背景的静态头像是没有 WebGL2 时的退路。
- * 窗口再宽也不超过高度。
+ * 登录页（规范 SignIn，品牌层）。天空上只写 Pupu 和那句话，控件都在 surface 的卡片上。
+ * 手机档：标题从屏幕高度三成往下（844 高的屏幕从 274 起），卡片贴底、离边 6，形状和 sheet 一样，卡片长高时盖住标题、不往上挤。
+ * 电脑档（鼠标指针）和窗口宽 1024 以上：一列居中，标题下面是一张 384 宽的浮卡；宽 1024 以上左边多一块 3D 场景。
+ * 电脑 App 的窗口上沿让出标题栏 28，红绿灯落在天空上。
  */
-.login {
-  padding: var(--spacing-frame-gap);
-  padding-top: calc(var(--spacing-frame-gap) + var(--titlebar));
+:root {
+  --login-titlebar: 0px;
 }
+:root[data-titlebar="inset"] {
+  --login-titlebar: 28px;
+}
+.login {
+  position: relative;
+  display: flex;
+  gap: var(--spacing-frame-gap);
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: var(--spacing-frame-gap);
+  padding-top: calc(var(--spacing-frame-gap) + var(--login-titlebar));
+}
+.login-column {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.login-hero {
+  position: absolute;
+  inset-inline: calc(var(--spacing) * 6 - var(--spacing-frame-gap));
+  top: calc(32.5dvh - var(--spacing-frame-gap));
+  text-align: center;
+}
+.login-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 4) 34px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-sheet-top) var(--radius-sheet-top) var(--radius-card) var(--radius-card);
+  text-align: center;
+}
+@media (pointer: fine), (min-width: 1024px) {
+  .login-column {
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing) * 6) calc(var(--spacing) * 4);
+  }
+  .login-hero {
+    position: static;
+    margin-bottom: calc(var(--spacing) * 6);
+  }
+  .login-card {
+    width: min(384px, 100%);
+    box-sizing: border-box;
+    padding-bottom: calc(var(--spacing) * 6);
+    border-radius: var(--radius-sheet-top);
+  }
+}
+@media (pointer: fine) {
+  .login-card {
+    gap: calc(var(--spacing) * 2);
+    padding: calc(var(--spacing) * 4);
+    border-radius: var(--radius-card-pointer);
+  }
+}
+/* 「手边没有连上的设备？用访问口令」比上面多隔 4。 */
+.login-more {
+  margin-top: calc(var(--spacing) * 1);
+}
+/* 「或」：两边各一条 1pt line，和字隔 12。 */
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--color-ink-muted);
+}
+.login-or::before,
+.login-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-line);
+}
+/* Google 按钮照 Google 的品牌规定，不用 token：浅色白底、#747775 内描边、#1f1f1f 字；深色 #131314 底、#8e918f、#e3e3e3。 */
+.login-google {
+  display: flex;
+  width: 100%;
+  height: var(--spacing-control);
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 3);
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #1f1f1f;
+  box-shadow: inset 0 0 0 1px #747775;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: 500;
+}
+.dark .login-google {
+  background: #131314;
+  color: #e3e3e3;
+  box-shadow: inset 0 0 0 1px #8e918f;
+}
+
+/* 左边的 3D 场景（pupu-art.ts）：背景的静态头像是没有 WebGL2 时的退路。窗口再宽也不超过高度。 */
 .login-art {
-  max-width: calc(100dvh - var(--spacing-frame-gap) * 2 - var(--titlebar));
+  max-width: calc(100dvh - var(--spacing-frame-gap) * 2 - var(--login-titlebar));
   border-radius: var(--radius-card-pointer);
   background: #16181f url("/pupu-avatar.png") bottom / 100% auto no-repeat;
   image-rendering: pixelated;

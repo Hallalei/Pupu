@@ -35,7 +35,7 @@ import {
   SwitchButton,
   type Place
 } from "./Spaces";
-import { setFrame, setNight } from "./theme";
+import { setFrame, setSky } from "./theme";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
 type Route =
@@ -190,9 +190,9 @@ export function App() {
     [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route, inEveryone, project?.session, error]
   );
 
-  // App 里跟着系统的浅色深色；只有登录页（品牌层）铺夜空，衬着左边的大图。
+  // 登录页铺天空，标签栏跟着换成天空的颜色；浅色深色照样跟着系统。
   useEffect(() => {
-    setNight(unauthorized);
+    setSky(unauthorized);
   }, [unauthorized]);
 
   // 窗框跟着空间换色（0.3 秒渐变在样式表里）；「我的 Pupu」、资料不是空间，用 canvas。

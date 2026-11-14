@@ -161,16 +161,38 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
+/**
+ * 服务器给的那一页（规范 SignIn 的「填邀请码」和 Google 出错）：和登录页一个样子。天空上只写 Pupu 和那句话，
+ * 控件在 surface 的卡片上；手机上卡片贴底，电脑上是 384 宽的浮卡。颜色和字号照 client/styles.css 的 token 抄过来，跟着系统深浅色。
+ */
+const DOCUMENT_STYLE = `:root{color-scheme:light dark;--family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+--surface:#fff;--inset:#f4f4f2;--ink:#1b1b1a;--muted:#6f6f6a;--action:#1b1b1a;--on-action:#fff;--danger:#c4291c;--ink-sky:#1c2634;
+--shadow:0 0 0 .5px #0000000f,0 8px 30px #0000001a;--sky:linear-gradient(180deg,#34557f 0%,#6f8fb3 28%,#b9cad9 52%,#e6e5df 76%,#d6d0c4 100%);
+--control:44px;--gap:12px;--greeting:600 28px/34px;--message:17px/27px;--headline:600 17px/22px;--body:17px/22px;--sub:15px/20px}
+@media (prefers-color-scheme:dark){:root{--surface:#181818;--inset:#232322;--ink:#ececea;--muted:#9b9b96;--action:#ececea;--on-action:#121212;--danger:#ff6b5e;
+--ink-sky:#ffffffe6;--shadow:0 0 0 .5px #ffffff14;--sky:linear-gradient(180deg,#0c1420 0%,#15233a 35%,#1d2633 70%,#1c1b1f 100%)}}
+@media (pointer:fine){:root{--control:32px;--gap:8px;--greeting:600 24px/32px;--message:16px/26px;--headline:600 15px/20px;--body:15px/22px;--sub:13px/18px}}
+html,body{margin:0}body{color:var(--ink);font:var(--body) var(--family);-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--sky)}
+.page{position:relative;box-sizing:border-box;min-height:100dvh;display:flex;flex-direction:column;justify-content:flex-end;padding:6px}
+.hero{position:absolute;left:24px;right:24px;top:32.5dvh;text-align:center;color:var(--ink-sky)}
+h1,h2,p{margin:0}h1{font:var(--greeting) var(--family)}.hero p{margin-top:8px;font:var(--message) var(--family)}
+main{position:relative;display:flex;flex-direction:column;gap:var(--gap);padding:24px 16px 34px;background:var(--surface);box-shadow:var(--shadow);border-radius:32px 32px 41px 41px;text-align:center}
+h2{font:var(--headline) var(--family)}.lead{font:var(--sub) var(--family);color:var(--muted)}form{display:contents}
+input{box-sizing:border-box;width:100%;height:var(--control);border:0;border-radius:12px;padding:0 12px;background:var(--inset);color:var(--ink);font:var(--body) var(--family);text-align:center;outline:none}
+input::placeholder{color:var(--muted)}input:not(:placeholder-shown){font-family:ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.1em;text-transform:uppercase}
+button{box-sizing:border-box;width:100%;height:var(--control);border:0;border-radius:999px;background:var(--action);color:var(--on-action);font:600 var(--body) var(--family);cursor:pointer}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.error{font:var(--sub) var(--family);color:var(--danger)}.more{margin-top:4px;font:var(--sub) var(--family);color:var(--muted)}.more a{color:var(--ink);text-underline-offset:3px}
+@media (pointer:fine),(min-width:1024px){.page{align-items:center;justify-content:center;padding:24px 16px}.hero{position:static;margin-bottom:24px}main{box-sizing:border-box;width:min(384px,100%);padding:24px 16px;border-radius:32px}}
+@media (pointer:fine){main{padding:16px;border-radius:12px}}`;
+
 function document(status: number, main: string, cookies: readonly string[]): Response {
   const body = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pupu</title>
-<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#6f8fb3;color:#14202e}
-main{background:rgba(255,255,255,.92);border-radius:24px;padding:24px;max-width:22rem;margin:16px}h1{font-size:20px;margin:0 0 8px}p{margin:0;color:#4a5868}
-form{display:flex;flex-direction:column;gap:12px;margin:16px 0 0}input,button{box-sizing:border-box;width:100%;height:48px;border-radius:24px;border:0;font:inherit}
-input{background:rgba(20,32,46,.08);color:inherit;text-align:center;letter-spacing:.08em;text-transform:uppercase}button{background:#14202e;color:#fff;font-weight:600;cursor:pointer}
-.error{margin-top:12px;color:#b3261e}.more{margin-top:16px;text-align:center;font-size:14px}a{color:inherit}</style>
-</head><body><main>${main}</main></body></html>`;
+<style>${DOCUMENT_STYLE}</style>
+</head><body><div class="page"><div class="hero"><h1>Pupu</h1><p>组织大脑，让智能在组织间流动。</p></div><main>${main}</main></div></body></html>`;
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   for (const cookie of cookies) headers.append("Set-Cookie", cookie);
   return new Response(body, { status, headers });
@@ -178,15 +200,16 @@ input{background:rgba(20,32,46,.08);color:inherit;text-align:center;letter-spaci
 
 /** 浏览器里看到的错误页。登录在 App 里开始时，回不到 App 就停在这一页。 */
 export function page(status: number, message: string, cookies: readonly string[] = []): Response {
-  return document(status, `<h1>没连上 Pupu</h1><p>${escapeHtml(message)}</p>`, cookies);
+  return document(status, `<h2>没连上 Pupu</h2><p class="lead">${escapeHtml(message)}</p>`, cookies);
 }
 
-function invitePage(status: number, error: string | null): Response {
-  const main = `<h1>输入邀请码</h1>
+/** 填错了再出这一页时，填过的码留在框里（规范 SignIn：出错不清空）。 */
+function invitePage(status: number, error: string | null, code = ""): Response {
+  const main = `<h2>输入邀请码</h2>
 <form method="post" action="${INVITE_PATH}">
-<input name="code" aria-label="邀请码" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" required autofocus>
+<input name="code" aria-label="邀请码" placeholder="ABCD-EFGH" value="${escapeHtml(code)}" autocomplete="off" autocapitalize="characters" spellcheck="false" required autofocus>
 <button>激活</button>
-</form>${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+</form>${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ""}
 <p class="more"><a href="${JOIN_URL}">申请内测</a></p>`;
   return document(status, main, []);
 }
@@ -292,11 +315,12 @@ async function invite(request: Request, url: URL, context: AuthContext): Promise
   if (!token) return page(410, expired);
   if (request.method === "GET") return invitePage(200, null);
   if (request.method !== "POST") return null;
-  const code = (await request.formData()).get("code");
-  const result = await context.backend.activate(token, typeof code === "string" ? code : "");
+  const field = (await request.formData()).get("code");
+  const code = typeof field === "string" ? field : "";
+  const result = await context.backend.activate(token, code);
   const cleared = authCookie(url, INVITE_COOKIE, null);
   if (result.status === "gone") return page(410, expired, [cleared]);
-  if (result.status === "retry") return invitePage(400, result.error);
+  if (result.status === "retry") return invitePage(400, result.error, code);
   return granted(result.flow, result.grant, url, cleared, context);
 }
 

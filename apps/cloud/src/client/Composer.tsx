@@ -98,7 +98,7 @@ export function Composer({
           type="submit"
           aria-label={sendLabel}
           isDisabled={!canSend}
-          className="tap size-control-sm min-w-control-sm rounded-full bg-action text-base text-on-action disabled:bg-action-off disabled:text-ink-faint disabled:opacity-100"
+          className="tap size-control-sm min-w-control-sm rounded-full bg-action text-[16px] text-on-action disabled:bg-action-off disabled:text-ink-faint disabled:opacity-100"
         >
           <ArrowUpIcon />
         </Button>

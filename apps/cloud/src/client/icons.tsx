@@ -122,24 +122,6 @@ export function ChevronRightIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export function ChatIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M20 11.5a7.5 7.5 0 0 1-11 6.6L4 19.5l1.4-4.4A7.5 7.5 0 1 1 20 11.5z" />
-    </Icon>
-  );
-}
-
-/** 正在做：一条起伏的线。 */
-export function LockIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-    </Icon>
-  );
-}
-
 export function TerminalIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>
@@ -192,15 +174,6 @@ export function KeyboardIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 好几步合成一组。 */
-export function StepsIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
-    </Icon>
-  );
-}
-
 export function CheckIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props} strokeWidth={2.4}>
@@ -242,33 +215,6 @@ export function PeopleIcon(props: SVGProps<SVGSVGElement>) {
     <Icon {...props}>
       <circle cx="9" cy="8.5" r="3.2" />
       <path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 5.6a3.2 3.2 0 0 1 0 6M17 13.8a5.5 5.5 0 0 1 3.5 5.2" />
-    </Icon>
-  );
-}
-
-export function TicketIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M3.5 7.5a1.5 1.5 0 0 1 1.5-1.5h14a1.5 1.5 0 0 1 1.5 1.5V10a2 2 0 0 0 0 4v2.5A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5V14a2 2 0 0 0 0-4z" />
-      <path d="M14.5 6v12" strokeDasharray="2 2.2" />
-    </Icon>
-  );
-}
-
-export function KeyIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <circle cx="8" cy="15" r="4" />
-      <path d="m11 12 8.5-8.5M16.5 6.5l2.5 2.5M14.5 8.5l2 2" />
-    </Icon>
-  );
-}
-
-export function InfoIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M12 11v5.5M12 7.8v.2" />
     </Icon>
   );
 }
@@ -331,14 +277,6 @@ export function ExpandIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>
       <path d="M14 5h5v5M10 19H5v-5M19 5l-6 6M5 19l6-6" />
-    </Icon>
-  );
-}
-
-export function CollapseIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Icon {...props}>
-      <path d="M19 10h-5V5M5 14h5v5M14 10l6-6M10 14l-6 6" />
     </Icon>
   );
 }

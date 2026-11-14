@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { desktop } from "./desktop";
-import { CollapseIcon } from "./icons";
 
 /**
  * 电脑 App 里人来接手 Pupu 浏览器（登录、验证码）的放大视图，学的是 Hark：盖住对话区，中间是真实页面，人直接点、直接输。
@@ -58,6 +57,9 @@ export function BrowserTakeover() {
   return <TakeoverView cancel={cancel} />;
 }
 
+/** 下面的按钮（规范 BrowserCard「接手」）：高 control，surface 底、ink 字，往里收 1pt line。 */
+const BAR = "tap inline-flex h-control shrink-0 items-center justify-center rounded-full px-4 text-subheadline font-semibold";
+
 function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
   const slot = useRef<HTMLDivElement>(null);
   /** 人接手完了：收起，Pupu 自己接着做。 */
@@ -102,10 +104,10 @@ function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
       data-browser-takeover
       className="fixed inset-0 z-[60] flex flex-col gap-3 bg-scrim p-4 pt-12"
     >
-      <div ref={slot} data-browser-slot className="min-h-0 flex-1 overflow-hidden rounded-bubble bg-white shadow-card" />
+      <div ref={slot} data-browser-slot className="min-h-0 flex-1 overflow-hidden rounded-bubble bg-surface-inset shadow-card" />
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <button type="button" aria-label="收起" onClick={close} className="bg-surface-inset tap grid size-10 place-items-center rounded-full">
-          <CollapseIcon />
+        <button type="button" onClick={close} className={`${BAR} float-control`}>
+          收起
         </button>
         {cancel && (
           <button
@@ -114,7 +116,7 @@ function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
               cancel();
               void desktop()?.detachBrowser?.(false);
             }}
-            className="bg-surface-inset tap h-10 rounded-full px-4 text-subheadline"
+            className={`${BAR} float-control`}
           >
             取消任务
           </button>

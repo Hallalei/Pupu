@@ -1,8 +1,9 @@
-import { Button } from "@heroui/react";
+import { Spinner } from "@heroui/react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { AVATAR_PRESETS, PUPU_AVATAR_PRESETS } from "../avatar-presets";
 import type { MemberView } from "../members";
 import { api } from "./api";
+import { Group, PILL_ACTION, PILL_SECONDARY, ROW_BUTTON } from "./settings-ui";
 
 /** 云端收的边长，见 avatars.ts 的 `AVATAR_SIDE`。 */
 const SIDE = 256;
@@ -149,11 +150,11 @@ function AvatarPage({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <div className="flex justify-center pt-2">
-        <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-action text-[40px] text-on-action" />
+        <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-surface-inset text-[40px] font-semibold text-ink" />
       </div>
-      <div className="grid grid-cols-4 gap-3 rounded-row bg-surface p-4" role="radiogroup" aria-label="预设头像">
+      <div className="grid grid-cols-4 gap-3 rounded-row bg-surface-inset p-4" role="radiogroup" aria-label="预设头像">
         {presets.map((preset) => {
           const url = `/avatars/${preset.id}.png`;
           const selected = current === url;
@@ -166,7 +167,7 @@ function AvatarPage({
               aria-label={preset.name}
               disabled={busy !== null}
               onClick={() => void run(preset.id, () => onPreset(preset.id))}
-              className={`aspect-square overflow-hidden rounded-full ring-offset-2 ring-offset-surface transition hover:opacity-85 ${
+              className={`aspect-square overflow-hidden rounded-full ring-offset-2 ring-offset-surface-inset transition pointer-fine:hover:opacity-85 ${
                 selected ? "ring-2 ring-ink" : ""
               } ${busy === preset.id ? "animate-pulse" : ""}`}
             >
@@ -175,26 +176,22 @@ function AvatarPage({
           );
         })}
       </div>
-      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => input.current?.click()}
-          className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-ink/4"
-        >
+      <Group label="换成别的" error={error}>
+        <button key="upload" type="button" disabled={busy !== null} onClick={() => input.current?.click()} className={ROW_BUTTON}>
           上传照片
         </button>
         {current && (
           <button
+            key="reset"
             type="button"
             disabled={busy !== null}
             onClick={() => void run("reset", () => onPreset(null))}
-            className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-ink/4"
+            className={ROW_BUTTON}
           >
             {resetLabel}
           </button>
         )}
-      </div>
+      </Group>
       <input
         ref={input}
         type="file"
@@ -209,7 +206,6 @@ function AvatarPage({
           }
         }}
       />
-      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
     </div>
   );
 }
@@ -286,7 +282,7 @@ function Cropper({
     <div className="flex flex-col items-center gap-5">
       <div
         aria-label="拖动调整位置"
-        className="relative touch-none overflow-hidden rounded-row bg-black select-none"
+        className="relative touch-none overflow-hidden rounded-row bg-island select-none"
         style={{ width: FRAME, height: FRAME, cursor: "grab" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -303,8 +299,8 @@ function Cropper({
             style={{ width: image.naturalWidth * scale, height: image.naturalHeight * scale, transform: `translate(${view.x}px, ${view.y}px)` }}
           />
         )}
-        {/* 圆以外压暗：头像各端都裁成圆。 */}
-        <div className="pointer-events-none absolute inset-0 rounded-full shadow-[0_0_0_200px_rgba(0,0,0,0.45)]" />
+        {/* 圆以外压暗：头像各端都裁成圆。island 混 45%，照片上哪种颜色都看得出圆。 */}
+        <div className="pointer-events-none absolute inset-0 rounded-full shadow-[0_0_0_200px_color-mix(in_srgb,var(--color-island)_45%,transparent)]" />
       </div>
       <input
         type="range"
@@ -314,22 +310,25 @@ function Cropper({
         step={0.01}
         value={view.zoom}
         onChange={(event) => zoomTo(Number(event.target.value))}
-        className="w-[240px] accent-foreground"
+        className="w-[240px] accent-ink"
       />
       {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
-      <div className="flex w-full gap-3">
-        <Button variant="secondary" className="flex-1" isDisabled={busy} onPress={onCancel}>
+      <div className="flex w-full gap-2">
+        <button type="button" disabled={busy} onClick={onCancel} className={`${PILL_SECONDARY} flex-1`}>
           取消
-        </Button>
-        <Button
-          className="flex-1"
-          isDisabled={!image || busy}
-          onPress={async () => {
-            if (image) await onDone(await cropToSquare(image, view));
+        </button>
+        <button
+          type="button"
+          disabled={!image}
+          aria-disabled={busy || undefined}
+          onClick={async () => {
+            if (image && !busy) await onDone(await cropToSquare(image, view));
           }}
+          className={`${PILL_ACTION} flex-1 ${busy ? "pointer-events-none" : ""}`}
         >
-          {busy ? "上传中…" : "用这张"}
-        </Button>
+          {busy && <Spinner size="sm" color="current" aria-label="正在上传" className="size-3.5" />}
+          用这张
+        </button>
       </div>
     </div>
   );

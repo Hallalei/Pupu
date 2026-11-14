@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { api } from "./api";
 import { desktop, useDesktopComputer } from "./desktop";
 import { ChevronLeftIcon } from "./icons";
+import { PILL_ACTION, PILL_SECONDARY } from "./settings-ui";
 import { Cancelled, confirm, type ConfirmWhere, type Passkeys } from "./passkey";
 import { RemoteDesktopSession, keyOf, type DesktopInput, type DesktopQuality, type DesktopState } from "./remote-desktop";
 
@@ -249,24 +250,24 @@ function Viewer({
     const blocked = known && (where === null || where === "phone" || where === "browser");
     return (
       <Shell onClose={close} title={name}>
-        <div className="flex max-w-sm flex-col items-center gap-4 px-6 text-center text-white">
-          <div className="text-title">打开「{name}」的远程桌面</div>
+        <div className="flex max-w-sm flex-col items-center gap-2 px-6 text-center text-on-island">
+          <div className="text-headline">打开「{name}」的远程桌面</div>
           {blocked ? (
-            <div className="text-subheadline text-white/70">
+            <div className="text-subheadline">
               {where === "phone"
                 ? "你连过手机，在手机 App 的设置里远程控制。"
                 : "只有这台电脑的主人能打开它的远程桌面，电脑要在线。"}
             </div>
           ) : (
             <>
-              {where !== "here" && <div className="text-subheadline text-white/70">要用通行密钥确认是你本人。</div>}
+              {where !== "here" && <div className="text-subheadline">要用通行密钥确认是你本人。</div>}
               <button
                 type="button"
                 disabled={phase.busy || !known}
                 onClick={() => void connect()}
-                className="tap h-control w-full rounded-full bg-white text-body font-semibold text-black disabled:opacity-60"
+                className={`${ON_ISLAND_ACTION} mt-3 w-full disabled:opacity-50`}
               >
-                {where === "here" ? (phase.busy ? "正在连接…" : "连接") : phase.busy ? "正在确认…" : "确认并连接"}
+                {where === "here" ? (phase.busy ? "正在连接…" : "连接") : phase.busy ? "正在确认…" : "确认连接"}
               </button>
             </>
           )}
@@ -288,13 +289,32 @@ function Viewer({
             ? (control.message ?? "这台电脑现在不让操作，只能看")
             : null;
 
+  if (state.kind === "ended") {
+    return (
+      <Shell onClose={close} title={name}>
+        <div role="status" className="flex max-w-sm flex-col items-center gap-2 px-6 text-center text-on-island">
+          <div className="text-headline">远程桌面断开了</div>
+          <div className="text-subheadline">{state.message}</div>
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={close} className={`${ON_ISLAND_BUTTON} min-w-30`}>
+              关闭
+            </button>
+            <button type="button" onClick={() => void connect()} className={`${ON_ISLAND_ACTION} min-w-30`}>
+              重新连接
+            </button>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell
       onClose={close}
       title={name}
       tools={
         <>
-          {latency !== null && <span className="text-caption text-white/60">{latency} ms</span>}
+          {latency !== null && <span className="text-caption text-on-island">{latency} ms</span>}
           <select
             aria-label="画质"
             value={quality}
@@ -308,7 +328,7 @@ function Viewer({
                 // 不记也能用。
               }
             }}
-            className="h-8 rounded-full bg-white/15 px-3 text-footnote text-white"
+            className={`${CHIP} bg-island-fill text-on-island`}
           >
             {QUALITIES.map((item) => (
               <option key={item.value} value={item.value}>
@@ -323,14 +343,14 @@ function Viewer({
               session.setViewOnly(!viewOnly);
               setViewOnly(!viewOnly);
             }}
-            className={`tap h-8 rounded-full px-3 text-footnote font-semibold ${viewOnly ? "bg-white text-black" : "bg-white/15 text-white"}`}
+            className={`${CHIP} ${viewOnly ? "bg-on-island text-island" : "bg-island-fill text-on-island"}`}
           >
             只看
           </button>
           <button
             type="button"
             onClick={close}
-            className="tap h-8 rounded-full bg-danger-ink px-3 text-footnote font-semibold text-white"
+            className={`${CHIP} bg-island-fill text-on-island`}
           >
             断开
           </button>
@@ -347,7 +367,7 @@ function Viewer({
       {badge && (
         <div
           role="status"
-          className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-footnote text-white"
+          className="pointer-events-none absolute top-3 left-1/2 flex h-7 max-w-[calc(100%-24px)] -translate-x-1/2 items-center truncate rounded-full bg-island-fill px-3 text-footnote text-on-island"
         >
           {badge}
         </div>
@@ -361,19 +381,20 @@ function Viewer({
           onSecondary={close}
         />
       )}
-      {state.kind === "ended" && (
-        <Dialog
-          title="远程桌面断开了"
-          text={state.message}
-          primary="重新连接"
-          onPrimary={() => void connect()}
-          secondary="关闭"
-          onSecondary={close}
-        />
-      )}
     </Shell>
   );
 }
+
+/**
+ * 画面上的按钮（规范 RemoteDesktop「颜色」）：实色 island-fill 底、on-island 字，两种主题一样。
+ * 顶上那一条的按钮高 32、字用电脑档，手机浏览器里触控区补到 44。
+ */
+const CHIP = "tap hit-44 relative inline-flex h-8 shrink-0 items-center justify-center rounded-full px-3 text-subheadline font-semibold";
+/** 画面中间的按钮（「确认连接」「关闭」「重新连接」）：高 control，body 600。 */
+const CENTER = "tap inline-flex h-control shrink-0 items-center justify-center rounded-full px-4 text-body font-semibold";
+const ON_ISLAND_BUTTON = `${CENTER} bg-island-fill text-on-island`;
+/** 画面上的主操作反过来：on-island 底、island 字（action 在浅色主题是墨色，落在黑底上看不见）。 */
+const ON_ISLAND_ACTION = `${CENTER} bg-on-island text-island`;
 
 function Shell({
   title,
@@ -395,17 +416,17 @@ function Shell({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, tools]);
   return (
-    <div role="dialog" aria-label={`「${title}」的远程桌面`} className="fixed inset-0 z-[1000] flex flex-col bg-black">
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3 [-webkit-app-region:drag]">
+    <div role="dialog" aria-label={`「${title}」的远程桌面`} className="fixed inset-0 z-[1000] flex flex-col bg-island">
+      <div className="flex h-12 shrink-0 items-center gap-2 pr-3 pl-[max(12px,var(--traffic-lights))] [-webkit-app-region:drag]">
         <button
           type="button"
           aria-label="返回"
           onClick={onClose}
-          className="tap grid size-8 place-items-center rounded-full bg-white/15 text-white [-webkit-app-region:no-drag]"
+          className="tap hit-44 relative grid size-8 shrink-0 place-items-center rounded-full bg-island-fill text-on-island [-webkit-app-region:no-drag]"
         >
           <ChevronLeftIcon />
         </button>
-        <span className="min-w-0 flex-1 truncate text-subheadline font-semibold text-white">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-headline text-on-island">{title}</span>
         <div className="flex items-center gap-2 [-webkit-app-region:no-drag]">{tools}</div>
       </div>
       <div className="relative flex min-h-0 flex-1 items-center justify-center">{children}</div>
@@ -429,19 +450,15 @@ function Dialog({
   onSecondary: () => void;
 }) {
   return (
-    <div className="absolute inset-0 grid place-items-center bg-black/50">
-      <div role="alertdialog" aria-label={title} className="bg-surface-inset flex w-80 flex-col gap-3 rounded-bubble p-5">
-        <div className="text-headline font-semibold">{title}</div>
-        <div className="text-subheadline text-ink-muted">{text}</div>
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={onSecondary} className="tap h-control flex-1 rounded-full bg-surface-inset text-body">
+    <div className="absolute inset-0 grid place-items-center bg-scrim p-4">
+      <div role="alertdialog" aria-label={title} className="layer-dialog flex w-80 max-w-full flex-col gap-2 p-4 text-ink">
+        <div className="px-1 pt-1 text-headline">{title}</div>
+        <div className="px-1 text-subheadline text-ink-muted">{text}</div>
+        <div className="flex gap-2 pt-2">
+          <button type="button" onClick={onSecondary} className={`${PILL_SECONDARY} flex-1`}>
             {secondary}
           </button>
-          <button
-            type="button"
-            onClick={onPrimary}
-            className="tap h-control flex-1 rounded-full bg-action text-body font-semibold text-on-action"
-          >
+          <button type="button" onClick={onPrimary} className={`${PILL_ACTION} flex-1`}>
             {primary}
           </button>
         </div>
