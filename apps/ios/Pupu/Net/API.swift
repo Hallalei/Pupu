@@ -181,7 +181,7 @@ nonisolated struct API: Sendable {
         try await send("api/docs/\(id)")
     }
 
-    /// 删资料：上传的人或空间主人，不弹确认。
+    /// 删资料：上传的人或空间主人。删之前的确认在正文页上问（Docs.swift 的 confirmRemove）。
     func deleteDoc(_ id: String) async throws {
         let _: Done = try await send("api/docs/\(id)", method: "DELETE", raw: nil, type: "application/json")
     }
@@ -236,11 +236,13 @@ nonisolated struct API: Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let failure = try? JSONDecoder().decode(Failure.self, from: data)
-            if status == 401 {
-                throw APIError(message: failure?.error ?? "这台手机的凭据失效了，或者被吊销了。", unauthorized: true)
+            // 带着凭据被拒，就是这台手机的授权失效了：操作下面写和登录页一样的那句，不写服务器给的原因（规范 SignIn「授权失效」）。
+            // 没带凭据的（拿配对码、访问口令或 Google 登录换凭据）回 401 是码不对，照写服务器的原因。
+            if status == 401, endpoint.token != nil {
+                throw APIError(message: "这台手机的授权失效了，重新配对一次就好。", unauthorized: true)
             }
-            if let failure { throw APIError(message: failure.error) }
-            throw APIError(message: "请求失败：\(status)")
+            if let failure { throw APIError(message: failure.error, unauthorized: status == 401) }
+            throw APIError(message: "请求失败：\(status)", unauthorized: status == 401)
         }
         return try JSONDecoder().decode(T.self, from: data)
     }

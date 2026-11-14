@@ -97,7 +97,8 @@ export function mayPromote(space: SpaceAccess | undefined): boolean {
 
 /**
  * 人能不能删一份资料：上传的人自己，或者它所在地方的管事的（空间主人；组织层是组织的创建者）。
- * Pupu 写的（没有上传人）只有管事的能删。删不弹确认，删了能从旧版本里找回（只标 ended_at）。
+ * Pupu 写的（没有上传人）只有管事的能删。人在页面上删之前先确认一次。删了只标 ended_at，库里的旧版本还在，
+ * 但没有给人找回的入口，所以确认框写「删了找不回来」。
  */
 export function mayDeleteDoc(
   doc: Pick<DocMeta, "authorId" | "spaceId">,

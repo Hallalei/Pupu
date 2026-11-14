@@ -2,7 +2,7 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// Artifacts（规范 Docs）：资料、skill 和页面，组织层和看得到的空间里的。是主界面里的一个地方，画在会话卡片上（窗框 `canvas`），
+/// Artifacts（规范 Docs）：文字、skill 和页面，组织层和看得到的空间里的。是主界面里的一个地方，画在会话卡片上（窗框 `canvas`），
 /// 从切换 sheet 的「Artifacts」一行进。卡片里自己带一个不显示导航栏的导航：列表和正文页左右推，正文页左上角画返回，侧滑也能回。
 /// 照网页的 Docs.tsx。
 final class DocsNavigationController: UINavigationController, UIGestureRecognizerDelegate {
@@ -121,7 +121,7 @@ final class DocsViewController: UIViewController, UICollectionViewDelegate {
                 content.textProperties.font = Theme.font(.message)
                 content.textProperties.color = Theme.ink
                 content.textProperties.alignment = .center
-                content.secondaryText = "组织和你看得到的空间里的资料、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。"
+                content.secondaryText = "组织和你看得到的空间里的文字、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。"
                 content.secondaryTextProperties.font = Theme.font(.subheadline)
                 content.secondaryTextProperties.color = Theme.inkMuted
                 content.secondaryTextProperties.alignment = .center
@@ -455,7 +455,7 @@ private final class DocsSkeletonView: UIView {
     }
 }
 
-/// 正文页（规范 Docs「正文页」）：左上返回，上传的人和空间主人右边有删除，点了就删；下面隔 12 是标题（`title`）、
+/// 正文页（规范 Docs「正文页」）：左上返回，上传的人和空间主人右边有删除，点了先问一句再删；下面隔 12 是标题（`title`）、
 /// 说明（`subheadline`、`ink-muted`）、正文，彼此隔 8。正文是 Markdown，直接写在卡片上。
 /// 页面（一页 HTML）占满卡片，标题（`headline`）写在返回键旁边。
 final class DocPageViewController: UIViewController {
@@ -468,6 +468,8 @@ final class DocPageViewController: UIViewController {
     private let pageTitle = UILabel(style: .headline)
     private let failure = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
     private var delete: UIButton?
+    /// 删除确认框的标题要用。
+    private var docTitle = ""
 
     init(identity: Identity, id: String, onDeleted: @escaping () -> Void) {
         self.identity = identity
@@ -523,8 +525,9 @@ final class DocPageViewController: UIViewController {
 
     private func show(_ doc: DocView) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        docTitle = doc.title
         if doc.mayDelete == true {
-            let delete = roundButton("trash", ink: Theme.dangerInk, label: "删除") { [weak self] in self?.remove() }
+            let delete = roundButton("trash", ink: Theme.dangerInk, label: "删除") { [weak self] in self?.confirmRemove() }
             bar.addArrangedSubview(delete)
             self.delete = delete
         }
@@ -584,7 +587,16 @@ final class DocPageViewController: UIViewController {
 
     private func showMissing() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        stack.addArrangedSubview(UILabel(text: "没有这份资料", style: .message, lines: 0))
+        stack.addArrangedSubview(UILabel(text: "没有这一份", style: .message, lines: 0))
+    }
+
+    /// 删之前先问一句（规范 Docs「删除」）：系统确认框，「删掉」是破坏性的。
+    private func confirmRemove() {
+        guard let delete, delete.isEnabled else { return }
+        let alert = UIAlertController(title: "删掉「\(docTitle)」？", message: "组织里的人都看不到了，删了找不回来。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "删掉", style: .destructive) { [weak self] _ in self?.remove() })
+        present(alert, animated: true)
     }
 
     private func remove() {

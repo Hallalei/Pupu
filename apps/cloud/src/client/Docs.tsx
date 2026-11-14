@@ -18,7 +18,7 @@ const ROUND = "tap grid size-control-sm shrink-0 place-items-center rounded-full
 const SMALL_PILL = "tap inline-flex h-8 shrink-0 items-center rounded-full bg-surface-inset text-subheadline text-ink";
 
 /**
- * Artifacts（规范 Docs）：资料、skill 和页面，组织层和看得到的空间里的，按地方分组。点开读正文，页面在沙箱 iframe 里跑。
+ * Artifacts（规范 Docs）：文字、skill 和页面，组织层和看得到的空间里的，按地方分组。点开读正文，页面在沙箱 iframe 里跑。
  * 上传放文字或一页 HTML，图片和多文件的页面以后再说。画在会话卡片上，内容列居中、最宽 column-max；窗框是 canvas（不属于哪个空间）。
  */
 export function Docs({ version, open, onOpen }: { version: unknown; open: string | undefined; onOpen: (id: string | undefined) => void }) {
@@ -71,7 +71,7 @@ export function Docs({ version, open, onOpen }: { version: unknown; open: string
           <div className="flex flex-col items-center gap-2 pt-12 text-center">
             <p className="m-0 text-message text-ink">还没有 Artifacts</p>
             <p className="m-0 max-w-90 text-subheadline text-ink-muted">
-              组织和你看得到的空间里的资料、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。
+              组织和你看得到的空间里的文字、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。
             </p>
           </div>
         )}
@@ -156,10 +156,52 @@ function ListSkeleton() {
   );
 }
 
-/** 正文页：返回、标题、说明、正文。正文是 Markdown，直接写在卡片上，不再套面板。 */
+/** 确认框里的「删掉」：和「取消」一样的次要胶囊，字用 danger-ink（README：danger 不做按钮底）。 */
+const PILL_DESTRUCTIVE =
+  "tap inline-flex h-control shrink-0 items-center justify-center gap-1.5 rounded-full bg-surface-inset px-4 text-body font-semibold text-danger-ink";
+
+/**
+ * 删之前先问一句（规范 Docs「删除」）：字和 iOS 的 UIAlertController 一样。浏览器自带的确认框改不了按钮上的字，
+ * 所以用 App 里的居中弹窗，照「新空间」弹窗的样子排。
+ */
+function ConfirmDelete({
+  title,
+  isOpen,
+  onOpenChange,
+  onConfirm
+}: {
+  title: string;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal>
+      <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
+        <Modal.Container placement="center">
+          <Modal.Dialog className="layer-dialog w-[min(92vw,420px)] max-w-none gap-3 p-4">
+            <Modal.Heading className="m-0 px-1 pt-1 text-title break-words text-ink">删掉「{title}」？</Modal.Heading>
+            <p className="m-0 px-1 text-subheadline text-ink-muted">组织里的人都看不到了，删了找不回来。</p>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => onOpenChange(false)} className={`${PILL_SECONDARY} flex-1`}>
+                取消
+              </button>
+              <button type="button" onClick={onConfirm} className={`${PILL_DESTRUCTIVE} flex-1`}>
+                删掉
+              </button>
+            </div>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
+  );
+}
+
+/** 正文页：返回、标题、说明、正文。正文是 Markdown，直接写在卡片上，不再套面板。删除先问一句。 */
 function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; onDeleted: () => void }) {
   const [doc, setDoc] = useState<DocView | null | undefined>(undefined);
   const [deleting, setDeleting] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setDoc(undefined);
@@ -168,6 +210,7 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
   }, [id]);
 
   async function remove() {
+    setAsking(false);
     setDeleting(true);
     setError(null);
     try {
@@ -180,23 +223,26 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
   }
 
   const bar = (
-    <div className="flex items-center justify-between gap-3">
-      <button type="button" aria-label="回到 Artifacts" onClick={onBack} className={`${ROUND} text-ink`}>
-        <ChevronLeftIcon />
-      </button>
-      {doc?.kind === "page" && <h1 className="m-0 min-w-0 flex-1 truncate text-headline text-ink">{doc.title}</h1>}
-      {doc?.mayDelete && (
-        <button
-          type="button"
-          aria-label="删除"
-          aria-disabled={deleting || undefined}
-          onClick={() => !deleting && void remove()}
-          className={`${ROUND} text-danger-ink`}
-        >
-          {deleting ? <Spinner size="sm" color="current" aria-label="正在删除" className="size-3.5" /> : <TrashIcon />}
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <button type="button" aria-label="回到 Artifacts" onClick={onBack} className={`${ROUND} text-ink`}>
+          <ChevronLeftIcon />
         </button>
-      )}
-    </div>
+        {doc?.kind === "page" && <h1 className="m-0 min-w-0 flex-1 truncate text-headline text-ink">{doc.title}</h1>}
+        {doc?.mayDelete && (
+          <button
+            type="button"
+            aria-label="删除"
+            aria-disabled={deleting || undefined}
+            onClick={() => !deleting && setAsking(true)}
+            className={`${ROUND} text-danger-ink`}
+          >
+            {deleting ? <Spinner size="sm" color="current" aria-label="正在删除" className="size-3.5" /> : <TrashIcon />}
+          </button>
+        )}
+      </div>
+      {doc?.mayDelete && <ConfirmDelete title={doc.title} isOpen={asking} onOpenChange={setAsking} onConfirm={() => void remove()} />}
+    </>
   );
 
   // 页面占满卡片，标题写在返回键旁边。
@@ -216,7 +262,7 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
         {bar}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
         {doc === undefined && <PageSkeleton />}
-        {doc === null && <p className="m-0 text-message text-ink">没有这份资料</p>}
+        {doc === null && <p className="m-0 text-message text-ink">没有这一份</p>}
         {doc && (
           <div className="flex flex-col gap-2">
             <h1 className="m-0 text-title text-ink">{doc.title}</h1>

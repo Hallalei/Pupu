@@ -27,6 +27,13 @@ export async function readLocalModel(): Promise<LocalModel | null> {
   }
 }
 
+/** 钥匙串用不了，key 没法加密：页面上写这一句（规范 ModelSettings「出错」），系统的原话在 cause 里，只进日志。 */
+export class KeychainUnavailable extends Error {
+  constructor(cause: unknown) {
+    super("这台电脑上的钥匙串用不了，key 没法加密保存。", { cause });
+  }
+}
+
 export async function writeLocalModel(model: LocalModel | null): Promise<void> {
   const target = localModelPath();
   if (!model) {
@@ -38,8 +45,8 @@ export async function writeLocalModel(model: LocalModel | null): Promise<void> {
   try {
     if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("safeStorage 用不了");
     sealed = await safeStorage.encryptStringAsync(JSON.stringify(model));
-  } catch {
-    throw new Error("这台电脑上的钥匙串用不了，key 没法加密保存。");
+  } catch (cause) {
+    throw new KeychainUnavailable(cause);
   }
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.${process.pid}.tmp`;

@@ -3166,12 +3166,12 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   const doc = pathname.match(/^\/api\/docs\/([^/]+)$/);
   if (doc && method === "GET") {
     const found = await caller.pupu.readDoc(decodeURIComponent(doc[1] ?? ""), caller.device);
-    if (!found) return Response.json({ error: "没有这份资料" }, { status: 404 });
+    if (!found) return Response.json({ error: "没有这一份" }, { status: 404 });
     return Response.json(found);
   }
   if (doc && method === "DELETE") {
     const verdict = await caller.pupu.deleteDoc(decodeURIComponent(doc[1] ?? ""), caller.device);
-    if (verdict === "missing") return Response.json({ error: "没有这份资料" }, { status: 404 });
+    if (verdict === "missing") return Response.json({ error: "没有这一份" }, { status: 404 });
     if (verdict === "forbidden") return Response.json({ error: "只有上传的人和空间主人能删" }, { status: 403 });
     return Response.json({ ok: true });
   }

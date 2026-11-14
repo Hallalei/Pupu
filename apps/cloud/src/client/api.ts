@@ -71,7 +71,7 @@ export const api = {
   /** 资料：看得到的，和上传能放到哪。 */
   docs: () => request<DocsView>("/api/docs"),
   doc: (id: string) => request<DocView>(`/api/docs/${encodeURIComponent(id)}`),
-  /** 删资料：上传的人或空间主人，不弹确认。 */
+  /** 删资料：上传的人或空间主人。删之前的确认在正文页上问（Docs.tsx 的 ConfirmDelete）。 */
   deleteDoc: (id: string) => request<{ ok: true }>(`/api/docs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   uploadDoc: (input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string }) =>
     request<DocMeta>("/api/docs", { method: "POST", body: JSON.stringify(input) }),

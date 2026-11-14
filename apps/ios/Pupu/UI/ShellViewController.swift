@@ -11,7 +11,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     private enum Place: Equatable {
         case pupu
         case space(String)
-        /// Artifacts：组织层和看得到的空间里的资料、skill 和页面。
+        /// Artifacts：组织层和看得到的空间里的文字、skill 和页面。
         case docs
     }
 
@@ -393,7 +393,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
             field.returnKeyType = .done
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "建立", style: .default) { [weak self, weak alert] _ in
+        alert.addAction(UIAlertAction(title: "新建", style: .default) { [weak self, weak alert] _ in
             let name = alert?.textFields?[0].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let goal = alert?.textFields?[1].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !name.isEmpty, let api = Store.shared.api else { return }

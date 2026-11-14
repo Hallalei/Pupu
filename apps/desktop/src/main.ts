@@ -31,7 +31,7 @@ import type { MenubarAction, MenubarState } from "../../cloud/bridge/menubar.ts"
 import type { DesktopComputer, DesktopSwitch, LocalModelView, PrivacyPane } from "../../cloud/src/client/desktop.ts";
 import { modelPath, parseLocalModel, type LocalModel } from "../../cloud/bridge/model.ts";
 import { probeModel } from "../../cloud/src/model/probe.ts";
-import { localModelPath, readLocalModel, writeLocalModel } from "./local-model.ts";
+import { KeychainUnavailable, localModelPath, readLocalModel, writeLocalModel } from "./local-model.ts";
 import { credentialsPath, readPairing, writePairing, type Credential, type Pairing } from "./credentials.ts";
 import { debugSwitches, devVariables } from "./env.ts";
 import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
@@ -321,9 +321,11 @@ async function setLocalModel(input: unknown): Promise<{ ok: true } | { ok: false
   try {
     await writeLocalModel(next);
   } catch (error) {
-    // 写不进本机（多半是钥匙串用不了）：原话回给页面。直接抛出去，页面上收到的是 Electron 包过的一长串。
-    log(`这台电脑上的模型没存上：${message(error)}`);
-    return { ok: false, error: message(error) };
+    // 写不进本机：系统的原话只进日志，页面上照规范 ModelSettings「出错」写一句。
+    // 不回 { ok: false } 而是直接抛出去的话，页面上收到的是 Electron 包过的一长串。
+    const cause = error instanceof KeychainUnavailable ? `（${message(error.cause)}）` : "";
+    log(`这台电脑上的模型没存上：${message(error)}${cause}`);
+    return { ok: false, error: error instanceof KeychainUnavailable ? error.message : "没存进这台电脑，再试一次。" };
   }
   localModel = next;
   supervisor.model(next);
