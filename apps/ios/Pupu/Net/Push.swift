@@ -151,9 +151,10 @@ final class Push: NSObject {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    func handle(approval id: String, action: String) async {
+    /// `org` 是推送带来的 Pupu id：手机在好几个 Pupu 里时，用那个 Pupu 的凭据去批。老云端不带，按现在连着的。
+    func handle(approval id: String, action: String, org: String?) async {
         let allow = action == Self.allowAction
-        guard let api = Store.shared.api else {
+        guard let api = Connection.shared.api(org: org) else {
             await tell(title: "没批上", body: "这台手机没连着 Pupu，打开 App 重新配对。")
             return
         }
@@ -201,7 +202,7 @@ extension Push: UNUserNotificationCenterDelegate {
             return
         }
         Task {
-            await handle(approval: id, action: action)
+            await handle(approval: id, action: action, org: content.userInfo["pupu"] as? String)
             completionHandler()
         }
     }

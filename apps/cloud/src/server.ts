@@ -2240,10 +2240,18 @@ async function handlePair(request: Request, env: Env, url: URL): Promise<Respons
   });
   if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
   if (kind !== "browser") return Response.json({ id: result.id, name: result.name, token: result.token });
-  return Response.json(
-    { id: result.id, name: result.name },
-    { headers: { "Set-Cookie": deviceCookie(url, result.token) } }
-  );
+  const headers = new Headers();
+  for (const cookie of signedInCookies(url, request, result.token)) headers.append("Set-Cookie", cookie);
+  return Response.json({ id: result.id, name: result.name }, { headers });
+}
+
+/**
+ * 这个浏览器重新登录（或配对）了：种下新凭据，切换时留下的别的 Pupu 的 cookie 和选中的都清掉。
+ * 换了个 Google 账号登录时，上一个人在别的 Pupu 里的凭据不能留着被用上。
+ */
+function signedInCookies(url: URL, request: Request, token: string): string[] {
+  const stale = [...cookiesOf(request).keys()].filter((name) => name.startsWith(ORG_COOKIE_PREFIX) || name === ACTIVE_COOKIE);
+  return [deviceCookie(url, token), ...stale.map((name) => cookieHeader(url, name, null))];
 }
 
 /** 这个账号在的所有 Pupu：目录里记的，加上第一个 Pupu（它的老成员不在目录里）。 */
@@ -2298,7 +2306,9 @@ async function switchTo(
     const cookies = cookiesOf(request);
     for (const name of [orgCookieName(home.pupu), TOKEN_COOKIE]) {
       const token = cookies.get(name);
-      if (token && pupuOfCredential(token) === home.pupu && (await deviceOf(env, token, name))) {
+      const found = token && pupuOfCredential(token) === home.pupu ? await deviceOf(env, token, name) : null;
+      // 留着的 cookie 还得是同一个人的：换过账号登录的浏览器里，可能有上一个人的。
+      if (found && (await found.pupu.whoIs(found.device))?.email === emailKey(me.email)) {
         return Response.json({ ok: true, org: home.pupu }, { headers: { "Set-Cookie": active } });
       }
     }
@@ -2613,8 +2623,7 @@ export default {
           backend: authBackend(env),
           google: googleClientFrom(env, isLocal(request)),
           browserName,
-          // 刚登录的那个 Pupu 优先：清掉之前选中的。
-          deviceCookie: (target, token) => [deviceCookie(target, token), cookieHeader(target, ACTIVE_COOKIE, null)],
+          deviceCookie: (target, token) => signedInCookies(target, request, token),
           source: (incoming) => sourceOf(incoming.headers.get("CF-Connecting-IP"))
         });
         if (response) return response;

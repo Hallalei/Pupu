@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import { mayOpen, mayRead, maySeeSpace, seesWork, type Level } from "../src/access.ts";
+import { MemberStore, removeMember } from "../src/members.ts";
 import { renderPrompt } from "../src/prompt.ts";
 import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { ReportStore } from "../src/reports.ts";
@@ -219,4 +220,51 @@ describe("出口按会话的受众筛", () => {
     assert.match(prompt("7"), /定价/);
   });
 
+});
+
+describe("被移出组织的人（第 8 节的身份）", () => {
+  test("移出组织：从空间里拿掉，个人入口谁都打不开；再邀请回来用回原来的 id，个人入口回来，空间要重新拉", async () => {
+    const { sql, projects, threads, space } = await org();
+    const members = new MemberStore(sql);
+    const lin = members.addCreator("lin@example.com", NOW)!;
+    const zhou = members.invite("zhou@example.com", lin.id, NOW)!;
+    await threads.ensurePrivateChat(zhou.id, async () => "20", NOW);
+    await projects.addMember(writer(sql), space.id, zhou.id, lin.id, NOW);
+    const entry = threads.of("20");
+    assert.equal(mayOpen(entry, zhou.id), true);
+
+    await removeMember(
+      zhou,
+      {
+        members,
+        devices: { ofMember: () => [], cancelCodes: () => {} },
+        computers: { list: () => [] },
+        connectors: { list: () => [] },
+        revokeDevice: () => {},
+        revokeComputer: () => {},
+        disconnect: async () => true,
+        leaveSpaces: async (memberId) => {
+          for (const project of projects.listProjects()) {
+            if (project.members.includes(memberId)) await projects.removeMember(writer(sql), project.id, memberId);
+          }
+        },
+        release: async () => {}
+      },
+      NOW + 1
+    );
+    // 被移出的人发请求时认不出是谁（设备吊销了），viewer 是 null。
+    const removedViewer = members.byId(zhou.id)?.id ?? null;
+    assert.equal(removedViewer, null);
+    assert.equal(mayOpen(threads.of("20"), removedViewer), false, "他自己打不开");
+    assert.equal(mayOpen(threads.of("20"), lin.id), false, "创建者也打不开");
+    const after = projects.getProject(space.id)!;
+    assert.equal(after.members.includes(zhou.id), false, "从空间里拿掉了");
+    assert.equal(maySeeSpace(after, removedViewer), false);
+    assert.equal(mayRead({ kind: "private", memberId: "m1" }, after), true, "剩下的成员照样读得到，不被空出来的 id 卡住");
+
+    const back = members.invite("zhou@example.com", lin.id, NOW + 2)!;
+    assert.equal(back.id, zhou.id);
+    assert.equal(mayOpen(threads.of("20"), back.id), true, "个人入口回来了");
+    assert.equal(maySeeSpace(projects.getProject(space.id)!, back.id), false, "L3 空间没有自动回来");
+  });
 });

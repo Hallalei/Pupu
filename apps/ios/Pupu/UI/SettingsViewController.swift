@@ -44,6 +44,7 @@ final class SettingsViewController: UICollectionViewController {
 
     nonisolated private enum Section: Hashable, Sendable {
         case profile
+        case orgs
         case pages(Int)
         case connected
         case services
@@ -66,6 +67,9 @@ final class SettingsViewController: UICollectionViewController {
         case profile(title: String, detail: String, avatar: String?, member: Bool)
         /// Pupu 自己的头像，创建者才有这一行。值是换过的地址，只用来在换了之后重画。
         case pupuAvatar(String?)
+        /// 这个账号在的一个 Pupu。`status` 是切过去时右边的字（正在切换、等已有的手机允许）。
+        case org(OrgList.Org, status: String?)
+        case openOwn
         case link(Page, summary: String?)
         case account(Connectors.Account, owner: String?)
         case service(Connectors.Service, busy: Bool)
@@ -109,6 +113,10 @@ final class SettingsViewController: UICollectionViewController {
     /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，第一页也就不放这一行。
     private var invites: InviteList?
     private var creatingInvite = false
+    /// 这个账号在的 Pupu。只有一个、也开不了自己的时候，第一页不放这一组。
+    private var orgs: OrgList?
+    /// 正在切过去的那个，和右边写什么。
+    private var switching: (org: String, status: String)?
 
     init(page: Page = .root) {
         self.page = page
@@ -159,6 +167,7 @@ final class SettingsViewController: UICollectionViewController {
         }
         if page == .root || page == .notifications { Push.shared.register() }
         if page == .root || page == .invites { loadInvites() }
+        if page == .root { loadOrgs() }
         render()
     }
 
@@ -210,7 +219,7 @@ final class SettingsViewController: UICollectionViewController {
         let store = Store.shared
         let me = store.members.first(where: \.current)
         let host = Connection.shared.endpoint?.base.host() ?? ""
-        snapshot.appendSections([.profile, .pages(0), .pages(1)])
+        snapshot.appendSections([.profile])
         snapshot.appendItems([
             .profile(
                 title: me?.email ?? UIDevice.current.name,
@@ -219,6 +228,14 @@ final class SettingsViewController: UICollectionViewController {
                 member: me != nil
             )
         ], toSection: .profile)
+        // 一个账号在好几个 Pupu 里：点一下切过去（docs/协作方案.md 第 1 节）。
+        if let orgs, orgs.orgs.count > 1 || orgs.canOpenOwn {
+            snapshot.appendSections([.orgs])
+            snapshot.appendItems(orgs.orgs.map {
+                .org($0, status: switching?.org == $0.id ? switching?.status : nil)
+            } + (orgs.canOpenOwn ? [.openOwn] : []), toSection: .orgs)
+        }
+        snapshot.appendSections([.pages(0), .pages(1)])
 
         let connectors = store.connectors
         let accounts = connectors.accounts.isEmpty ? (connectors.enabled ? "未连接" : "未开启") : "\(connectors.accounts.count) 个"
@@ -400,6 +417,25 @@ final class SettingsViewController: UICollectionViewController {
             content.image = Avatars.round(pupu.image, letter: "P", size: 28, pixelArt: pupu.pixelArt)
             content.imageProperties.maximumSize = CGSize(width: 28, height: 28)
             cell.accessories = [.disclosureIndicator()]
+        case .org(let org, let status):
+            content = UIListContentConfiguration.cell()
+            content.textProperties.font = Theme.font(.body)
+            content.textProperties.color = Theme.ink
+            content.text = org.name
+            content.image = Avatars.round(nil, letter: Avatars.letter(org.creator ?? org.name), size: 28, pixelArt: false)
+            content.imageProperties.maximumSize = CGSize(width: 28, height: 28)
+            cell.accessories = [.label(text: status ?? "\(org.members) 人", options: .init(tintColor: Theme.inkMuted, font: Theme.font(.body)))]
+            if org.current {
+                cell.accessories.append(.checkmark(options: .init(tintColor: Theme.ink)))
+                cell.accessibilityTraits = [.selected]
+            }
+        case .openOwn:
+            content = UIListContentConfiguration.cell()
+            content.textProperties.font = Theme.font(.body)
+            content.textProperties.color = Theme.ink
+            content.text = "开自己的 Pupu"
+            content.image = UIImage(systemName: "plus")
+            content.imageProperties.tintColor = Theme.ink
         case .link(let target, let summary):
             content = UIListContentConfiguration.cell()
             content.textProperties.font = Theme.font(.body)
@@ -620,6 +656,11 @@ final class SettingsViewController: UICollectionViewController {
             navigationController?.pushViewController(AvatarPickerViewController(), animated: true)
         case .pupuAvatar:
             navigationController?.pushViewController(AvatarPickerViewController(target: .pupu), animated: true)
+        case .org(let org, _):
+            guard !org.current, switching == nil else { return }
+            switchOrg(org.id) { progress in try await Connection.shared.switchTo(org: org.id, progress: progress) }
+        case .openOwn:
+            askOpenOwn()
         case .link(let target, _):
             navigationController?.pushViewController(SettingsViewController(page: target), animated: true)
         case .computer(let computer):
@@ -911,6 +952,53 @@ final class SettingsViewController: UICollectionViewController {
                 }
                 Store.shared.refresh()
             }
+        })
+        present(alert, animated: true)
+    }
+
+    private func loadOrgs() {
+        guard let api = Store.shared.api else { return }
+        Task {
+            // 老云端没有这个接口：留着 nil，这一组不出现。
+            orgs = try? await api.orgs()
+            render()
+        }
+    }
+
+    /// 切过去。切好了 `Connection` 发 changed，主界面整个按新的身份重建，这一页跟着关掉。
+    private func switchOrg(_ key: String, work: @escaping (@escaping (SignIn.Progress) -> Void) async throws -> Void) {
+        switching = (key, "正在切换…")
+        render()
+        Task {
+            do {
+                try await work { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self, case .waiting = progress else { return }
+                        self.switching = (key, "等已有的手机允许")
+                        self.render()
+                    }
+                }
+            } catch is CancellationError {
+            } catch {
+                show(error.localizedDescription)
+            }
+            switching = nil
+            render()
+        }
+    }
+
+    private func askOpenOwn() {
+        let alert = UIAlertController(title: "开自己的 Pupu", message: "填邀请码。", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "ABCD-EFGH"
+            field.autocapitalizationType = .allCharacters
+            field.autocorrectionType = .no
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "开", style: .default) { [weak self, weak alert] _ in
+            let code = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !code.isEmpty else { return }
+            self?.switchOrg("own") { progress in try await Connection.shared.openOwn(code: code, progress: progress) }
         })
         present(alert, animated: true)
     }

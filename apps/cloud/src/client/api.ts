@@ -12,7 +12,7 @@ import type { InviteList } from "../directory";
 import type { Purpose } from "../passkeys";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
-import type { PupuState } from "../server";
+import type { OrgList, PupuState } from "../server";
 import { MAIN_SESSION, type ChatsView } from "../threads";
 import { createSnapshotOrder } from "./snapshot-order";
 
@@ -127,6 +127,12 @@ export const api = {
     request<{ ok: true }>("/api/pupu/avatar", { method: "PUT", body: image, headers: { "Content-Type": image.type } }),
   /** 换模型。自带 key 会先试一次，不过就报错。 */
   setModel: (choice: unknown) => request<{ ok: true }>("/api/model", { method: "POST", body: JSON.stringify(choice) }),
+  /** 这个账号在的 Pupu，见 server.ts 的 `orgList`。 */
+  orgs: () => request<OrgList>("/api/orgs"),
+  /** 切到另一个 Pupu：网页的凭据在 cookie 里，切完重新载入页面。 */
+  switchOrg: (org: string) => request<{ ok: true }>("/api/orgs/switch", { method: "POST", body: JSON.stringify({ org }) }),
+  /** 用邀请码开自己的 Pupu，开好就切过去。 */
+  openOwnOrg: (code: string) => request<{ ok: true }>("/api/orgs/own", { method: "POST", body: JSON.stringify({ code }) }),
   invites: () => request<InviteList>("/api/invites"),
   createInvite: () => request<{ code: string }>("/api/invites", { method: "POST" }),
   revokeInvite: (code: string) =>

@@ -7,7 +7,7 @@ import type { ComputerView } from "../bridge/protocol";
 import type { ConnectorService, ConnectorView } from "../connectors/store";
 import { mayChangePolicy, type DeviceView } from "../devices";
 import type { InviteList } from "../directory";
-import type { PupuState } from "../server";
+import type { OrgList, PupuState } from "../server";
 import {
   mayConnect,
   mayInvite,
@@ -23,6 +23,7 @@ import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
   CalendarIcon,
+  CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -201,6 +202,7 @@ export function Settings({
             .filter((part) => part && part !== (me?.email ?? here?.name ?? host))
             .join(" · ")}
         />
+        {me && <Orgs open={isOpen} />}
         <Group>
           <LinkRow
             icon={<ComputerIcon />}
@@ -1358,5 +1360,98 @@ function QrCode({ text, label }: { text: string; label: string }) {
         <path d={path} fill="#000" />
       </svg>
     </div>
+  );
+}
+
+/**
+ * 这个账号在的几个 Pupu，点一下切过去（docs/协作方案.md 第 1 节：人人有自己的，能进别人的）。
+ * 只有一个、也开不了自己的时候不显示。切完重新载入：网页的凭据和连接都跟着 Pupu 走。
+ */
+function Orgs({ open }: { open: boolean }) {
+  const [list, setList] = useState<OrgList | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    api
+      .orgs()
+      .then((next) => live && setList(next))
+      .catch(() => live && setList(null));
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
+  async function go(key: string, work: () => Promise<unknown>) {
+    setBusy(key);
+    setError(null);
+    try {
+      await work();
+      window.location.replace("/");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setBusy(null);
+    }
+  }
+
+  if (!list || (list.orgs.length < 2 && !list.canOpenOwn)) return null;
+  return (
+    <>
+      <Group>
+        {list.orgs.map((org) => (
+          <button
+            key={org.id}
+            type="button"
+            disabled={busy !== null}
+            aria-current={org.current ? "true" : undefined}
+            onClick={() => !org.current && void go(org.id, () => api.switchOrg(org.id))}
+            className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4"
+          >
+            <MemberAvatar name={org.creator ?? org.name} src={null} className="size-6 bg-foreground text-footnote text-background" />
+            <span className="min-w-0 flex-1 truncate text-body">{org.name}</span>
+            <span className="shrink-0 text-body text-muted">{busy === org.id ? "正在切换…" : `${org.members} 人`}</span>
+            <CheckIcon className={`shrink-0 text-[16px] ${org.current ? "" : "invisible"}`} aria-label={org.current ? "当前" : undefined} />
+          </button>
+        ))}
+        {list.canOpenOwn &&
+          (opening ? (
+            <form
+              className="flex items-center gap-2 px-4 py-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void go("own", () => api.openOwnOrg(code));
+              }}
+            >
+              <input
+                autoFocus
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                placeholder="邀请码"
+                aria-label="邀请码"
+                className="min-w-0 flex-1 bg-transparent font-mono text-body outline-none"
+              />
+              <Button size="sm" type="submit" isPending={busy === "own"} isDisabled={code.trim().length < 8}>
+                开
+              </Button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setOpening(true)}
+              className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-foreground/4"
+            >
+              <span className="grid size-6 shrink-0 place-items-center text-[18px]">
+                <PlusIcon />
+              </span>
+              开自己的 Pupu
+            </button>
+          ))}
+      </Group>
+      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
+    </>
   );
 }
