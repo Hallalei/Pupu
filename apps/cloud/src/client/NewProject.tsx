@@ -1,7 +1,7 @@
 import { Button, Input, Modal, TextArea } from "@heroui/react";
 import { useState } from "react";
 
-/** 手动建项目。平时是 Pupu 在聊天里问过你再建，这里给想自己建的时候用。 */
+/** 手动建空间：私有的，只有自己和 Pupu，建好再邀请人。 */
 export function NewProject({
   isOpen,
   onOpenChange,
@@ -37,11 +37,11 @@ export function NewProject({
         <Modal.Container placement="center">
           <Modal.Dialog className="w-[min(92vw,420px)] rounded-panel">
             <Modal.Header>
-              <Modal.Heading className="text-title">新项目</Modal.Heading>
+              <Modal.Heading className="text-title">新空间</Modal.Heading>
             </Modal.Header>
             <Modal.Body className="flex flex-col gap-3">
               <Input
-                aria-label="项目名"
+                aria-label="空间名"
                 placeholder="名字"
                 value={name}
                 autoFocus

@@ -1,5 +1,5 @@
 import { Button, Dropdown, Label, Spinner, Tabs } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
@@ -11,7 +11,9 @@ import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
 import { Doing } from "./Doing";
-import { CheckIcon, MenuIcon, PlusIcon } from "./icons";
+import { CheckIcon, ChevronLeftIcon, CloseIcon, MenuIcon, PlusIcon } from "./icons";
+import { ChildDot, childLabel, InviteSheet, ownsSpace, SpaceHeader, SpaceList } from "./Spaces";
+import type { ChildView, ProjectView } from "../server";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { confirmWhere, type ConfirmWhere } from "./passkey";
@@ -22,12 +24,14 @@ import { setNight } from "./theme";
 type Route =
   | { readonly kind: "chat" }
   | { readonly kind: "projects" }
-  | { readonly kind: "project"; readonly id: string };
+  | { readonly kind: "project"; readonly id: string; readonly child?: string };
 
 type Section = "chat" | "projects";
 
 function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, "");
+  const child = path.match(/^\/projects\/([^/]+)\/tasks\/([^/]+)$/);
+  if (child) return { kind: "project", id: decodeURIComponent(child[1]), child: decodeURIComponent(child[2]) };
   const project = path.match(/^\/projects\/(.+)$/);
   if (project) return { kind: "project", id: decodeURIComponent(project[1]) };
   if (path === "/projects") return { kind: "projects" };
@@ -41,7 +45,9 @@ function hashOf(route: Route): string {
     case "projects":
       return "#/projects";
     case "project":
-      return `#/projects/${encodeURIComponent(route.id)}`;
+      return route.child
+        ? `#/projects/${encodeURIComponent(route.id)}/tasks/${encodeURIComponent(route.child)}`
+        : `#/projects/${encodeURIComponent(route.id)}`;
   }
 }
 
@@ -60,6 +66,18 @@ function useRoute() {
     location.hash = hashOf(next);
   }, []);
   return [route, go] as const;
+}
+
+/** 宽屏（侧栏常驻，子会话开在右边）。和 Tailwind 的 lg 一样是 1024。 */
+function useWide(): boolean {
+  const [wide, setWide] = useState(() => matchMedia("(min-width: 1024px)").matches);
+  useEffect(() => {
+    const query = matchMedia("(min-width: 1024px)");
+    const onChange = () => setWide(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return wide;
 }
 
 /** 记住上次打开的项目，点「项目」时直接回到它。浏览器存储可能不可用，失败就算了。 */
@@ -109,6 +127,8 @@ export function App() {
   } = usePupuState();
   const [listOpen, setListOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [inviting, setInviting] = useState<string | null>(null);
+  const wide = useWide();
   const [settings, setSettings] = useState<SettingsPage | null>(null);
   const section = sectionOf(route);
   const lines = useChatLines(chats, route.kind === "chat");
@@ -136,6 +156,11 @@ export function App() {
       members,
       reports: route.kind === "chat" ? reports.filter((card) => card.chat === session) : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
+      children: new Map(projects.flatMap((space) => space.children.map((child) => [child.session, child] as const))),
+      onOpenChild: (session) => {
+        const space = projects.find((item) => item.children.some((child) => child.session === session));
+        if (space) go({ kind: "project", id: space.id, child: session });
+      },
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
@@ -160,7 +185,10 @@ export function App() {
     if (target) go({ kind: "project", id: target.id });
   }, [route.kind, loaded, projects, go]);
 
-  const project = route.kind === "project" ? chat.projects.get(route.id) : undefined;
+  const project = route.kind === "project" ? projects.find((item) => item.id === route.id) : undefined;
+  const child = route.kind === "project" && route.child ? project?.children.find((item) => item.session === route.child) : undefined;
+  const me = members.find((member) => member.current);
+  const inviteSpace = projects.find((item) => item.id === inviting && item.id === project?.id);
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
@@ -179,6 +207,45 @@ export function App() {
     lines.pick(key);
     go({ kind: "chat" });
   };
+  /** 「我的 Pupu」是自己的私聊；没有成员身份（本机开发没登录）时只有大家。 */
+  const openPupu = () => {
+    setListOpen(false);
+    openLine(chats.private ? "private" : "main");
+  };
+  const spaceList = (inWide: boolean) => (
+    <SpaceList
+      spaces={projects}
+      members={members}
+      waiting={waiting}
+      current={project?.id}
+      currentChild={child?.session}
+      pupuAvatar={pupuAvatar}
+      onPupu={openPupu}
+      onOpen={(id) => {
+        setListOpen(false);
+        go({ kind: "project", id });
+      }}
+      onOpenChild={(id, session) => {
+        setListOpen(false);
+        go({ kind: "project", id, child: session });
+      }}
+      onCreate={() => {
+        setListOpen(false);
+        setCreating(true);
+      }}
+      wide={inWide}
+    />
+  );
+  const childChat = (space: ProjectView, item: ChildView, top?: ReactNode) => (
+    <Chat
+      key={item.session}
+      session={item.session}
+      context={{ ...chat, handoffFrom: `从「${space.name}」派来` }}
+      placeholder="接着说这件事"
+      top={top}
+      empty={<div className="text-message text-ink-sky">{item.title}</div>}
+    />
+  );
   const waiting = waitingProjects(activity);
   // 停在审批上的电脑，审批卡就在正上方，同一件事不写两遍。屏幕控制开着的留着，「收回」在这一行上。
   const doing = busyComputers(activity).filter(
@@ -202,6 +269,16 @@ export function App() {
         starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事"]}
       />
     );
+  } else if (project && child && !wide) {
+    body = childChat(
+      project,
+      child,
+      <span className="glass flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-foreground">
+        <span className="truncate font-semibold">{child.title}</span>
+        <ChildDot child={child} />
+        <span className="shrink-0 text-muted">{childLabel(child)}</span>
+      </span>
+    );
   } else if (project) {
     body = (
       <Chat
@@ -209,11 +286,7 @@ export function App() {
         session={project.session}
         context={chat}
         placeholder={`在「${project.name}」里说`}
-        top={
-          <span className="glass flex h-7 max-w-full items-center rounded-full px-3 text-footnote text-foreground">
-            <span className="truncate">{project.name}</span>
-          </span>
-        }
+        top={<SpaceHeader space={project} members={members} mine={ownsSpace(project, me)} onMembers={() => setInviting(project.id)} />}
         empty={
           <div className="flex max-w-md flex-col gap-2 text-center text-ink-sky">
             <div className="text-greeting">{project.name}</div>
@@ -236,7 +309,7 @@ export function App() {
               className="glass lift tap h-control rounded-full px-4 text-body font-semibold text-foreground"
             >
               <PlusIcon />
-              新项目
+              新空间
             </Button>
           </>
         )}
@@ -249,21 +322,26 @@ export function App() {
       <div className="sky" />
       <div className="window-drag" />
       <BrowserTakeover />
-      <Sidebar
-        projects={projects}
-        waiting={waiting}
-        current={project?.id}
-        onOpen={(id) => go({ kind: "project", id })}
-        onCreate={() => setCreating(true)}
-      />
+      <aside className="sidebar glass relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-panel lg:flex">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">{spaceList(true)}</div>
+      </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
         <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)]">
           <div className="titlebar-lead flex h-bar items-center justify-between px-4">
             {/* 宽屏的项目列表在左侧栏，≡ 不要了，位置留着让切换居中。 */}
-            {section === "projects" ? (
+            {project && child && !wide ? (
               <button
                 type="button"
-                aria-label="全部项目"
+                aria-label={`回到「${project.name}」`}
+                onClick={() => go({ kind: "project", id: project.id })}
+                className="glass lift tap grid size-bar place-items-center rounded-full text-[20px]"
+              >
+                <ChevronLeftIcon />
+              </button>
+            ) : section === "projects" ? (
+              <button
+                type="button"
+                aria-label="全部空间"
                 aria-expanded={listOpen}
                 onClick={() => setListOpen((open) => !open)}
                 className="glass lift tap grid size-bar place-items-center rounded-full text-[20px] lg:invisible"
@@ -330,22 +408,48 @@ export function App() {
         <main className="relative min-h-0 flex-1">
           {body}
           {listOpen && (
-            <ProjectList
-              projects={projects}
-              waiting={waiting}
-              current={project?.id}
-              onOpen={(id) => {
-                setListOpen(false);
-                go({ kind: "project", id });
-              }}
-              onCreate={() => {
-                setListOpen(false);
-                setCreating(true);
-              }}
-            />
+            <div className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface-strong py-2 backdrop-blur-[28px] lg:hidden">
+              {spaceList(false)}
+            </div>
           )}
         </main>
       </div>
+      {project && child && wide && (
+        <aside
+          aria-label="子会话"
+          className="glass relative z-10 m-3 ml-0 flex w-105 shrink-0 flex-col overflow-hidden rounded-panel"
+        >
+          <header className="flex shrink-0 items-center gap-2 py-3 pr-3 pl-5">
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="truncate text-body font-semibold">{child.title}</span>
+              <span className="flex items-center gap-1.5 text-caption text-muted">
+                <ChildDot child={child} />
+                {childLabel(child)}
+              </span>
+            </span>
+            <button
+              type="button"
+              aria-label="关闭"
+              onClick={() => go({ kind: "project", id: project.id })}
+              className="tap grid size-8 place-items-center rounded-full hover:bg-foreground/6"
+            >
+              <CloseIcon />
+            </button>
+          </header>
+          <div className="relative min-h-0 flex-1">{childChat(project, child)}</div>
+        </aside>
+      )}
+      <InviteSheet
+        space={inviteSpace}
+        members={members}
+        mine={inviteSpace ? ownsSpace(inviteSpace, me) : false}
+        onClose={() => setInviting(null)}
+        onChange={async (change) => {
+          if (!inviteSpace) return;
+          await api.changeSpace(inviteSpace.id, change);
+          await refresh();
+        }}
+      />
 
       <Settings
         page={settings}
@@ -391,7 +495,8 @@ export function App() {
         isOpen={creating}
         onOpenChange={setCreating}
         onCreate={async (name, goal) => {
-          const created = await api.createProject(name, goal);
+          // 本机开发没登录时建不了私有空间，退回老的全组织项目。
+          const created = me ? await api.createSpace(name, goal) : await api.createProject(name, goal);
           await refresh();
           go({ kind: "project", id: created.id });
         }}
@@ -492,99 +597,5 @@ function SectionSwitch({
         </Dropdown.Popover>
       </Dropdown>
     </>
-  );
-}
-
-/**
- * 宽屏的左侧栏：就是窄窗口里 ≡ 打开的那页项目列表，常驻在左边。第一行「新项目」，下面是全部项目，最近活动的在前。
- * 导航属于控件层，用和顶栏一样的玻璃。电脑不在这里，在设置里。
- */
-function Sidebar({
-  projects,
-  waiting,
-  current,
-  onOpen,
-  onCreate
-}: {
-  projects: readonly Project[];
-  waiting: ReadonlySet<string>;
-  current: string | undefined;
-  onOpen: (id: string) => void;
-  onCreate: () => void;
-}) {
-  const row = "flex min-h-control w-full shrink-0 items-center gap-2 rounded-tag px-3 py-1.5 text-left text-body";
-  return (
-    <aside className="sidebar glass relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-panel lg:flex">
-      <nav aria-label="全部项目" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
-        <button type="button" onClick={onCreate} className={`${row} hover:bg-foreground/6`}>
-          新项目
-        </button>
-        {projects.map((project) => {
-          const selected = project.id === current;
-          const detail = project.progress || project.goal;
-          return (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => onOpen(project.id)}
-              aria-current={selected ? "page" : undefined}
-              className={`${row} ${selected ? "bg-nav-current font-semibold" : "hover:bg-foreground/6"}`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{project.name}</span>
-                {detail && <span className="block truncate text-subheadline font-normal text-muted">{detail}</span>}
-              </span>
-              {waiting.has(project.id) && <WaitingChip />}
-            </button>
-          );
-        })}
-      </nav>
-    </aside>
-  );
-}
-
-/** 手机上切换项目：盖住内容区的整页列表，顶栏留在上面。第一行「新项目」，下面是全部项目，最近活动的在前。 */
-function ProjectList({
-  projects,
-  waiting,
-  current,
-  onOpen,
-  onCreate
-}: {
-  projects: readonly Project[];
-  waiting: ReadonlySet<string>;
-  current: string | undefined;
-  onOpen: (id: string) => void;
-  onCreate: () => void;
-}) {
-  const row =
-    "flex min-h-13 w-full items-center gap-3 px-4 py-2 text-left text-body text-foreground active:bg-foreground/10";
-  return (
-    <nav
-      aria-label="全部项目"
-      className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface-strong backdrop-blur-[28px] lg:hidden"
-    >
-      <button type="button" onClick={onCreate} className={row}>
-        新项目
-      </button>
-      {projects.map((project) => {
-        const detail = project.progress || project.goal;
-        return (
-          <button
-            key={project.id}
-            type="button"
-            onClick={() => onOpen(project.id)}
-            aria-current={project.id === current ? "page" : undefined}
-            className={`${row} ${project.id === current ? "font-semibold" : ""}`}
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{project.name}</span>
-              {detail && <span className="block truncate text-subheadline font-normal text-muted">{detail}</span>}
-            </span>
-            {waiting.has(project.id) && <WaitingChip />}
-          </button>
-        );
-      })}
-    </nav>
   );
 }

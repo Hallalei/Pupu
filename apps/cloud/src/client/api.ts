@@ -10,9 +10,10 @@ import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
 import type { InviteList } from "../directory";
 import type { Purpose } from "../passkeys";
+import type { Level } from "../access";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
-import type { PupuState } from "../server";
+import type { ProjectView, PupuState } from "../server";
 import { MAIN_SESSION, type ChatsView } from "../threads";
 import { createSnapshotOrder } from "./snapshot-order";
 
@@ -58,6 +59,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, goal })
     }),
+  /** 建私有空间（L3，只有自己）。本机开发没登录时云端回 403。 */
+  createSpace: (name: string, goal: string) =>
+    request<Project>("/api/spaces", { method: "POST", body: JSON.stringify({ name, goal }) }),
+  /** 主人改空间：拉人、移人、改密级。 */
+  changeSpace: (id: string, change: { kind: "add" | "remove"; memberId: string } | { kind: "level"; level: Level }) =>
+    request<{ ok: true }>(`/api/spaces/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(change) }),
   /** 打开了这个项目：它报回聊天的结果都算看过。 */
   markProjectSeen: (id: string) =>
     request<{ ok: true }>(`/api/projects/${encodeURIComponent(id)}/seen`, { method: "POST" }),
@@ -141,7 +148,7 @@ const NO_CONNECTORS: PupuState["connectors"] = { enabled: false, services: [], a
  * 被拒（没登录或者被吊销）时 `unauthorized` 是 true，接着轮询：别的标签页登录了，这里也会回来。
  */
 export function usePupuState() {
-  const [projects, setProjects] = useState<readonly Project[]>([]);
+  const [projects, setProjects] = useState<readonly ProjectView[]>([]);
   const [computers, setComputers] = useState<PupuState["computers"]>([]);
   const [approvals, setApprovals] = useState<readonly ApprovalView[]>([]);
   const [devices, setDevices] = useState<readonly DeviceView[]>([]);

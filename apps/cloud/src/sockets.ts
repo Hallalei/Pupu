@@ -4,7 +4,7 @@ import type { AgentEventStream } from "@earendil-works/pi-durable";
 import type { Connection, ConnectionContext } from "agents/lifecycle";
 import type { WebSocketMessage, WebSocketsOptions } from "agents/websockets";
 import type { PiHarness, PiSessionId } from "agents/harness/pi";
-import { FORBIDDEN_CLOSE_CODE, type ClientMessage, type ServerMessage } from "./protocol";
+import { FORBIDDEN_CLOSE_CODE, type ClientMessage, type ServerMessage } from "./protocol.ts";
 import type { BridgeSocket } from "./bridge/hub";
 import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices.ts";
 import { sentInput, type Sender } from "./messages.ts";
