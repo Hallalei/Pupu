@@ -159,7 +159,7 @@ function Select({ label, value, disabled, onChange, children }: {
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="field w-full appearance-none pr-8 disabled:text-ink-muted"
+        className={`field w-full appearance-none pr-8 disabled:text-ink-muted ${value === "" ? "text-ink-muted" : ""}`}
       >
         {children}
       </select>
