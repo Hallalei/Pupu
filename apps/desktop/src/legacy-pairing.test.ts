@@ -44,3 +44,10 @@ test("哪儿都没有：当成没配对", async () => {
   const s = store({});
   assert.deepEqual(await readWithLegacy(NEW, NEW, [OLD], s.read, s.write), { pairing: EMPTY, from: null });
 });
+
+test("新地址下两份凭据都被吊销了、只剩记号：不从旧地址搬回那份被吊销的", async () => {
+  const revoked: Pairing = { desktop: null, computer: null, desktopRevoked: true, computerRevoked: true };
+  const s = store({ [NEW]: revoked, [OLD]: SOME });
+  assert.deepEqual(await readWithLegacy(NEW, NEW, [OLD], s.read, s.write), { pairing: revoked, from: null });
+  assert.deepEqual(s.servers[NEW], revoked);
+});

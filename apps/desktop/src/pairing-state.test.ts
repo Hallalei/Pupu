@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Pairing } from "./credentials.ts";
 import {
   computerAuth,
+  hasRecord,
   PairingRun,
   reasonOf,
   rejectComputer,
@@ -125,4 +126,11 @@ test("两份都被吊销后重新配好：两个记号都去掉；只拿回窗�
   const repaired = withComputer(halfway, { ...computer, id: "c2" });
   assert.deepEqual(repaired, { desktop: { ...credential, id: "d2" }, computer: { ...computer, id: "c2" } });
   assert.equal(computerAuth(repaired), "ok");
+});
+
+test("凭据文件里只剩被吊销的记号也要留着，不然重启后成了还没配对", () => {
+  assert.equal(hasRecord({ desktop: null, computer: null }), false);
+  assert.equal(hasRecord({ desktop: credential, computer: null }), true);
+  assert.equal(hasRecord(rejectDesktop(rejectComputer({ desktop: credential, computer }))), true);
+  assert.equal(hasRecord(rejectDesktop({ desktop: credential, computer: null })), true);
 });

@@ -17,6 +17,14 @@ export function computerAuth(pairing: Pairing): ComputerAuth {
   return pairing.desktopRevoked ? "revoked" : "first";
 }
 
+/**
+ * 这一份还值得留着：手上有凭据，或者记着被吊销过。两份凭据都没了、但是被吊销掉的，也要留下记号，
+ * 不然重启后就成了「还没配对」。
+ */
+export function hasRecord(pairing: Pairing): boolean {
+  return Boolean(pairing.desktop || pairing.computer || pairing.desktopRevoked || pairing.computerRevoked);
+}
+
 /** 云端拒了这台电脑的凭据：丢掉它，记下是被吊销了。 */
 export function rejectComputer(pairing: Pairing): Pairing {
   return { ...pairing, computer: null, computerRevoked: true };

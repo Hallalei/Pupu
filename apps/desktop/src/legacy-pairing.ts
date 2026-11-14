@@ -1,4 +1,5 @@
 import type { Pairing } from "./credentials.ts";
+import { hasRecord } from "./pairing-state.ts";
 
 const paired = (pairing: Pairing) => pairing.desktop !== null || pairing.computer !== null;
 
@@ -14,7 +15,8 @@ export async function readWithLegacy(
   write: (origin: string, pairing: Pairing) => Promise<void>
 ): Promise<{ readonly pairing: Pairing; readonly from: string | null }> {
   const current = await read(origin);
-  if (paired(current) || origin !== defaultUrl) return { pairing: current, from: null };
+  // 新地址下记着被吊销过也算有：旧地址那份就是被吊销掉的同一份，搬回来还会被拒。
+  if (hasRecord(current) || origin !== defaultUrl) return { pairing: current, from: null };
   for (const old of legacy) {
     const pairing = await read(old);
     if (!paired(pairing)) continue;

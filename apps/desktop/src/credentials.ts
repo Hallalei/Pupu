@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app, safeStorage } from "electron";
+import { hasRecord } from "./pairing-state.ts";
 
 /** 一份设备凭据：配对时云端给的 id、名字和明文凭据。 */
 export type Credential = {
@@ -79,7 +80,7 @@ async function rewrite(origin: string, next: Pairing | null): Promise<void> {
     all = { version: 1, servers: {} };
   }
   const servers = { ...all.servers };
-  if (next && (next.desktop || next.computer)) servers[origin] = next;
+  if (next && hasRecord(next)) servers[origin] = next;
   else delete servers[origin];
   const target = credentialsPath();
   if (Object.keys(servers).length === 0) {
