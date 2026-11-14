@@ -134,7 +134,6 @@ private class SheetRow: UIControl {
         text.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row.spacing = Theme.Space.s3
         row.alignment = .center
-        row.isUserInteractionEnabled = false
         for view in [leading].compactMap({ $0 }) + trailing {
             view.setContentHuggingPriority(.required, for: .horizontal)
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -155,6 +154,12 @@ private class SheetRow: UIControl {
 
     override var isHighlighted: Bool {
         didSet { backgroundColor = isHighlighted && action != nil ? Theme.scrim : .clear }
+    }
+
+    /// 行里的按钮（邀请、移出）自己接；别处都算点这一行。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let hit = super.hitTest(point, with: event) else { return nil }
+        return hit is UIControl ? hit : self
     }
 }
 

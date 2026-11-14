@@ -161,8 +161,9 @@ import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit 
 import { maySeeSpace } from "./access.ts";
 import { DOC_BODY_LIMIT, DocStore, docScope, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
+import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
-import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
+import { childReport, COORDINATOR_KEY, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
 import { createPupuTools } from "./tools";
 
@@ -290,6 +291,7 @@ export class Pupu extends DurableObject<Env> {
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly children = new SpaceSessionStore(this.ctx.storage.sql);
   readonly docs = new DocStore(this.ctx.storage.sql);
+  readonly memories = new MemoryStore(this.ctx.storage.sql);
   readonly threads = new ThreadStore(this.ctx.storage.sql, this.store, (session) => {
     const child = this.children.bySession(session);
     const project = child && this.store.getProject(child.projectId);
@@ -420,6 +422,7 @@ export class Pupu extends DurableObject<Env> {
           ...this.#pupuTools,
           ...this.#delegationTools,
           ...this.#docTools,
+          ...this.#memoryTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -436,8 +439,12 @@ export class Pupu extends DurableObject<Env> {
           }),
           hook(GenerationTask, {
             beforeRequest: (request, api) => {
-              this.#rememberAsk(String(api.conversationId), request.messages);
-              return undefined;
+              const session = String(api.conversationId);
+              this.#rememberAsk(session, request.messages);
+              // 记住的事每一轮全量带上，放在最后一条用户消息前面（协作方案第 9.2 节）。
+              const thread = this.threads.of(session);
+              const messages = thread ? withMemory(request.messages, memoryBlock(thread, this.memories)) : undefined;
+              return messages ? { messages } : undefined;
             },
             afterResponse: (message, api) => {
               this.usage.add(dayOf(Date.now()), message.usage.cost.total);
@@ -625,6 +632,7 @@ export class Pupu extends DurableObject<Env> {
     // 这个任务上线之前开的屏幕授权，还没排到期。
     this.#scheduleScreen();
     await this.#syncModel();
+    await this.#coordinateSpaces();
     await this.sockets.reattach();
   }
 
@@ -1885,12 +1893,14 @@ export class Pupu extends DurableObject<Env> {
     const name = input.name.trim();
     if (!name) throw new Error("项目名不能为空");
     const session = await this.harness.sessions.create();
-    const project = this.store.insertProject({
+    const inserted = this.store.insertProject({
       session: session.id,
       name,
       goal: input.goal.trim(),
       background: input.background.trim()
     });
+    await this.#applyMode(inserted, "coordinator");
+    const project = this.store.getProject(inserted.id)!;
     this.#changed();
     return project;
   }
@@ -1906,6 +1916,12 @@ export class Pupu extends DurableObject<Env> {
   readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
 
   /** 共享资料和 skill 的工具，按会话的受众筛，见 docs.ts、docs-tools.ts。 */
+  readonly #memoryTools = createMemoryTools({
+    memories: this.memories,
+    threadOf: (session) => this.threads.of(session),
+    now: () => Date.now()
+  });
+
   readonly #docTools = createDocTools({
     docs: this.docs,
     threadOf: (session) => this.threads.of(session),
@@ -1955,11 +1971,13 @@ export class Pupu extends DurableObject<Env> {
     const name = input.name.trim();
     if (!name) throw new Error("空间名不能为空");
     const session = await this.harness.sessions.create();
-    const project = await this.store.createSpace(
+    const created = await this.store.createSpace(
       this.#sqlWriter,
       { session: session.id, name, goal: input.goal.trim(), background: "", ownerId: owner },
       Date.now()
     );
+    await this.#applyMode(created, "coordinator");
+    const project = this.store.getProject(created.id)!;
     this.#changed();
     return project;
   }
@@ -2037,23 +2055,51 @@ export class Pupu extends DurableObject<Env> {
   }
 
   /**
-   * 把空间切成协调模式：主会话只留委派工具。主人在界面上切（`changeSpace`），本机开发另有 `/api/projects/:id/mode`。
+   * 切空间的模式。主人在界面上切（`changeSpace`），本机开发另有 `/api/projects/:id/mode`。
    */
   async setSpaceMode(projectId: string, mode: SpaceMode): Promise<boolean> {
     await this.lifecycle.start();
     const project = this.store.getProject(projectId);
     if (!project) return false;
-    await this.store.setMode(this.#sqlWriter, projectId, mode, Date.now());
+    const ok = await this.#applyMode(project, mode);
+    if (ok) this.#changed();
+    return ok;
+  }
+
+  /**
+   * 先改主会话给模型看的工具，再改 `mode`（`mayCall` 的硬限制）：顺序反过来，中途失败会留下一个模型看得到、却全被拦下的工具列表。
+   * 记下这个空间按哪一版工具配的（`coordinator:<id>`），切回直接做的记 `direct`，启动时不再替主人切回去。
+   */
+  async #applyMode(project: Project, mode: SpaceMode): Promise<boolean> {
     const pi = await this.harness.pi();
     const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
     if (!conversation) return false;
-    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
-    await conversation.configure(
-      mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } },
-      BACKGROUND_CONTEXT
+    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools, ...this.#memoryTools].filter((tool) =>
+      COORDINATOR_TOOLS.includes(tool.name)
     );
-    this.#changed();
+    await conversation.configure(mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } }, BACKGROUND_CONTEXT);
+    if (project.mode !== mode) await this.store.setMode(this.#sqlWriter, project.id, mode, Date.now());
+    this.store.setMeta(`coordinator:${project.id}`, mode === "coordinator" ? COORDINATOR_KEY : "direct");
     return true;
+  }
+
+  /**
+   * 第 4 步起空间的主会话只做汇报和委派（协作方案第 7 节第 4 步）：老空间启动时切过去，已有的对话留着。
+   * 已经切过、工具也是这一版的跳过；工具列表变了的重配一次。主人切回直接做的不动。一个失败不挡别的，下次启动再试。
+   */
+  async #coordinateSpaces(): Promise<void> {
+    let changed = false;
+    for (const project of this.store.listProjects()) {
+      const applied = this.store.meta(`coordinator:${project.id}`);
+      if (applied === "direct" && project.mode === "direct") continue;
+      if (applied === COORDINATOR_KEY && project.mode === "coordinator") continue;
+      try {
+        changed = (await this.#applyMode(project, "coordinator")) || changed;
+      } catch (error) {
+        console.warn(`空间「${project.name}」没切成协调模式`, error);
+      }
+    }
+    if (changed) this.#changed();
   }
 
   /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。`origin` 是来自哪条聊天，报告卡回到那里。 */
