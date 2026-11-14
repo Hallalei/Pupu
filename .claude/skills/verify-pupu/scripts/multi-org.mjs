@@ -203,7 +203,7 @@ check(opened.status === 200, "cat 用码开了自己的 Pupu，直接切过去")
 catOrgs = (await cat.json("/api/orgs")).body;
 check(catOrgs.orgs.length === 2 && catOrgs.orgs[0].role === "creator" && catOrgs.orgs[0].current, "cat 现在两个：自己的（当前）和 A");
 
-// 11. 手机：bee 在 B 配一台手机，切到 A 要换码，A 已经有手机了就等已有的手机点允许。
+// 11. 手机：bee 在 B 配一台手机，切到 A 要换码（手机凭据不经过网页），换码不加确认。
 await bee.json("/api/orgs/switch", { method: "POST", body: JSON.stringify({ org: orgB }) });
 const pairCode = (await bee.json("/api/pairing-codes", { method: "POST" })).body.code;
 const phone = await (await fetch(`${BASE}/api/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "phone", name: "bee 的手机", code: pairCode }) })).json();
@@ -219,22 +219,26 @@ check(aHadPhone === false, "A 这时还没有手机");
 const redeem = await fetch(`${BASE}/api/auth/redeem`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: phoneSwitch.code, verifier, name: "bee 的手机" }) });
 const redeemBody = await redeem.json();
 log("   换码结果", redeem.status, JSON.stringify(redeemBody).slice(0, 160));
-check(redeem.status === 200 && typeof redeemBody.device?.token === "string", "A 还没有手机：直接发 A 的手机凭据（和新手机 Google 登录同一条规则）");
+check(redeem.status === 200 && typeof redeemBody.device?.token === "string", "手机切 A：直接发 A 的手机凭据");
 const phoneA = await (await fetch(`${BASE}/api/state`, { headers: { Authorization: `Bearer ${redeemBody.device.token}` } })).json();
 check(phoneA.members.find((m) => m.current)?.email === "bee@example.com", "手机用 A 的凭据看到的是 A，算 bee");
 
-// 12. cat 在自己的 Pupu 配手机，切到 A：A 已经有手机了，要等已有的手机点允许。
+// 12. cat 在自己的 Pupu 配手机，切到 A：A 已经有手机了也不用谁点允许，切换不加确认。
 const catCode = (await cat.json("/api/pairing-codes", { method: "POST" })).body.code;
 const catPhone = await (await fetch(`${BASE}/api/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "phone", name: "cat 的手机", code: catCode }) })).json();
-const v2 = randomBytes(32).toString("base64url");
-const c2 = createHash("sha256").update(v2).digest("base64url");
-const catSwitch = await (await fetch(`${BASE}/api/orgs/switch`, { method: "POST", headers: { Authorization: `Bearer ${catPhone.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ org: "me", challenge: c2 }) })).json();
-const wait = await fetch(`${BASE}/api/auth/redeem`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: catSwitch.code, verifier: v2, name: "cat 的手机" }) });
-check(wait.status === 202, "A 已经有手机：cat 的手机切进来要等已有的手机点允许");
-const pendingA = (await owner.json("/api/state")).body.approvals.filter((a) => a.kind === "sign_in");
-check(pendingA.length === 1, "A 里出现一条「新手机想连上 Pupu」等批（不替用户点）");
-const bad = await fetch(`${BASE}/api/auth/redeem`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: catSwitch.code, verifier: randomBytes(32).toString("base64url"), name: "x" }) });
+const phoneSwitchCode = async (challenge) => (await (await fetch(`${BASE}/api/orgs/switch`, { method: "POST", headers: { Authorization: `Bearer ${catPhone.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ org: "me", challenge }) })).json()).code;
+const redeemWith = (code, verifier) => fetch(`${BASE}/api/auth/redeem`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, verifier, name: "cat 的手机" }) });
+const v1 = randomBytes(32).toString("base64url");
+const bad = await redeemWith(await phoneSwitchCode(createHash("sha256").update(v1).digest("base64url")), randomBytes(32).toString("base64url"));
 check(bad.status === 400, "换码时 verifier 对不上不给");
+const v2 = randomBytes(32).toString("base64url");
+const catRedeem = await redeemWith(await phoneSwitchCode(createHash("sha256").update(v2).digest("base64url")), v2);
+const catRedeemBody = await catRedeem.json();
+check(catRedeem.status === 200 && typeof catRedeemBody.device?.token === "string", "A 已经有手机：cat 的手机切进来也直接发凭据，不等谁点允许");
+const pendingA = (await owner.json("/api/state")).body.approvals.filter((a) => a.kind === "sign_in");
+check(pendingA.length === 0, "A 里没有冒出「新手机想连上 Pupu」等批");
+const catInA = await (await fetch(`${BASE}/api/state`, { headers: { Authorization: `Bearer ${catRedeemBody.device.token}` } })).json();
+check(catInA.members.find((m) => m.current)?.email === "cat@example.com", "cat 的手机用 A 的凭据看到的是 A，算 cat");
 
 log(failed ? `\n${failed} 项没过` : "\n全部通过");
 process.exit(failed ? 1 : 0);
