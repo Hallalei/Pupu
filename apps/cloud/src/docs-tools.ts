@@ -114,7 +114,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
   const write = defineTool({
     name: "doc_write",
     description:
-      "存一份资料或 skill，或者改已有的（给 id）。资料是「是什么」（需求、规格、定下的方案）；skill 是「这件事怎么做」（步骤、口径、格式），存之前先问过人。空间里的会话只存到本空间；大家里默认存到组织层；私聊里要问清楚存到组织层还是哪个空间。",
+      "存一份资料或 skill，或者改已有的（给 id）。资料是「是什么」（需求、规格、定下的方案）；skill 是「这件事怎么做」（步骤、口径、格式），存之前先问过人。空间里的会话只存到本空间；全员里默认存到组织层；私聊里要问清楚存到组织层还是哪个空间。",
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "要改的资料 id，新建不填" })),
       title: Type.String({ description: "标题，简短" }),

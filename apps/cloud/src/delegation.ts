@@ -154,9 +154,16 @@ export class SpaceSessionStore {
   }
 }
 
+/** 这条会话是不是协调模式的主会话，是就返回它的空间。`everyone` 是全员空间，它的主会话是 root。 */
+export function coordinatorSpace(thread: Thread | undefined, everyone?: Project): Project | undefined {
+  if (thread?.kind === "project" && thread.project.mode === "coordinator") return thread.project;
+  if (thread?.kind === "main" && everyone?.mode === "coordinator") return everyone;
+  return undefined;
+}
+
 /** 这个会话能不能调这个工具。不能就返回拦下的理由。 */
-export function mayCall(thread: Thread | undefined, tool: string): { block: string } | undefined {
-  if (thread?.kind === "project" && thread.project.mode === "coordinator") {
+export function mayCall(thread: Thread | undefined, tool: string, everyone?: Project): { block: string } | undefined {
+  if (coordinatorSpace(thread, everyone)) {
     return COORDINATOR_TOOLS.includes(tool)
       ? undefined
       : { block: "这里是空间的主会话，只做委派和汇报。用 delegate 把这件事派给子会话去做。" };
@@ -176,11 +183,13 @@ export function mayCall(thread: Thread | undefined, tool: string): { block: stri
 export function reportsWait(
   thread: Thread | undefined,
   children: Pick<SpaceSessionStore, "busy" | "lastReported">,
-  askedAt: number
+  askedAt: number,
+  everyone?: Project
 ): boolean {
-  if (thread?.kind !== "project") return false;
-  if (children.busy(thread.project.id)) return true;
-  const reported = children.lastReported(thread.project.id);
+  const space = thread?.kind === "project" ? thread.project : coordinatorSpace(thread, everyone);
+  if (!space) return false;
+  if (children.busy(space.id)) return true;
+  const reported = children.lastReported(space.id);
   return reported !== null && reported > askedAt;
 }
 
@@ -193,6 +202,8 @@ export function childReport(title: string, reply: string): string {
 
 export type DelegationActions = {
   threadOf(session: string): Thread | undefined;
+  /** 全员空间，主会话是 root。 */
+  everyone(): Project;
   readonly children: SpaceSessionStore;
   /** 新开一个顶层会话，返回它的 id。 */
   createSession(): Promise<string>;
@@ -215,10 +226,7 @@ function refuse(value: string) {
 export function createDelegationTools(actions: DelegationActions): ToolRegistration[] {
   const { children } = actions;
 
-  const coordinatorOf = (session: string): Project | undefined => {
-    const thread = actions.threadOf(session);
-    return thread?.kind === "project" && thread.project.mode === "coordinator" ? thread.project : undefined;
-  };
+  const coordinatorOf = (session: string): Project | undefined => coordinatorSpace(actions.threadOf(session), actions.everyone());
 
   const childOf = (project: Project, id: string) => {
     const child = children.bySession(id);

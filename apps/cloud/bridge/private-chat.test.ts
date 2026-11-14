@@ -261,9 +261,9 @@ describe("提示词按会话写", () => {
     return { render };
   }
 
-  test("主会话写明大家都看得到，私聊写明只有这个人", async () => {
+  test("全员写明组织里的人都看得到，私聊写明只有这个人", async () => {
     const { render } = await prompts();
-    assert.match(render("1"), /团体里的人都看得到这里的每句话/);
+    assert.match(render("1"), /组织里的人都看得到这里的每句话/);
     assert.match(render("7"), /这里是你和林夏的私聊/);
     assert.match(render("7"), /别的成员看不到，创建者也看不到/);
   });

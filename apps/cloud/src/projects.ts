@@ -31,6 +31,31 @@ export type Project = {
 
 export type SpaceMode = "direct" | "coordinator";
 
+/**
+ * 「全员」空间：原来的「大家」，会话还是 root。不在 pupu_projects 表里，全组织档、没有主人，
+ * 模式存在 pupu_meta（默认自己动手）。`getProject(EVERYONE_ID)` 拿得到它，`listProjects()` 里没有。
+ */
+export const EVERYONE_ID = "everyone";
+const EVERYONE_SESSION = "1";
+const EVERYONE_MODE_META = "everyone-mode";
+
+export function everyoneSpace(mode: SpaceMode): Project {
+  return {
+    id: EVERYONE_ID,
+    session: EVERYONE_SESSION,
+    name: "全员",
+    goal: "",
+    background: "",
+    progress: "",
+    createdAt: 0,
+    updatedAt: 0,
+    level: "L2",
+    ownerId: null,
+    members: [],
+    mode
+  };
+}
+
 /** 写空间的密级和成员，走 pi 的同一个写队列（`DurableObjectSqliteDatabase`），不会被卷进 pi 正开着的事务。 */
 type SpaceValue = string | number | null;
 
@@ -169,7 +194,17 @@ export class ProjectStore {
       .map(toProject);
   }
 
+  /** 全员空间，模式是现在存着的。 */
+  everyone(): Project {
+    return everyoneSpace(this.meta(EVERYONE_MODE_META) === "coordinator" ? "coordinator" : "direct");
+  }
+
+  setEveryoneMode(mode: SpaceMode): void {
+    this.setMeta(EVERYONE_MODE_META, mode);
+  }
+
   getProject(id: string): Project | undefined {
+    if (id === EVERYONE_ID) return this.everyone();
     const [row] = this.#db()
       .exec(`${SELECT_PROJECTS} WHERE p.id = ?`, id)
       .toArray();

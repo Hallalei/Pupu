@@ -24,7 +24,7 @@ export type PupuActions = {
 function onlyInChat(thread: Thread | undefined) {
   return thread?.kind === "main" || thread?.kind === "private"
     ? null
-    : { output: text("只能在聊天（大家或私聊）里用。"), isError: true as const };
+    : { output: text("只能在全员或私聊里用。"), isError: true as const };
 }
 
 /**

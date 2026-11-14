@@ -4,7 +4,7 @@ import { mayOpen } from "../src/access.ts";
 import { childReport, mayCall, reportsWait, REPORT_LIMIT, SpaceSessionStore } from "../src/delegation.ts";
 import { createDelegationTools } from "../src/delegation.ts";
 import { renderPrompt } from "../src/prompt.ts";
-import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
+import { EVERYONE_ID, ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { ReportStore } from "../src/reports.ts";
 import { MAIN_SESSION, ThreadStore, type Thread } from "../src/threads.ts";
 import { sqlStorage } from "./sql-memory.ts";
@@ -34,6 +34,7 @@ async function space() {
   let next = 20;
   const tools = createDelegationTools({
     threadOf: (session) => threads.of(session),
+    everyone: () => projects.everyone(),
     children,
     createSession: async () => String(next++),
     submit: async (session, text, operationId) => {
@@ -209,5 +210,49 @@ describe("子会话的可见范围和提示词", () => {
     assert.match(prompt("9"), /排版（id: 20）：正在做/);
     assert.match(prompt("20"), /只负责一件事：「排版」/);
     assert.doesNotMatch(prompt("5"), /只做两件事/);
+  });
+});
+
+describe("全员空间（原来的「大家」）", () => {
+  test("默认自己动手：不能委派，别的工具照旧", async () => {
+    const pupu = await space();
+    const main = pupu.threads.of(MAIN_SESSION);
+    assert.equal(pupu.projects.everyone().mode, "direct");
+    assert.ok(mayCall(main, "delegate", pupu.projects.everyone()));
+    assert.equal(mayCall(main, "run_command", pupu.projects.everyone()), undefined);
+    assert.equal((await pupu.run("delegate", { title: "x", task: "y" }, MAIN_SESSION)).isError, true);
+  });
+
+  test("切成只派活：root 能委派，子会话属于全员，做完回投到 root", async () => {
+    const pupu = await space();
+    pupu.projects.setEveryoneMode("coordinator");
+    const everyone = pupu.projects.everyone();
+    const main = pupu.threads.of(MAIN_SESSION);
+    assert.equal(mayCall(main, "delegate", everyone), undefined);
+    assert.ok(mayCall(main, "run_command", everyone));
+    const result = await pupu.run("delegate", { title: "周报汇总", task: "汇总" }, MAIN_SESSION);
+    assert.notEqual(result.isError, true);
+    const [child] = pupu.children.ofProject(EVERYONE_ID);
+    assert.equal(child!.title, "周报汇总");
+    const thread = pupu.threads.of(child!.session) as Extract<Thread, { kind: "child" }>;
+    assert.equal(thread.kind, "child");
+    assert.equal(thread.project.session, MAIN_SESSION);
+    assert.equal(thread.project.level, "L2");
+    assert.ok(mayOpen(thread, "anyone"));
+    assert.equal(reportsWait(main, pupu.children, NOW - 1, everyone), true);
+  });
+
+  test("全员不在空间列表里，也不会被启动迁移切走", async () => {
+    const pupu = await space();
+    assert.ok(!pupu.projects.listProjects().some((project) => project.id === EVERYONE_ID));
+    assert.equal(pupu.projects.getProject(EVERYONE_ID)!.name, "全员");
+  });
+
+  test("切成只派活后，root 的提示词换成委派的那一套", async () => {
+    const pupu = await space();
+    const prompt = () => renderPrompt(pupu.threads.of(MAIN_SESSION)!, pupu.projects, new ReportStore(pupu.sql), [], [], () => "林夏");
+    assert.match(prompt(), /这里是「全员」/);
+    pupu.projects.setEveryoneMode("coordinator");
+    assert.match(prompt(), /空间「全员」的主会话/);
   });
 });

@@ -148,7 +148,7 @@ import {
 } from "./avatars";
 import { REVOKED_CLOSE_CODE, type ServerMessage } from "./protocol";
 import type { Project, SpaceMode } from "./projects";
-import { progressLine, ProjectStore } from "./projects";
+import { EVERYONE_ID, progressLine, ProjectStore } from "./projects";
 import { renderPrompt } from "./prompt";
 import { asksUser, failureSummary, reportCards, ReportStore, STOPPED_SUMMARY, type ReportCard } from "./reports";
 import { Apns, apnsKeyFrom, type ApnsEnv } from "./push/apns";
@@ -211,6 +211,8 @@ export type ProjectView = Project & { readonly children: readonly ChildView[] };
 
 export type PupuState = {
   readonly projects: readonly ProjectView[];
+  /** 全员空间（原来的「大家」，会话是 root）。`mayManage`：组织的创建者能切它的模式。旧客户端不认这一项，照旧用 chats.main。 */
+  readonly everyone: ProjectView & { readonly mayManage: boolean };
   readonly computers: ReturnType<ComputerBridge["list"]>;
   /** 等用户批准的电脑动作，先来的在前。 */
   readonly approvals: readonly ApprovalView[];
@@ -413,7 +415,11 @@ export class Pupu extends DurableObject<Env> {
                   const member = this.members.byId(memberId);
                   return member ? memberName(member) : "这位成员";
                 },
-                thread.kind === "project" ? this.children.ofProject(thread.project.id) : [],
+                thread.kind === "project"
+                  ? this.children.ofProject(thread.project.id)
+                  : thread.kind === "main"
+                    ? this.children.ofProject(EVERYONE_ID)
+                    : [],
                 this.docs.list(docScope(thread, this.store.listProjects()), "skill").slice(0, SKILL_LIST_LIMIT)
               );
             }
@@ -434,7 +440,7 @@ export class Pupu extends DurableObject<Env> {
               const session = String(api.conversationId);
               this.#callSessions.remember(call.id, session);
               // 空间主会话只做委派：先拦，被拦的调用不会生成审批卡。
-              const blocked = mayCall(this.threads.of(session), call.name);
+              const blocked = mayCall(this.threads.of(session), call.name, this.store.everyone());
               if (blocked) return blocked;
               return this.gate.beforeTool({ ...call, session }, context.abortSignal);
             }
@@ -463,7 +469,7 @@ export class Pupu extends DurableObject<Env> {
               if (thread?.kind === "child") this.#reportToSpace(thread, reply);
               const progressed = this.store.recordReply(session, reply);
               // 协调模式的主会话派完活就会回一句「派出去了」，这时从聊天转来的事还没做完，等子会话都回报了再报。
-              const waiting = reportsWait(thread, this.children, this.#askedAt.get(session) ?? Date.now());
+              const waiting = reportsWait(thread, this.children, this.#askedAt.get(session) ?? Date.now(), this.store.everyone());
               const reported =
                 !waiting &&
                 this.reports.settle(
@@ -997,22 +1003,24 @@ export class Pupu extends DurableObject<Env> {
     const own = viewer === null ? null : await this.#ensurePrivateChat(viewer);
     const sees = this.#seenBy(viewer);
     const waitingSessions = new Set(this.approvals.pending(Date.now()).map((row) => row.session));
+    const withChildren = (project: Project): ProjectView => ({
+      ...project,
+      children: this.children.ofProject(project.id).map((child) => ({
+        session: child.session,
+        title: child.title,
+        createdAt: child.createdAt,
+        busy: child.busySince !== null,
+        waiting: waitingSessions.has(child.session),
+        reportedAt: child.reportedAt,
+        summary: child.summary
+      }))
+    });
     return {
       projects: this.store
         .listProjects()
         .filter((project) => maySeeSpace(project, viewer))
-        .map((project) => ({
-          ...project,
-          children: this.children.ofProject(project.id).map((child) => ({
-            session: child.session,
-            title: child.title,
-            createdAt: child.createdAt,
-            busy: child.busySince !== null,
-            waiting: waitingSessions.has(child.session),
-            reportedAt: child.reportedAt,
-            summary: child.summary
-          }))
-        })),
+        .map(withChildren),
+      everyone: { ...withChildren(this.store.everyone()), mayManage: this.#actor(current)?.role === "creator" },
       computers: this.bridge.list(),
       approvals: [
         ...this.gate.pending((row) => sees(row.session, row.computerId)),
@@ -1949,6 +1957,7 @@ export class Pupu extends DurableObject<Env> {
   /** 委派工具。`deferred`，只有切成协调模式的主会话会被提供，见 delegation.ts。 */
   readonly #delegationTools = createDelegationTools({
     threadOf: (session) => this.threads.of(session),
+    everyone: () => this.store.everyone(),
     children: this.children,
     createSession: async () => (await this.harness.sessions.create()).id,
     submit: async (session, text, operationId) => {
@@ -2046,6 +2055,14 @@ export class Pupu extends DurableObject<Env> {
   /** 主人改空间：拉人、移人、改密级、切模式。规则见 spaces.ts。受众变了，开着的连接重新过一遍。 */
   async changeSpace(projectId: string, change: SpaceChange, device: string | null = null): Promise<SpaceVerdict> {
     await this.lifecycle.start();
+    // 全员空间没有主人和成员名单，只能切模式，组织的创建者切。
+    if (projectId === EVERYONE_ID) {
+      if (change.kind !== "mode") return "invalid";
+      if (this.#actor(device)?.role !== "creator") return "forbidden";
+      await this.#applyMode(this.store.everyone(), change.mode);
+      this.#changed();
+      return "ok";
+    }
     const project = this.store.getProject(projectId);
     const verdict = checkSpaceChange(project, this.#viewer(device), change, (id) => this.members.byId(id) !== undefined);
     if (verdict !== "ok" || !project) return verdict;
@@ -2094,6 +2111,10 @@ export class Pupu extends DurableObject<Env> {
       COORDINATOR_TOOLS.includes(tool.name)
     );
     await conversation.configure(mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } }, BACKGROUND_CONTEXT);
+    if (project.id === EVERYONE_ID) {
+      this.store.setEveryoneMode(mode);
+      return true;
+    }
     if (project.mode !== mode) await this.store.setMode(this.#sqlWriter, project.id, mode, Date.now());
     this.store.setMeta(`coordinator:${project.id}`, mode === "coordinator" ? COORDINATOR_KEY : "direct");
     return true;
