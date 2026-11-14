@@ -4,7 +4,9 @@
 
 - out/<id>.svg：矢量，fill 是 currentColor，跟着文字色或空间色走；
 - out/<id>@3x.png：48×48 黑色模板图，iOS 当 template image 用；
-- out/overview.png：总览，每个图标放在六种空间色的标记方块上看一遍。
+- out/overview.png：总览，每个图标放在空间色的标记方块里，浅色和深色窗框上各看一遍。
+
+颜色和尺寸照设计规范：方块底是空间原色（mark-*），图标是 on-mark，20pt 方块里画 16pt，40pt 里画 32pt。
 """
 import os
 import sys
@@ -16,9 +18,11 @@ sys.path.insert(0, HERE)
 from icons import ICONS  # noqa: E402
 
 OUT = os.path.join(HERE, "out")
-# 设计规范里的空间色：标记方块用的 mark 色（空间色往墨色压 30%）。
-MARKS = ["#3a4049", "#3d443c", "#4a4037", "#423e4a", "#47463a", "#3e3e40"]
+# 设计规范 tokens.json 里的值：mark-*（就是空间原色）、on-mark，和默认强度下的窗框 frame-*。
 SPACES = ["#b9d3f0", "#c4dcc2", "#f4cfae", "#d9cbf3", "#ecebab", "#cfcfd3"]
+ON_MARK = "#1b1b1a"
+FRAME_LIGHT = "#e2e9f1"
+FRAME_DARK = "#1d1f22"
 
 
 def svg(rows):
@@ -59,28 +63,33 @@ def font(size):
     return ImageFont.load_default()
 
 
+def tile(grid, cell, color):
+    """一个标记方块：边长 = 图标 16 格 + 两边各 2 个 pt（按 cell 缩放），圆角是边长的 30%。"""
+    side = (16 + 4) * cell
+    im = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, side - 1, side - 1], round(side * 0.3), fill=rgba(color), outline=(0, 0, 0, 31), width=max(1, cell // 2))
+    im.alpha_composite(png(grid, cell, rgba(ON_MARK)), (2 * cell, 2 * cell))
+    return im
+
+
 def overview():
-    cols, cell = 5, 220
+    """@2x 画：大方块是 mark-lg 40，小方块是 mark 20，分别放在浅色和深色窗框上。"""
+    cols, cell_w, cell_h = 5, 236, 200
     items = list(ICONS.items())
     rows = (len(items) + cols - 1) // cols
-    sheet = Image.new("RGBA", (cols * cell, rows * 190 + 20), rgba("#f3f3f1"))
+    sheet = Image.new("RGBA", (cols * cell_w, rows * cell_h + 20), rgba(FRAME_LIGHT))
     d = ImageDraw.Draw(sheet)
     for i, (iid, (name, grid)) in enumerate(items):
-        x, y = (i % cols) * cell + 20, (i // cols) * 190 + 20
-        # 大图：空间色底，墨色图标
-        tile = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
-        ImageDraw.Draw(tile).rounded_rectangle([0, 0, 95, 95], 20, fill=rgba(SPACES[i % 6]))
-        tile.alpha_composite(png(grid, 4, rgba("#1b1b1a")), (16, 16))
-        sheet.alpha_composite(tile, (x, y))
-        # 实际大小：16pt @2x 的标记方块，白图标
-        small = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
-        ImageDraw.Draw(small).rounded_rectangle([0, 0, 31, 31], 8, fill=rgba(MARKS[i % 6]))
-        small.alpha_composite(png(grid, 2, (255, 255, 255, 255)))
-        sheet.alpha_composite(small, (x + 112, y))
-        # 不带方块，直接墨色
-        sheet.alpha_composite(png(grid, 2, rgba("#1b1b1a")), (x + 112, y + 44))
-        d.text((x, y + 104), name, fill=rgba("#1b1b1a"), font=font(22))
-        d.text((x, y + 134), iid, fill=rgba("#6f6f6a"), font=font(16))
+        x, y = (i % cols) * cell_w + 20, (i // cols) * cell_h + 20
+        color = SPACES[i % 6]
+        sheet.alpha_composite(tile(grid, 4, color), (x, y))
+        dark = Image.new("RGBA", (64, 64), rgba(FRAME_DARK))
+        dark.alpha_composite(tile(grid, 2, color), (12, 12))
+        sheet.alpha_composite(tile(grid, 2, color), (x + 100, y + 4))
+        sheet.alpha_composite(dark, (x + 140 + 8, y - 8))
+        d.text((x, y + 92), name, fill=rgba("#1b1b1a"), font=font(22))
+        d.text((x, y + 122), iid, fill=rgba("#6f6f6a"), font=font(16))
     return sheet
 
 
