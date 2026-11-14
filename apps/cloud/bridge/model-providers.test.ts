@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 import type { Tool } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
+import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Type } from "typebox";
 import { recognize, templateOf, TEMPLATES } from "../src/model/catalog.ts";
+import { catalogModels } from "../src/model/catalog-models.ts";
 import { probeKeyModel } from "../src/model/key-probe.ts";
 import { listModels, parseModelsList } from "../src/model/list.ts";
 import { describeRouter, keyModel, routeOf, routerProvider, type RouterDeps } from "../src/model/router.ts";
@@ -14,7 +18,13 @@ import { keyBaseUrl, keyView, modelView, parseChoice, PUPU_CHOICE, type KeyChoic
 import { ModelStore } from "../src/model/store.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
-const apis = { "openai-completions": openAICompletionsApi(), "anthropic-messages": anthropicMessagesApi() };
+const apis = {
+  "openai-completions": openAICompletionsApi(),
+  "openai-responses": openAIResponsesApi(),
+  "anthropic-messages": anthropicMessagesApi(),
+  "google-generative-ai": googleGenerativeAIApi(),
+  "mistral-conversations": mistralConversationsApi()
+};
 
 function deps(choice: ModelChoice): RouterDeps {
   const faux = fauxProvider();
@@ -91,6 +101,8 @@ describe("服务商目录", () => {
     assert.equal(recognize("https://ark.cn-beijing.volces.com/api/coding/v3/")?.id, "volcengine-coding");
     assert.equal(recognize("https://api.deepseek.com")?.id, "deepseek");
     assert.equal(recognize("https://llm.example.com/v1"), undefined);
+    assert.equal(recognize("https://api.deepseek.com/v1")?.id, "deepseek");
+    assert.equal(recognize("https://api.deepseek.com/anthropic"), undefined);
   });
 });
 
@@ -191,6 +203,53 @@ describe("按服务商调", () => {
     assert.equal(seen[0]!.body.model, "claude-sonnet-4-5");
     const wrong = await probeKeyModel({ model: keyModel(CLAUDE), apiKey: CLAUDE.apiKey, apis, fetch: fakeAnthropic([], "other") });
     assert.equal(wrong.ok, false);
+  });
+
+  test("另外三种协议：请求发到各家的地址、带上 key，401 说 key 不对", async () => {
+    const expected: Record<string, { host: string; key: RegExp }> = {
+      openai: { host: "api.openai.com", key: /authorization=Bearer sk-test/ },
+      xai: { host: "api.x.ai", key: /authorization=Bearer sk-test/ },
+      google: { host: "generativelanguage.googleapis.com", key: /x-goog-api-key=sk-test/ },
+      mistral: { host: "api.mistral.ai", key: /authorization=Bearer sk-test/ }
+    };
+    for (const [id, want] of Object.entries(expected)) {
+      const template = templateOf(id)!;
+      const model = catalogModels(template)[0]!;
+      const seen: { host: string; headers: string }[] = [];
+      const reject: typeof fetch = async (input, init) => {
+        const request = new Request(input, init);
+        seen.push({ host: new URL(request.url).host, headers: [...request.headers].map(([k, v]) => `${k}=${v}`).join(",") });
+        return new Response(JSON.stringify({ error: { message: "Incorrect API key provided", code: 401 } }), {
+          status: 401,
+          headers: { "content-type": "application/json" }
+        });
+      };
+      const choice: KeyChoice = {
+        source: "key",
+        provider: id,
+        api: template.api,
+        baseUrl: template.baseUrl,
+        model: model.id,
+        apiKey: "sk-test",
+        vision: false,
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning
+      };
+      // Gemini 的实现不认传进去的 fetch，直接用全局的；线上就是全局的，这里两处都换掉。
+      const original = globalThis.fetch;
+      globalThis.fetch = reject;
+      let probe;
+      try {
+        probe = await probeKeyModel({ model: keyModel(choice), apiKey: "sk-test", apis, fetch: reject });
+      } finally {
+        globalThis.fetch = original;
+      }
+      assert.equal(seen.length > 0, true, `${id} 没发请求`);
+      assert.equal(seen[0]!.host, want.host, id);
+      assert.match(seen[0]!.headers, want.key, id);
+      assert.ok(!probe.ok);
+      assert.match(probe.error, /key 不对/, `${id}: ${probe.error}`);
+    }
   });
 
   test("探测：401 说 key 不对", async () => {

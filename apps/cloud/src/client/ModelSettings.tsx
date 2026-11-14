@@ -336,12 +336,6 @@ function KeyForm({
     if (option) setExtras(extrasOf(option));
   }
 
-  // 列表来了，还没选模型：选第一个。
-  useEffect(() => {
-    if (!modelId && models[0]) chooseModel(models[0].id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list]);
-
   return (
     <form
       className="flex flex-col gap-2 border-t border-foreground/10 pt-3"
@@ -386,12 +380,14 @@ function KeyForm({
           aria-label="地址"
           placeholder={template.api === "anthropic-messages" ? "https://api.example.com/anthropic" : "https://api.example.com/v1"}
           value={customUrl}
-          onChange={(event) => {
-            const value = event.target.value;
-            const known = recognize(value);
-            // 贴的是认得的那家：直接换成那家的模板。
-            if (known && !known.editableBaseUrl) chooseProvider(known.id);
-            else setCustomUrl(value);
+          onChange={(event) => setCustomUrl(event.target.value)}
+          onPaste={(event) => {
+            // 贴的是认得的那家：直接换成那家的模板。只认粘贴，手打到一半不跳。
+            const known = recognize(event.clipboardData.getData("text"));
+            if (known && !known.editableBaseUrl) {
+              event.preventDefault();
+              chooseProvider(known.id);
+            }
           }}
           className={INPUT}
           autoComplete="off"

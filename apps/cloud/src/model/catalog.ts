@@ -73,7 +73,7 @@ export const TEMPLATES: readonly Template[] = [
   { id: "mistral", name: "Mistral", region: "global", baseUrl: "https://api.mistral.ai", api: "mistral-conversations", keyUrl: "https://console.mistral.ai/api-keys", live: false },
   { id: "groq", name: "Groq", region: "global", baseUrl: "https://api.groq.com/openai/v1", api: "openai-completions", keyUrl: "https://console.groq.com/keys", live: true },
   { id: "together", name: "Together AI", region: "global", baseUrl: "https://api.together.ai/v1", api: "openai-completions", keyUrl: "https://api.together.ai/settings/api-keys", live: false },
-  { id: "fireworks", name: "Fireworks", region: "global", baseUrl: "https://api.fireworks.ai/inference/v1", api: "openai-completions", keyUrl: "https://fireworks.ai/account/api-keys", live: false },
+  { id: "fireworks", name: "Fireworks", region: "global", baseUrl: "https://api.fireworks.ai/inference/v1", api: "openai-completions", keyUrl: "https://app.fireworks.ai/settings/users/api-keys", live: false },
   { id: "cerebras", name: "Cerebras", region: "global", baseUrl: "https://api.cerebras.ai/v1", api: "openai-completions", keyUrl: "https://cloud.cerebras.ai/", live: true },
   { id: "nvidia", name: "NVIDIA NIM", region: "global", baseUrl: "https://integrate.api.nvidia.com/v1", api: "openai-completions", keyUrl: "https://build.nvidia.com/", live: false },
   { id: "huggingface", name: "Hugging Face", region: "global", baseUrl: "https://router.huggingface.co/v1", api: "openai-completions", keyUrl: "https://huggingface.co/settings/tokens", live: false },
@@ -90,7 +90,7 @@ export function templateOf(id: string | undefined): Template | undefined {
 }
 
 /**
- * 贴进来的地址是哪家的：主机一样、路径是模板地址开头的那家。认不出来就是自定义。
+ * 贴进来的地址是哪家的：主机和路径都对上的那家。认不出来就是自定义。
  * 只用来帮用户选模板，不影响请求发到哪。
  */
 export function recognize(raw: string): Template | undefined {
@@ -108,7 +108,8 @@ export function recognize(raw: string): Template | undefined {
     const base = new URL(template.baseUrl);
     if (base.host !== url.host) continue;
     const basePath = base.pathname.replace(/\/+$/, "");
-    if ((path === basePath || path.startsWith(`${basePath}/`) || basePath.startsWith(path)) && basePath.length > bestLength) {
+    // 路径也要对上（可以多一个 /v1）：同一个主机上别的路径可能是另一种协议，比如 DeepSeek 的 /anthropic。
+    if ((path === basePath || path === `${basePath}/v1`) && basePath.length > bestLength) {
       best = template;
       bestLength = basePath.length;
     }

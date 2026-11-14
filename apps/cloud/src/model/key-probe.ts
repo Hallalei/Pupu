@@ -61,7 +61,9 @@ export async function probeKeyModel(input: {
 
 function errorText(status: number, raw: string): string {
   const detail = raw.replace(/\s+/g, " ").trim().slice(0, 200);
-  if (status === 401 || status === 403 || /\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}(api.?key|token)/i.test(detail)) {
+  // Gemini、xAI 的错 key 回 400，按字面认。
+  const badKey = /\b(401|403)\b|unauthori[sz]ed|(invalid|incorrect).{0,20}(api.?key|token)|api.?key not valid/i;
+  if (status === 401 || status === 403 || badKey.test(detail)) {
     return `key 不对，或者没有这个模型的权限。${detail ? ` ${detail}` : ""}`;
   }
   if (status === 404 || /\b404\b/.test(detail)) return `找不到这个模型（404）。看看模型名对不对。${detail ? ` ${detail}` : ""}`;

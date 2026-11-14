@@ -30,6 +30,11 @@ import { ZAI_MODELS } from "@earendil-works/pi-ai/providers/zai.models";
 import { isOwnApi, type Template } from "./catalog.ts";
 
 const CATALOGS: Readonly<Record<string, Readonly<Record<string, Model<Api>>>>> = {
+  // 下面三家 pi-ai 没有单独的目录，借同一家的：模型 id 和 Cindy 目录里这几家的对得上，
+  // 只在 /models 拉到同名模型时补资料（上下文、看图、思考格式），列表仍以实时的为准。
+  "zhipu": ZAI_CODING_CN_MODELS,
+  "dashscope": QWEN_TOKEN_PLAN_CN_MODELS,
+  "bailian-coding": QWEN_TOKEN_PLAN_CN_MODELS,
   "deepseek": DEEPSEEK_MODELS,
   "moonshotai-cn": MOONSHOTAI_CN_MODELS,
   "kimi-coding": KIMI_CODING_MODELS,
