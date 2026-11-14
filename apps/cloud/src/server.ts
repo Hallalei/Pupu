@@ -1608,8 +1608,12 @@ export class Pupu extends DurableObject<Env> {
     // 已经有自己的 Pupu、或者在别的 Pupu 里的人也能邀请：一个账号能在好几个 Pupu 里。
     const assignment = await directory(this.env).assign(email, this.#pupu());
     if (assignment !== "ok") return assignment;
-    if (!this.members.invite(email, actor?.memberId ?? null, Date.now())) return "exists";
+    const invited = this.members.invite(email, actor?.memberId ?? null, Date.now());
+    if (!invited) return "exists";
+    // 被移出过的人回来用回原来的 id：他建的、被解散的空间原样恢复。
+    await this.store.restoreOwnedBy(this.#sqlWriter, invited.id);
     this.#devicesChanged();
+    this.#changed();
     return "ok";
   }
 
@@ -1634,9 +1638,9 @@ export class Pupu extends DurableObject<Env> {
         revokeComputer: (computerId) => this.#revokeComputer(computerId),
         disconnect: (connectorId) => this.#disconnect(connectorId),
         leaveSpaces: async (memberId) => {
-          for (const project of this.store.listProjects()) {
-            if (project.members.includes(memberId)) await this.store.removeMember(this.#sqlWriter, project.id, memberId);
-          }
+          const archived = await this.store.leaveAll(this.#sqlWriter, memberId, Date.now());
+          for (const project of archived) await this.#stopSpace(project);
+          if (archived.length > 0) this.#changed();
         },
         release: (email) => directory(this.env).release(email, this.#pupu())
       },
@@ -1648,6 +1652,19 @@ export class Pupu extends DurableObject<Env> {
     }
     this.#devicesChanged();
     return result;
+  }
+
+  /** 解散的空间里在跑的停掉：主会话和子会话都停，子会话标成空闲。 */
+  async #stopSpace(project: Project): Promise<void> {
+    const sessions = [project.session, ...this.children.ofProject(project.id).map((child) => child.session)];
+    for (const session of sessions) {
+      try {
+        await this.harness.session(session).abort();
+      } catch {
+        // 没在跑、或者会话已经没了：本来就停着。
+      }
+      this.children.markIdle(session);
+    }
   }
 
   /**
@@ -2586,7 +2603,7 @@ async function orgsOf(env: Env, email: string): Promise<Home[]> {
   return homes;
 }
 
-/** 切换列表。只列他还在名单上的；自己开的叫「我的 Pupu」，排第一。 */
+/** 切换列表。只列他还在名单上的；都叫「创建者的 Pupu」，自己开的也一样（「我的 Pupu」只指侧栏里的私聊），排第一。 */
 async function orgList(env: Env, caller: Caller): Promise<OrgList> {
   const me = await caller.pupu.whoIs(caller.device);
   if (!me) return { current: caller.name, orgs: [], canOpenOwn: false };
@@ -2597,7 +2614,7 @@ async function orgList(env: Env, caller: Caller): Promise<OrgList> {
     .flatMap(({ home, card }) => (card?.role ? [{ home, card, role: card.role }] : []))
     .map(({ home, card, role }) => ({
       id: home.pupu,
-      name: role === "creator" ? "我的 Pupu" : `${card.creator ?? "别人"}的 Pupu`,
+      name: `${card.creator ?? "没起名"}的 Pupu`,
       creator: card.creator,
       members: card.members,
       role,

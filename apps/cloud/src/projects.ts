@@ -29,6 +29,12 @@ export type Project = {
   readonly mode: SpaceMode;
 };
 
+/**
+ * 主人被移出组织，他建的空间就解散：存档，不删。消息、资料、成员名单都留着，
+ * 只是 `listProjects`、`getProject`、`projectBySession` 都查不到它，所以列表、状态、广播、推送、汇报、
+ * 工具和提示词里都没有它，谁也打不开，创建者也一样。他被再邀请回来，`restoreOwnedBy` 原样恢复。
+ */
+
 export type SpaceMode = "direct" | "coordinator";
 
 /**
@@ -70,9 +76,9 @@ function levelOf(value: SqlStorageValue): Level {
   return LEVELS.find((level) => level === value) ?? "L2";
 }
 
-/** 每行带上成员名单，逗号分隔。 */
+/** 每行带上成员名单，逗号分隔。存档的空间（见上）不在里面。 */
 const SELECT_PROJECTS = `SELECT p.*, (SELECT group_concat(member_id) FROM pupu_project_members m WHERE m.project_id = p.id) AS members
-  FROM pupu_projects p`;
+  FROM pupu_projects p WHERE p.archived_at IS NULL`;
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -155,6 +161,9 @@ export class ProjectStore {
       if (!columns.some((column) => column.name === "mode")) {
         this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN mode TEXT NOT NULL DEFAULT 'direct'");
       }
+      if (!columns.some((column) => column.name === "archived_at")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN archived_at INTEGER");
+      }
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_project_members (
         project_id TEXT NOT NULL,
         member_id TEXT NOT NULL,
@@ -206,14 +215,14 @@ export class ProjectStore {
   getProject(id: string): Project | undefined {
     if (id === EVERYONE_ID) return this.everyone();
     const [row] = this.#db()
-      .exec(`${SELECT_PROJECTS} WHERE p.id = ?`, id)
+      .exec(`${SELECT_PROJECTS} AND p.id = ?`, id)
       .toArray();
     return row ? toProject(row) : undefined;
   }
 
   projectBySession(session: string): Project | undefined {
     const [row] = this.#db()
-      .exec(`${SELECT_PROJECTS} WHERE p.session = ?`, session)
+      .exec(`${SELECT_PROJECTS} AND p.session = ?`, session)
       .toArray();
     return row ? toProject(row) : undefined;
   }
@@ -320,6 +329,28 @@ export class ProjectStore {
   async setLevel(writer: SpaceWriter, projectId: string, level: Level, now: number): Promise<void> {
     this.#db();
     await writer.run("UPDATE pupu_projects SET level = ?, updated_at = ? WHERE id = ?", level, now, projectId);
+  }
+
+  /**
+   * 一个成员被移出组织：他建的空间一律解散（存档，见 `Project` 上面的说明），里面有别人也一样，
+   * 成员名单不动、他也留在名单上，恢复时原样回来；别人建的空间把他拿掉。
+   * 返回解散了的空间，好停掉里面在跑的会话。
+   */
+  async leaveAll(writer: SpaceWriter, memberId: string, now: number): Promise<Project[]> {
+    const archived = this.listProjects().filter((project) => project.ownerId === memberId);
+    if (archived.length > 0) {
+      await writer.run("UPDATE pupu_projects SET archived_at = ? WHERE owner_id = ? AND archived_at IS NULL", now, memberId);
+    }
+    for (const project of this.listProjects()) {
+      if (project.members.includes(memberId)) await this.removeMember(writer, project.id, memberId);
+    }
+    return archived;
+  }
+
+  /** 被移出的人再被邀请回来：他解散的空间原样恢复，成员也在。 */
+  async restoreOwnedBy(writer: SpaceWriter, ownerId: string): Promise<void> {
+    this.#db();
+    await writer.run("UPDATE pupu_projects SET archived_at = NULL WHERE owner_id = ? AND archived_at IS NOT NULL", ownerId);
   }
 
   /** 切换主会话的模式。这一版没有接到任何入口。 */

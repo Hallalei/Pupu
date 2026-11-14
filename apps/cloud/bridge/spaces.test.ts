@@ -8,6 +8,7 @@ import { ReportStore } from "../src/reports.ts";
 import { MAIN_SESSION, ThreadStore, type Thread } from "../src/threads.ts";
 import { createPupuTools } from "../src/tools.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports } from "../src/spaces.ts";
+import { docScope, viewerScope } from "../src/docs.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
 const NOW = 1_800_000_000_000;
@@ -246,9 +247,7 @@ describe("被移出组织的人（第 8 节的身份）", () => {
         revokeComputer: () => {},
         disconnect: async () => true,
         leaveSpaces: async (memberId) => {
-          for (const project of projects.listProjects()) {
-            if (project.members.includes(memberId)) await projects.removeMember(writer(sql), project.id, memberId);
-          }
+          await projects.leaveAll(writer(sql), memberId, NOW + 1);
         },
         release: async () => {}
       },
@@ -361,5 +360,117 @@ describe("权限矩阵：改了以后各出口跟着变", () => {
     assert.deepEqual(readableReports(rows, current(), (session) => threads.of(session)).map((row) => row.id), ["r2"]);
     await projects.setLevel(writer(sql), project.id, "L4", NOW);
     assert.deepEqual(readableReports(rows, current(), (session) => threads.of(session)), []);
+  });
+});
+
+describe("空间主人被移出组织：空间解散（存档），再邀请回来原样恢复", () => {
+  /** 林夏是创建者；阿周建了 L3「定价」（拉了林夏）和全组织档的「周报」，各有一个子会话在跑。 */
+  async function setup() {
+    const pupu = await org();
+    const { sql, projects, threads } = pupu;
+    const members = new MemberStore(sql);
+    const lin = members.addCreator("lin@example.com", NOW)!;
+    const zhou = members.invite("zhou@example.com", lin.id, NOW)!;
+    await threads.ensurePrivateChat(lin.id, async () => "40", NOW);
+    const secret = await projects.createSpace(writer(sql), { session: "30", name: "保密定价", goal: "", background: "", ownerId: zhou.id }, NOW);
+    await projects.addMember(writer(sql), secret.id, lin.id, zhou.id, NOW);
+    const open = await projects.createSpace(writer(sql), { session: "31", name: "公开周会", goal: "", background: "", ownerId: zhou.id }, NOW);
+    await projects.setLevel(writer(sql), open.id, "L2", NOW);
+    const remove = () =>
+      removeMember(
+        zhou,
+        {
+          members,
+          devices: { ofMember: () => [], cancelCodes: () => {} },
+          computers: { list: () => [] },
+          connectors: { list: () => [] },
+          revokeDevice: () => {},
+          revokeComputer: () => {},
+          disconnect: async () => true,
+          leaveSpaces: async (memberId) => {
+            archived.push(...(await projects.leaveAll(writer(sql), memberId, NOW + 1)));
+          },
+          release: async () => {}
+        },
+        NOW + 1
+      );
+    const archived: { id: string }[] = [];
+    return { ...pupu, members, lin, zhou, secret, open, remove, archived };
+  }
+
+  test("他建的空间都解散，里面有别人也一样；别人建的空间只把他拿掉", async () => {
+    const { projects, secret, open, remove, archived, space, zhou, sql } = await setup();
+    await projects.addMember(writer(sql), space.id, zhou.id, "m1", NOW);
+    await remove();
+    assert.deepEqual(archived.map((p) => p.id).sort(), [secret.id, open.id].sort(), "返回解散的空间，好停掉里面在跑的");
+    assert.equal(projects.getProject(secret.id), undefined);
+    assert.equal(projects.getProject(open.id), undefined, "全组织档的也解散");
+    const kept = projects.getProject(space.id)!;
+    assert.equal(kept.members.includes(zhou.id), false, "别人建的空间还在，只是没有他了");
+  });
+
+  test("每个出口都没有它：列表、会话、工具、提示词、汇报、资料，创建者也看不到", async () => {
+    const pupu = await setup();
+    const { projects, threads, secret, open, remove, lin, reports } = pupu;
+    const rows = [
+      { id: "r1", projectId: secret.id, origin: "40" },
+      { id: "r2", projectId: open.id, origin: MAIN_SESSION }
+    ];
+    await remove();
+    const listed = projects.listProjects().map((p) => p.name);
+    assert.equal(listed.includes("保密定价") || listed.includes("公开周会"), false, "状态和广播都从这张列表出");
+    assert.equal(projects.projectBySession("30"), undefined);
+    assert.equal(mayOpen(threads.of("30"), lin.id), false, "创建者打不开");
+    assert.equal(mayOpen(threads.of("31"), lin.id), false, "全组织档的也打不开");
+    assert.equal(mayOpen(threads.of("31"), null), false);
+    const map = new Map(projects.listProjects().map((p) => [p.id, p]));
+    assert.deepEqual(readableReports(rows, map, (session) => threads.of(session)), [], "汇报卡没了");
+    const scope = viewerScope(lin.id, projects.listProjects()).spaceIds;
+    assert.equal(scope.includes(secret.id) || scope.includes(open.id), false, "资料看不到");
+    assert.equal(docScope(threads.of("40")!, projects.listProjects()).spaceIds.includes(secret.id), false);
+    const list = createPupuTools({
+      store: projects,
+      threadOf: (session) => threads.of(session),
+      createProject: async () => {
+        throw new Error("不该建");
+      },
+      handOff: async () => {
+        throw new Error("不该交");
+      }
+    });
+    const run = (name: string, args: unknown, session: string) =>
+      (list.find((each) => each.name === name) as unknown as {
+        execute(args: unknown, api: unknown): Promise<{ output: { text: string }[]; isError?: boolean }>;
+      }).execute(args, { conversationId: session, callId: `call-${session}` });
+    const text = (await run("list_projects", {}, "40")).output[0]!.text;
+    assert.doesNotMatch(text, /保密定价|公开周会/, "工具列不出来");
+    assert.equal((await run("hand_off_to_project", { project_id: secret.id, task: "x" }, "40")).isError, true, "交不进去");
+    const prompt = renderPrompt(threads.of("40") as Thread, projects, reports, [], [], () => "某人");
+    assert.doesNotMatch(prompt, /保密定价|公开周会/, "提示词里没有");
+  });
+
+  test("数据不删：空间、成员名单（含主人）都还在库里", async () => {
+    const { sql, secret, remove, lin, zhou } = await setup();
+    await remove();
+    const [row] = sql.exec("SELECT name, archived_at FROM pupu_projects WHERE id = ?", secret.id).toArray();
+    assert.equal(row?.name, "保密定价");
+    assert.equal(row?.archived_at, NOW + 1);
+    const members = sql.exec("SELECT member_id FROM pupu_project_members WHERE project_id = ?", secret.id).toArray().map((r) => String(r.member_id)).sort();
+    assert.deepEqual(members, [lin.id, zhou.id].sort());
+  });
+
+  test("再邀请回来：解散的空间原样恢复，成员都在", async () => {
+    const { projects, threads, members, secret, open, remove, lin, zhou, sql } = await setup();
+    await remove();
+    const back = members.invite("zhou@example.com", lin.id, NOW + 2)!;
+    assert.equal(back.id, zhou.id);
+    await projects.restoreOwnedBy(writer(sql), back.id);
+    const restored = projects.getProject(secret.id)!;
+    assert.deepEqual(restored.members, [lin.id, zhou.id].sort());
+    assert.equal(restored.level, "L3");
+    assert.equal(restored.ownerId, zhou.id);
+    assert.equal(mayOpen(threads.of("30"), lin.id), true, "林夏又打得开");
+    assert.equal(mayOpen(threads.of("30"), zhou.id), true);
+    assert.equal(projects.getProject(open.id)?.level, "L2");
   });
 });
