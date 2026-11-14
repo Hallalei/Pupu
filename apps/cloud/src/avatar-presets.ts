@@ -14,4 +14,10 @@ export const AVATAR_PRESETS = [
   { id: "orange-beanie", name: "毛线帽" },
   { id: "gray-sleepy", name: "困了" },
   { id: "black-crown", name: "国王" },
+  { id: "spiky-gold", name: "金毛炸了" },
+  { id: "spiky-black", name: "炸毛" },
+  { id: "bald-cape", name: "光头" },
+  { id: "straw-hat", name: "草帽" },
+  { id: "green-bandana", name: "绿头巾" },
+  { id: "blond-swoop", name: "卷眉" },
 ] as const;
