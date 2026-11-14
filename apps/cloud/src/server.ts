@@ -482,9 +482,10 @@ export class Pupu extends DurableObject<Env> {
     sockets: () => this.ctx.getWebSockets(DESKTOP_TAG),
     deviceOf: (request) => request.headers.get(DEVICE_HEADER),
     toBridge: (computerId, session, message) => this.bridge.sendDesktop(computerId, session, message),
-    mayView: (device, computerId) => mayViewDesktop(this.#actor(device), this.#ownerOf(computerId)),
+    mayView: (device, computerId, ticket) =>
+      mayViewDesktop(this.#actor(device), this.#ownerOf(computerId), this.#useDesktopTicket(ticket, device, computerId)),
     iceServers: () => iceServersFrom(this.env),
-    deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的手机",
+    deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的设备",
     newSession: () => crypto.randomUUID()
   });
   readonly sockets = new PiSessionSockets(
@@ -1612,6 +1613,37 @@ export class Pupu extends DurableObject<Env> {
     return ok ? memberId : null;
   }
 
+  /** 网页开远程桌面换来的票，见 `desktopTicket`。 */
+  readonly #desktopTickets = new Map<
+    string,
+    { readonly device: string | null; readonly computerId: string; readonly memberId: string; readonly expiresAt: number }
+  >();
+
+  /**
+   * 网页或电脑 App 要开远程桌面：主人刚用通行密钥为这台电脑确认过，换一张一次性的票，马上拿去连
+   * `/api/desktop/:id?ticket=`。票只在内存里，30 秒过期，用一次就没了：信令断了要人再按一次，
+   * 不让一次确认变成之后谁都能悄悄连回来的通行证。没主人的电脑、别人的电脑都换不到。
+   */
+  async desktopTicket(device: string | null, computerId: string, proof: PasskeyProof | null): Promise<string | null> {
+    const owner = this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+    if (owner === null) return null;
+    if ((await this.#proven(device, { kind: "desktop", computerId }, proof)) !== owner) return null;
+    const now = Date.now();
+    for (const [key, row] of this.#desktopTickets) if (row.expiresAt <= now) this.#desktopTickets.delete(key);
+    const ticket = crypto.randomUUID();
+    this.#desktopTickets.set(ticket, { device, computerId, memberId: owner, expiresAt: now + 30_000 });
+    return ticket;
+  }
+
+  /** 用掉一张票：是这台设备为这台电脑换的、没过期，返回确认的成员。 */
+  #useDesktopTicket(ticket: string | null, device: string | null, computerId: string): string | null {
+    if (!ticket) return null;
+    const row = this.#desktopTickets.get(ticket);
+    this.#desktopTickets.delete(ticket);
+    if (!row || row.expiresAt <= Date.now() || row.device !== device || row.computerId !== computerId) return null;
+    return row.memberId;
+  }
+
   /** 网页要确认一件事：先拿挑战。不是成员、或者在这个网址上没有通行密钥是 null。 */
   async passkeyProofOptions(device: string | null, rp: RelyingParty, purpose: Purpose) {
     const memberId = this.#viewer(device);
@@ -2386,6 +2418,14 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     const options = await caller.pupu.passkeyProofOptions(caller.device, relyingParty(url), purpose);
     if (!options) return Response.json({ error: `你在 ${url.host} 上还没有通行密钥，先在设置里加一把` }, { status: 409 });
     return Response.json(options);
+  }
+  if (pathname === "/api/desktop-tickets" && method === "POST") {
+    const body = await readJson<{ computerId?: unknown; proof?: unknown }>(request);
+    const computerId = typeof body.computerId === "string" ? body.computerId : "";
+    const ticket = await caller.pupu.desktopTicket(caller.device, computerId, proofOf(url, body.proof));
+    return ticket
+      ? Response.json({ ticket })
+      : Response.json({ error: "没确认上，只有电脑主人本人能开远程桌面" }, { status: 403 });
   }
   if (pathname === "/api/passkeys/options" && method === "POST") {
     const body = await readJson<{ proof?: unknown }>(request);

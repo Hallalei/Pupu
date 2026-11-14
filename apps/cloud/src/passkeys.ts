@@ -30,7 +30,9 @@ export type Purpose =
   | { readonly kind: "add" }
   | { readonly kind: "approval"; readonly id: string }
   | { readonly kind: "policy"; readonly computerId: string; readonly policy: string }
-  | { readonly kind: "invite"; readonly email: string };
+  | { readonly kind: "invite"; readonly email: string }
+  /** 在网页上打开这台电脑的远程桌面。 */
+  | { readonly kind: "desktop"; readonly computerId: string };
 
 export function purposeKey(purpose: Purpose): string {
   switch (purpose.kind) {
@@ -44,6 +46,8 @@ export function purposeKey(purpose: Purpose): string {
       return `policy:${purpose.computerId}:${purpose.policy}`;
     case "invite":
       return `invite:${emailKey(purpose.email)}`;
+    case "desktop":
+      return `desktop:${purpose.computerId}`;
   }
 }
 
@@ -328,6 +332,10 @@ export function asPurpose(value: unknown): Purpose | null {
     case "invite": {
       const email = text("email");
       return email ? { kind: "invite", email } : null;
+    }
+    case "desktop": {
+      const computerId = text("computerId");
+      return computerId ? { kind: "desktop", computerId } : null;
     }
     default:
       return null;
