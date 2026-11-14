@@ -36,7 +36,8 @@ import {
   type Home,
   type InviteList
 } from "./directory";
-import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop } from "./bridge/desktop";
+import { DESKTOP_TAG, RemoteDesktopHub, computerIdOfPath, iceServersFrom, mayViewDesktop, type DesktopAccess } from "./bridge/desktop";
+import { isRemoteConfirm, mayChangeRemoteConfirm } from "./bridge/remote-confirm";
 import { ComputerGate } from "./bridge/gate";
 import { ComputerBridge } from "./bridge/hub";
 import { isComputerPolicy, NEW_COMPUTER_POLICY } from "./bridge/policy";
@@ -49,7 +50,8 @@ import {
   newDeviceToken,
   tokenFromRequest,
   tokenHash,
-  type BrowserFrame
+  type BrowserFrame,
+  type ComputerView
 } from "./bridge/protocol";
 import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
@@ -483,7 +485,7 @@ export class Pupu extends DurableObject<Env> {
     deviceOf: (request) => request.headers.get(DEVICE_HEADER),
     toBridge: (computerId, session, message) => this.bridge.sendDesktop(computerId, session, message),
     mayView: (device, computerId, ticket) =>
-      mayViewDesktop(this.#actor(device), this.#ownerOf(computerId), this.#useDesktopTicket(ticket, device, computerId)),
+      mayViewDesktop(this.#actor(device), this.#ownerOf(computerId), this.#desktopAccess(device, computerId, ticket)),
     iceServers: () => iceServersFrom(this.env),
     deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的设备",
     newSession: () => crypto.randomUUID()
@@ -971,7 +973,7 @@ export class Pupu extends DurableObject<Env> {
             summary: child.summary
           }))
         })),
-      computers: this.bridge.list(),
+      computers: this.#computersFor(current),
       approvals: [
         ...this.gate.pending((row) => sees(row.session, row.computerId)),
         ...this.signIns.pending(Date.now()).map(signInApprovalView)
@@ -1635,6 +1637,53 @@ export class Pupu extends DurableObject<Env> {
     return ticket;
   }
 
+  /**
+   * 这次连远程桌面带来的确认：电脑设的档位、这台设备确认过没有、票是谁换的。
+   * 档位是「每台设备确认一次」、又带了有效的票，这台设备记成确认过，下次不用再按。
+   */
+  #desktopAccess(device: string | null, computerId: string, ticket: string | null): DesktopAccess {
+    const computer = this.computers.list().find((row) => row.id === computerId);
+    const confirm = computer?.remoteConfirm ?? "always";
+    const confirmedBy = this.#useDesktopTicket(ticket, device, computerId);
+    const trusted = device !== null && this.computers.trustedBy(device).has(computerId);
+    if (confirm === "device" && device !== null && confirmedBy !== null && confirmedBy === computer?.ownerId && !trusted) {
+      this.computers.trustDevice(computerId, device, Date.now());
+      this.sockets.broadcast({ type: "computers_changed" });
+    }
+    return { confirm, trusted, confirmedBy };
+  }
+
+  /** 给某台设备看的电脑列表：带上它为哪些电脑确认过远程控制。 */
+  #computersFor(device: string | null): ComputerView[] {
+    const trusted = device ? this.computers.trustedBy(device) : new Set<string>();
+    return this.bridge.list().map((row) => (row.remoteConfirm === "device" ? { ...row, remoteTrusted: trusted.has(row.id) } : row));
+  }
+
+  /**
+   * 手机按过面容，记下这台手机确认过这台电脑（档位是「每台设备确认一次」时）。
+   * 手机看远程桌面云端本来就放行，这里只是让手机和网页一样，确认记在云端，改档位时一起清掉。
+   */
+  trustPhone(id: string, device: string | null): boolean {
+    const actor = this.#actor(device);
+    const computer = this.computers.list().find((row) => row.id === id);
+    if (!computer || device === null || actor?.kind !== "phone" || computer.remoteConfirm !== "device") return false;
+    if (computer.ownerId !== null && actor.memberId !== computer.ownerId) return false;
+    this.computers.trustDevice(id, device, Date.now());
+    this.sockets.broadcast({ type: "computers_changed" });
+    return true;
+  }
+
+  /** 改远程控制前确认的档位：和改分级一个规矩，见 remote-confirm.ts 的 `mayChangeRemoteConfirm`。 */
+  async setRemoteConfirm(id: string, level: string, device: string | null = null): Promise<"ok" | "missing" | "owner_only" | "bad"> {
+    if (!isRemoteConfirm(level)) return "bad";
+    const computer = this.computers.list().find((row) => row.id === id);
+    if (!computer) return "missing";
+    if (!mayChangeRemoteConfirm(computer.remoteConfirm, level, this.#actor(device), computer.ownerId)) return "owner_only";
+    if (!this.computers.setRemoteConfirm(id, level)) return "missing";
+    this.sockets.broadcast({ type: "computers_changed" });
+    return "ok";
+  }
+
   /** 用掉一张票：是这台设备为这台电脑换的、没过期，返回确认的成员。 */
   #useDesktopTicket(ticket: string | null, device: string | null, computerId: string): string | null {
     if (!ticket) return null;
@@ -2283,6 +2332,20 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     // 吊销的是自己：浏览器顺手清掉 cookie。
     const headers: HeadersInit = id === caller.device ? { "Set-Cookie": deviceCookie(url, null) } : {};
     return Response.json({ ok: true }, { headers });
+  }
+  const remoteTrust = pathname.match(/^\/api\/computers\/([^/]+)\/remote-trust$/);
+  if (remoteTrust && method === "POST") {
+    const ok = await caller.pupu.trustPhone(decodeURIComponent(remoteTrust[1] ?? ""), caller.device);
+    return ok ? Response.json({ ok: true }) : Response.json({ error: "记不了" }, { status: 400 });
+  }
+  const remoteConfirm = pathname.match(/^\/api\/computers\/([^/]+)\/remote-confirm$/);
+  if (remoteConfirm && method === "POST") {
+    const body = await readJson<{ level?: unknown }>(request);
+    const result = await caller.pupu.setRemoteConfirm(decodeURIComponent(remoteConfirm[1] ?? ""), String(body.level ?? ""), caller.device);
+    if (result === "missing") return Response.json({ error: "没有这台电脑" }, { status: 404 });
+    if (result === "bad") return Response.json({ error: "没有这个档位" }, { status: 400 });
+    if (result === "owner_only") return Response.json({ error: "放宽只能电脑主人自己改" }, { status: 403 });
+    return Response.json({ ok: true });
   }
   const policy = pathname.match(/^\/api\/computers\/([^/]+)\/policy$/);
   if (policy && method === "POST") {

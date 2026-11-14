@@ -9,8 +9,8 @@ import { RemoteDesktopSession, keyOf, type DesktopInput, type DesktopQuality, ty
 
 /**
  * 网页和电脑 App 上的远程桌面：对话里电脑卡的「接手」、设置里电脑页的「远程控制」，和 iOS 一样只给主人自己在线的电脑。
- * 开之前主人要用通行密钥亲手确认，因为网页就开在 Pupu 能操作的电脑上（见 ../bridge/desktop.ts 的 `mayViewDesktop`）。
- * 电脑 App 的窗口里没有通行密钥，交给系统浏览器，在那里打开 `#/desktop/<电脑 id>`。
+ * 要不要先用通行密钥确认看电脑设置里的「远程控制前确认」（默认不用，见 ../bridge/remote-confirm.ts）。
+ * 要确认时电脑 App 的窗口里没有通行密钥，交给系统浏览器，在那里打开 `#/desktop/<电脑 id>`。
  */
 
 /** 这台设备上怎么开这台电脑的远程桌面。null 是不放按钮：不是自己的、离线、或者就是眼前这台。 */
@@ -46,7 +46,9 @@ function useWhere(
       // 本机开发没带凭据：云端也不拦。
       if (confirmBy === "here") return memberId === undefined || computer.ownerId === memberId ? "here" : null;
       if (computer.ownerId === null || computer.ownerId !== memberId) return null;
-      return confirmBy;
+      // 设置里的「远程控制前确认」：不用确认、或者这台设备确认过一次，主人登录着直接开，电脑 App 里也在窗口里开。
+      const direct = computer.remoteConfirm === "none" || (computer.remoteConfirm === "device" && computer.remoteTrusted === true);
+      return direct ? "here" : confirmBy;
     },
     [computers, here, memberId, confirmBy]
   );
@@ -247,14 +249,14 @@ function Viewer({
             </div>
           ) : (
             <>
-              <div className="text-subheadline text-white/70">要用通行密钥确认是你本人。</div>
+              {where !== "here" && <div className="text-subheadline text-white/70">要用通行密钥确认是你本人。</div>}
               <button
                 type="button"
                 disabled={phase.busy || !known}
                 onClick={() => void connect()}
                 className="tap h-bar w-full rounded-full bg-white text-body font-semibold text-black disabled:opacity-60"
               >
-                {phase.busy ? "正在确认…" : "确认并连接"}
+                {where === "here" ? (phase.busy ? "正在连接…" : "连接") : phase.busy ? "正在确认…" : "确认并连接"}
               </button>
             </>
           )}

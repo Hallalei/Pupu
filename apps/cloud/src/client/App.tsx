@@ -485,6 +485,10 @@ export function App() {
           await api.setPolicy(id, policy);
           await refresh();
         }}
+        onSetRemoteConfirm={async (id, level) => {
+          await api.setRemoteConfirm(id, level);
+          await refresh();
+        }}
         devices={devices}
         members={members}
         actor={actorOf(current ?? null, members)}

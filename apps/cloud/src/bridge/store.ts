@@ -1,5 +1,6 @@
 import type { ScreenGrant } from "./gate.ts";
 import { DEFAULT_POLICY, isComputerPolicy, NEW_COMPUTER_POLICY, type ComputerPolicy } from "./policy.ts";
+import { DEFAULT_REMOTE_CONFIRM, isRemoteConfirm, type RemoteConfirm } from "./remote-confirm.ts";
 
 /**
  * 授权电脑和设备凭据。和项目表一样放在 Pupu 这个 Durable Object 的 SQLite 里。
@@ -21,6 +22,8 @@ export type ComputerRow = {
   readonly policy: ComputerPolicy;
   /** 屏幕授权，怎么变见 gate.ts 的 `nextScreen`。 */
   readonly screen: ScreenGrant;
+  /** 远程控制前要不要确认，见 remote-confirm.ts。 */
+  readonly remoteConfirm: RemoteConfirm;
 };
 
 export interface ComputerDirectory {
@@ -50,7 +53,8 @@ function toRow(row: Row): ComputerRow {
     revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
     lastSeenAt: row.last_seen_at === null ? null : Number(row.last_seen_at),
     policy: isComputerPolicy(row.policy) ? row.policy : DEFAULT_POLICY,
-    screen: screenOf(row)
+    screen: screenOf(row),
+    remoteConfirm: isRemoteConfirm(row.remote_confirm) ? row.remote_confirm : DEFAULT_REMOTE_CONFIRM
   };
 }
 
@@ -89,7 +93,8 @@ export class ComputerStore implements ComputerDirectory {
         `policy TEXT NOT NULL DEFAULT '${DEFAULT_POLICY}'`,
         "screen_until INTEGER",
         "owner_id TEXT",
-        "screen_state TEXT"
+        "screen_state TEXT",
+        "remote_confirm TEXT"
       ]) {
         try {
           this.#sql.exec(`ALTER TABLE pupu_computers ADD COLUMN ${column}`);
@@ -97,6 +102,13 @@ export class ComputerStore implements ComputerDirectory {
           // 列已经在了。
         }
       }
+      // 「每台设备确认一次」：哪台设备为哪台电脑确认过。改档位时这台电脑的清掉。
+      this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_remote_trust (
+        computer_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        confirmed_at INTEGER NOT NULL,
+        PRIMARY KEY (computer_id, device_id)
+      )`);
       this.#ready = true;
     }
     return this.#sql;
@@ -174,6 +186,37 @@ export class ComputerStore implements ComputerDirectory {
     if (!row) return false;
     this.#db().exec("UPDATE pupu_computers SET policy = ? WHERE id = ?", policy, id);
     return true;
+  }
+
+  /** 改远程控制前确认的档位。之前「确认过一次」的设备都作废，新档位从现在算。 */
+  setRemoteConfirm(id: string, level: RemoteConfirm): boolean {
+    const [row] = this.#db()
+      .exec("SELECT id FROM pupu_computers WHERE id = ? AND revoked_at IS NULL", id)
+      .toArray();
+    if (!row) return false;
+    this.#db().exec("UPDATE pupu_computers SET remote_confirm = ? WHERE id = ?", level, id);
+    this.#db().exec("DELETE FROM pupu_remote_trust WHERE computer_id = ?", id);
+    return true;
+  }
+
+  /** 这台设备为这台电脑确认过了。 */
+  trustDevice(computerId: string, deviceId: string, at: number): void {
+    this.#db().exec(
+      "INSERT INTO pupu_remote_trust (computer_id, device_id, confirmed_at) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET confirmed_at = excluded.confirmed_at",
+      computerId,
+      deviceId,
+      at
+    );
+  }
+
+  /** 这台设备确认过的电脑。 */
+  trustedBy(deviceId: string): Set<string> {
+    return new Set(
+      this.#db()
+        .exec("SELECT computer_id FROM pupu_remote_trust WHERE device_id = ?", deviceId)
+        .toArray()
+        .map((row) => String(row.computer_id))
+    );
   }
 
   /** 还没有主人的电脑都归这个成员。创建者第一次登录时用。 */
