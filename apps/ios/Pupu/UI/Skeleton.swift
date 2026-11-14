@@ -4,22 +4,27 @@ import UIKit
 // 不加闪光、不做呼吸，宽度写死。整块是一个读屏元素，念「正在打开」，里面的条不单独读。
 // 拿到过一次内容以后不再换回骨架：什么时候出现由用的地方定。
 
-/// 列表：一条组标题（宽 64、高 14，左边让出 4），隔 4 是一组三行（`surface-inset` 底、`radius-row`），每行高 52、左右 16。
+/// 列表：一组三行（`surface-inset` 底、`radius-row`），每行高 52、左右 16。真列表有组标题时，上面一条组标题
+/// （宽 64、高 14，左边让出 4），隔 4 是组；没有组标题的（邀请码、通行密钥）不画这条，组直接从顶上开始，内容到了不往上跳。
 /// 组里的条画在 `surface-inset` 上，用 `line`。有图标位时左边一块 18 见方、圆角 5，分隔线从图标后面画起（16 + 18 + 12）；
-/// 没有图标的列表（邀请码、通行密钥）去掉图标位，分隔线从左边 16 画起。
+/// 没有图标的列表去掉图标位，分隔线从左边 16 画起。
 final class ListSkeletonView: UIView {
-    init(icons: Bool) {
+    init(icons: Bool, heading: Bool) {
         super.init(frame: .zero)
         isAccessibilityElement = true
         accessibilityLabel = "正在打开"
-        let heading = Self.bar(width: 64, height: 14, color: Theme.surfaceInset)
-        let headingRow = UIView()
-        headingRow.addSubview(heading)
-        NSLayoutConstraint.activate([
-            heading.leadingAnchor.constraint(equalTo: headingRow.leadingAnchor, constant: Theme.Space.s1),
-            heading.topAnchor.constraint(equalTo: headingRow.topAnchor),
-            heading.bottomAnchor.constraint(equalTo: headingRow.bottomAnchor)
-        ])
+        var parts: [UIView] = []
+        if heading {
+            let bar = Self.bar(width: 64, height: 14, color: Theme.surfaceInset)
+            let headingRow = UIView()
+            headingRow.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: headingRow.leadingAnchor, constant: Theme.Space.s1),
+                bar.topAnchor.constraint(equalTo: headingRow.topAnchor),
+                bar.bottomAnchor.constraint(equalTo: headingRow.bottomAnchor)
+            ])
+            parts.append(headingRow)
+        }
         let group = SurfaceView(.inset, radius: Theme.Radius.row)
         let rows = UIStackView()
         rows.axis = .vertical
@@ -57,7 +62,8 @@ final class ListSkeletonView: UIView {
         }
         group.contentView.addSubview(rows)
         rows.pin(to: group.contentView)
-        let column = UIStackView(arrangedSubviews: [headingRow, group])
+        parts.append(group)
+        let column = UIStackView(arrangedSubviews: parts)
         column.axis = .vertical
         column.spacing = Theme.Space.s1
         addSubview(column)

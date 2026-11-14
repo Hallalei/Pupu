@@ -6,19 +6,19 @@ import { Fragment } from "react";
  */
 
 /**
- * 列表：一根组标题条、一组三行。`icons` 是 false 时（邀请码、通行密钥）去掉图标位，分隔线从左边 16 画起；
- * 有图标时从图标后面画起（16 + 18 + 12）。
+ * 列表（Artifacts）：一根组标题条、一组三行，每行有图标位，分隔线从图标后面画起（16 + 18 + 12）。
+ * 网页上点进去才拉的列表只有 Artifacts；邀请码那一行等列表到了才出现，不画骨架（规范 Skeleton「列表」）。
  */
-export function ListSkeleton({ icons = true }: { icons?: boolean }) {
+export function ListSkeleton() {
   return (
     <div role="status" aria-label="正在打开" className="flex flex-col gap-1">
       <span aria-hidden="true" className="mx-1 my-0.5 h-3.5 w-16 rounded-full bg-surface-inset" />
       <div aria-hidden="true" className="flex flex-col overflow-hidden rounded-row bg-surface-inset">
         {[0.4, 0.55, 0.3].map((width, index) => (
           <Fragment key={width}>
-            {index > 0 && <div className={`h-px shrink-0 bg-line ${icons ? "ml-11.5" : "ml-4"}`} />}
+            {index > 0 && <div className="ml-11.5 h-px shrink-0 bg-line" />}
             <div className="flex min-h-13 items-center gap-3 px-4 py-2.5">
-              {icons && <span className="size-4.5 shrink-0 rounded-[5px] bg-line" />}
+              <span className="size-4.5 shrink-0 rounded-[5px] bg-line" />
               <span className="flex min-w-0 flex-1 flex-col gap-2">
                 <span className="h-3 rounded-full bg-line" style={{ width: `${width * 100}%` }} />
                 <span className="h-2.5 rounded-full bg-line" style={{ width: `${(width + 0.2) * 100}%` }} />

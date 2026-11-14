@@ -790,7 +790,7 @@ final class SettingsViewController: UICollectionViewController {
                 label: "远程控制「\(computer.name)」前要不要确认"
             )
         case .skeleton:
-            _ = cell.hosted { ListSkeletonView(icons: false) }
+            _ = cell.hosted { ListSkeletonView(icons: false, heading: false) }
             paint(cell, plain: true)
         case .code(let pairing):
             let view = cell.hosted { PairCodeView() }

@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.leizi.pupu", category: "state")
 
 /// 项目、电脑、待批的请示、配对过的设备和项目报回聊天的结果。和网页版一样：收到「变了」的通知或者每 5 秒拉一次 /api/state。
 /// 拿到 401 说明这台手机被吊销了，忘掉凭据回连接页。
@@ -166,10 +169,18 @@ final class Store {
             Connection.shared.rejected(identity)
         case .failure(let failure):
             update(for: identity) { snapshot in
-                snapshot.error = failure.localizedDescription
+                snapshot.error = Self.describe(failure)
                 snapshot.loaded = true
             }
         }
+    }
+
+    /// 拉状态出错时写什么（规范 StatusLine）：Pupu 自己写了原因的照写；断网、超时、Pupu 那边出错、回来的看不懂，
+    /// 都写「连不上 Pupu，正在重试。」，系统的原话只进日志。授权失效不走这里，上面换回配对页。
+    private static func describe(_ failure: any Error) -> String {
+        if let failure = failure as? APIError, failure.reason { return failure.message }
+        log.error("拉状态失败：\(String(describing: failure), privacy: .public)")
+        return "连不上 Pupu，正在重试。"
     }
 
     /// 会话连接上收到的 activity 帧：整份换掉，不用重新拉。`identity` 是那条连接的身份。

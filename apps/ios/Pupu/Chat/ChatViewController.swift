@@ -695,11 +695,16 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         collectionView.contentOffset.y += shift
     }
 
+    /// 输入栏上方同一时间只写一行（规范 StatusLine），先后是连接、拉状态出错、排队。
     private func updateStatus() {
-        let text: String? = if socket?.isOpen == true {
-            state.queued > 0 ? "还有 \(state.queued) 条消息排着队，Pupu 说完这轮就处理" : nil
-        } else {
+        let text: String? = if socket?.isOpen != true {
             loaded ? "连接断开，正在重连…" : "正在连接 Pupu…"
+        } else if let failure = Store.shared.error {
+            failure
+        } else if state.queued > 0 {
+            "还有 \(state.queued) 条消息排着队，Pupu 说完这轮就处理"
+        } else {
+            nil
         }
         if let text, statusLabel.text != text { statusLabel.text = text }
         let hidden = text == nil

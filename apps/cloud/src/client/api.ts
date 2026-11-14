@@ -26,9 +26,26 @@ export class UnauthorizedError extends Error {}
 /** 网络半通时请求不成功也不报错，不设上限就一直停在「加载中」。 */
 const STATE_TIMEOUT_MS = 10_000;
 
-/** 请求没到云端：超时，或者 fetch 自己失败。云端回的错误照原话显示。 */
-function isUnreachable(cause: unknown): boolean {
-  return cause instanceof TypeError || (cause instanceof DOMException && cause.name === "TimeoutError");
+/** 云端回了错误码。`reason` 是云端自己写的原因（响应体的 error），没写是 null，message 就是状态码。 */
+class ResponseError extends Error {
+  readonly status: number;
+  readonly reason: string | null;
+
+  constructor(message: string, status: number, reason: string | null) {
+    super(message);
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
+/**
+ * 拉状态出错时写什么（规范 StatusLine）：云端自己写了原因的 4xx 照写原因；断网、超时、5xx、回来的看不懂，
+ * 都写「连不上 Pupu，正在重试。」，原话只进控制台。授权失效（401）不走这里，换成登录页。
+ */
+function stateFailure(cause: unknown): string {
+  if (cause instanceof ResponseError && cause.status < 500 && cause.reason) return cause.reason;
+  console.warn("拉状态失败", cause);
+  return "连不上 Pupu，正在重试。";
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -40,14 +57,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new UnauthorizedError("这个浏览器还没连上 Pupu");
   }
   if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
+    let reason: string | null = null;
     try {
       const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
+      if (body.error) reason = body.error;
     } catch {
       // 响应体不是 JSON，用状态码。
     }
-    throw new Error(message);
+    throw new ResponseError(reason ?? `${response.status} ${response.statusText}`, response.status, reason);
   }
   return (await response.json()) as T;
 }
@@ -233,7 +250,7 @@ export function usePupuState() {
         return;
       }
       // 一次都没取到时不算加载完：空列表会让人以为真的没有项目。
-      setError(isUnreachable(cause) ? "连不上 Pupu，正在重试。" : cause instanceof Error ? cause.message : String(cause));
+      setError(stateFailure(cause));
     } finally {
       fetching.current -= 1;
     }

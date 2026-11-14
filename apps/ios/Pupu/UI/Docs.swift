@@ -102,7 +102,7 @@ final class DocsViewController: UIViewController, UICollectionViewDelegate {
             cell.contentConfiguration = nil
             cell.backgroundConfiguration = .clear()
             cell.contentView.subviews.forEach { $0.removeFromSuperview() }
-            let view = ListSkeletonView(icons: true)
+            let view = ListSkeletonView(icons: true, heading: true)
             cell.contentView.addSubview(view)
             view.pin(to: cell.contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: 0, bottom: 0, right: 0))
         }

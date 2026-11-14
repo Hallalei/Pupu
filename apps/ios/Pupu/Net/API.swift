@@ -6,6 +6,8 @@ nonisolated struct APIError: LocalizedError {
     var unauthorized = false
     /// 请求没发到 Pupu（断网、地址不对、服务器没开）。登录页据此写「连不上 <主机>，看看网络。」。
     var offline = false
+    /// `message` 是 Pupu 自己写的原因（4xx 带的 error）。拉状态出错时只有这种照写，别的写「连不上 Pupu，正在重试。」（Store）。
+    var reason = false
     var errorDescription: String? { message }
 }
 
@@ -241,7 +243,7 @@ nonisolated struct API: Sendable {
             if status == 401, endpoint.token != nil {
                 throw APIError(message: "这台手机的授权失效了，重新配对一次就好。", unauthorized: true)
             }
-            if let failure { throw APIError(message: failure.error, unauthorized: status == 401) }
+            if let failure { throw APIError(message: failure.error, unauthorized: status == 401, reason: status < 500) }
             throw APIError(message: "请求失败：\(status)", unauthorized: status == 401)
         }
         return try JSONDecoder().decode(T.self, from: data)
