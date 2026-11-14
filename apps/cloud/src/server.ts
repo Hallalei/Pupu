@@ -192,6 +192,8 @@ export type ChildView = {
   readonly title: string;
   readonly createdAt: number;
   readonly busy: boolean;
+  /** 子会话里有电脑动作在等批准。 */
+  readonly waiting: boolean;
   readonly reportedAt: number | null;
   readonly summary: string;
 };
@@ -943,6 +945,7 @@ export class Pupu extends DurableObject<Env> {
     const viewer = this.#viewer(current);
     const own = viewer === null ? null : await this.#ensurePrivateChat(viewer);
     const sees = this.#seenBy(viewer);
+    const waitingSessions = new Set(this.approvals.pending(Date.now()).map((row) => row.session));
     return {
       projects: this.store
         .listProjects()
@@ -954,6 +957,7 @@ export class Pupu extends DurableObject<Env> {
             title: child.title,
             createdAt: child.createdAt,
             busy: child.busySince !== null,
+            waiting: waitingSessions.has(child.session),
             reportedAt: child.reportedAt,
             summary: child.summary
           }))
