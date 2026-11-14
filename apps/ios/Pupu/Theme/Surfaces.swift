@@ -321,7 +321,26 @@ extension UIBarButtonItem {
     static func sheetButton(image: String, label: String, action: @escaping () -> Void) -> UIBarButtonItem {
         let button = UIButton.round(image: image, side: 34, label: label)
         button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
-        let item = UIBarButtonItem(customView: button)
+        return holding(button)
+    }
+
+    /// 把自己画的按钮放进导航栏，系统不再套玻璃。直接放 UIButton，iOS 26 的导航栏会按自己的规矩重排它，
+    /// 宽高约束不算数（34 的圆成了 36×20 的胶囊）；套一层普通的 UIView，约束照常起作用，和顶栏的 BarButton 一样。
+    /// 导航栏还会把窄于 36 的东西撑到 36 宽，所以按钮居中放在里面，不贴边，自己的宽高不跟着变。
+    static func holding(_ content: UIView) -> UIBarButtonItem {
+        let holder = UIView()
+        holder.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(content)
+        let hug = [holder.widthAnchor.constraint(equalTo: content.widthAnchor), holder.heightAnchor.constraint(equalTo: content.heightAnchor)]
+        hug.forEach { $0.priority = .defaultHigh }
+        NSLayoutConstraint.activate(hug + [
+            content.centerXAnchor.constraint(equalTo: holder.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+            holder.widthAnchor.constraint(greaterThanOrEqualTo: content.widthAnchor),
+            holder.heightAnchor.constraint(greaterThanOrEqualTo: content.heightAnchor)
+        ])
+        let item = UIBarButtonItem(customView: holder)
         item.hidesSharedBackground = true
         return item
     }

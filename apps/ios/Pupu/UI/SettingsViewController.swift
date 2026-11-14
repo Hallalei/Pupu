@@ -1045,9 +1045,7 @@ final class SettingsViewController: UICollectionViewController {
             button.configuration?.paint(fill: Theme.surfaceInset, ink: Theme.ink, pressed: button.isHighlighted, style: .subheadline)
         }
         button.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall).isActive = true
-        let item = UIBarButtonItem(customView: button)
-        item.hidesSharedBackground = true
-        return item
+        return .holding(button)
     }
 
     private func testPush() {

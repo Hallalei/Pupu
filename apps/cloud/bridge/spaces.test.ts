@@ -354,6 +354,59 @@ describe("空间的颜色和图标（设计规范 SpaceColor、SpaceMark）", ()
     ]);
   });
 
+  test("线上现在的库（main 2b294ea 的表，已经有密级、主人、模式、存档和成员）升上来：别的都不动，补上颜色和图标", async () => {
+    const sql = sqlStorage();
+    // 照 2b294ea 的 projects.ts 跑完它自己的迁移以后的样子。
+    sql.exec(`CREATE TABLE pupu_projects (
+      id TEXT PRIMARY KEY, session TEXT NOT NULL UNIQUE, name TEXT NOT NULL, goal TEXT NOT NULL,
+      background TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    )`);
+    sql.exec("ALTER TABLE pupu_projects ADD COLUMN level TEXT NOT NULL DEFAULT 'L2'");
+    sql.exec("ALTER TABLE pupu_projects ADD COLUMN owner_id TEXT");
+    sql.exec("ALTER TABLE pupu_projects ADD COLUMN mode TEXT NOT NULL DEFAULT 'direct'");
+    sql.exec("ALTER TABLE pupu_projects ADD COLUMN archived_at INTEGER");
+    sql.exec(`CREATE TABLE pupu_project_members (
+      project_id TEXT NOT NULL, member_id TEXT NOT NULL, added_by TEXT, added_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, member_id)
+    )`);
+    sql.exec("CREATE TABLE pupu_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const insert = `INSERT INTO pupu_projects (id, session, name, goal, background, progress, created_at, updated_at, level, owner_id, mode, archived_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    sql.exec(insert, "pricing", "10", "定价", "定价格", "背景", "做到一半", 1, 5, "L3", "m1", "coordinator", null);
+    sql.exec(insert, "weekly", "9", "周报", "写周报", "", "", 1, 4, "L2", null, "direct", null);
+    sql.exec(insert, "gone", "11", "官网改版", "", "", "", 1, 3, "L3", "m9", "direct", 2);
+    sql.exec("INSERT INTO pupu_project_members (project_id, member_id, added_by, added_at) VALUES ('pricing', 'm1', NULL, 1), ('pricing', 'm2', 'm1', 2)");
+    sql.exec("INSERT INTO pupu_meta (key, value) VALUES ('everyone-mode', 'coordinator')");
+
+    const projects = new ProjectStore(sql);
+    assert.deepEqual(projects.listProjects(), [
+      {
+        id: "pricing", session: "10", name: "定价", goal: "定价格", background: "背景", progress: "做到一半",
+        createdAt: 1, updatedAt: 5, level: "L3", ownerId: "m1", members: ["m1", "m2"], mode: "coordinator",
+        color: "mist", icon: null
+      },
+      {
+        id: "weekly", session: "9", name: "周报", goal: "写周报", background: "", progress: "",
+        createdAt: 1, updatedAt: 4, level: "L2", ownerId: null, members: [], mode: "direct",
+        color: "mist", icon: "chart"
+      }
+    ]);
+    const everyone = projects.everyone();
+    assert.deepEqual([everyone.mode, everyone.color, everyone.icon], ["coordinator", "mist", "house"]);
+
+    // 存档的空间也补上了，主人回来以后照样有颜色和图标。
+    assert.equal(projects.getProject("gone"), undefined);
+    await projects.restoreOwnedBy(writer(sql), "m9");
+    const back = projects.getProject("gone")!;
+    assert.deepEqual([back.color, back.icon], ["mist", "globe"]);
+
+    // 升上来以后能换，再开一次库也不会重挑图标。
+    await projects.setLook(writer(sql), "pricing", { color: "apricot", icon: "rocket" });
+    const reopened = new ProjectStore(sql).getProject("pricing")!;
+    assert.deepEqual([reopened.color, reopened.icon, reopened.level, reopened.mode], ["apricot", "rocket", "L3", "coordinator"]);
+  });
+
   test("新空间：没给图标按名字挑，给了用给的，颜色先用雾蓝", async () => {
     const sql = sqlStorage();
     const projects = new ProjectStore(sql);
