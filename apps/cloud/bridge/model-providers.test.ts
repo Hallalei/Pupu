@@ -263,16 +263,43 @@ describe("按服务商调", () => {
     assert.match(probe.error, /key 不对/);
   });
 
-  test("探测：连不上时说人话，不写 SDK 那句「Connection error.」", async () => {
+  test("探测：连不上时五种协议都说人话，不写 SDK 那句「Connection error.」；收到回应的照原样报错", async () => {
     const down: typeof fetch = async () => {
       throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     };
-    for (const choice of [CLAUDE, KIMI]) {
-      const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis, fetch: down });
-      assert.ok(!probe.ok, choice.provider);
-      assert.match(probe.error, /^连不上这个地址：/, `${choice.provider}: ${probe.error}`);
-      assert.doesNotMatch(probe.error, /fetch failed|Connection error/i, choice.provider);
+    const gateway: typeof fetch = async () => new Response("upstream network unreachable", { status: 502 });
+    const choices: KeyChoice[] = [CLAUDE, KIMI];
+    for (const id of ["openai", "xai", "google", "mistral"]) {
+      const template = templateOf(id)!;
+      const model = catalogModels(template)[0]!;
+      choices.push({
+        source: "key",
+        provider: id,
+        api: template.api,
+        baseUrl: template.baseUrl,
+        model: model.id,
+        apiKey: "sk-test",
+        vision: false,
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning
+      });
     }
+    // Gemini 的实现不认传进去的 fetch，直接用全局的，两处都换掉（同上面 401 那条）。
+    const probe = async (choice: KeyChoice, fake: typeof fetch) => {
+      const original = globalThis.fetch;
+      globalThis.fetch = fake;
+      try {
+        return await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis, fetch: fake });
+      } finally {
+        globalThis.fetch = original;
+      }
+    };
+    for (const choice of choices) {
+      assert.deepEqual(await probe(choice, down), { ok: false, error: "连不上这个地址：检查地址和网络。" }, choice.provider);
+    }
+    const answered = await probe(KIMI, gateway);
+    assert.ok(!answered.ok);
+    assert.match(answered.error, /^模型服务报错.*502 upstream network unreachable/, answered.error);
   });
 
   test("中途从 Kimi（带思考）换到 Claude：别家的思考去掉，工具调用和结果对得上", async () => {

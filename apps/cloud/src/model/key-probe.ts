@@ -67,8 +67,10 @@ function errorText(status: number, raw: string): string {
     return `key 不对，或者没有这个模型的权限。${detail ? ` ${detail}` : ""}`;
   }
   if (status === 404 || /\b404\b/.test(detail)) return `找不到这个模型（404）。看看模型名对不对。${detail ? ` ${detail}` : ""}`;
-  // 连不上：各家 SDK 多半只剩一句「Connection error.」，错码丢了，那就写「检查地址和网络」。
-  if (/fetch failed|connection error|network|ENOTFOUND|ECONNREFUSED/i.test(detail)) {
+  // 连不上（没收到回应）：各家 SDK 多半只剩一句「Connection error.」，错码丢了，那就写「检查地址和网络」。
+  // 收到了回应的照下面「模型服务报错」原样写：SDK 报 HTTP 错时 onResponse 不一定叫到，但字面开头是状态码（「502 …」）。
+  const answered = status !== 0 || /^\d{3}\b/.test(detail);
+  if (!answered && /fetch failed|connection error|network|ENOTFOUND|ECONNREFUSED/i.test(detail)) {
     return unreachable(/ENOTFOUND|ECONNREFUSED/.exec(detail)?.[0] ?? "");
   }
   return `模型服务报错${status ? ` ${status}` : ""}${detail ? `：${detail}` : "。"}`;
