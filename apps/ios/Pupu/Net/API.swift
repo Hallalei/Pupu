@@ -47,6 +47,15 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/computers/\(id)/policy", method: "POST", body: ["policy": policy.rawValue])
     }
 
+    func setRemoteConfirm(_ level: Computer.RemoteConfirm, computer id: String) async throws {
+        let _: Done = try await send("api/computers/\(id)/remote-confirm", method: "POST", body: ["level": level.rawValue])
+    }
+
+    /// 按过面容，记下这台手机确认过这台电脑。
+    func trustRemote(computer id: String) async throws {
+        let _: Done = try await send("api/computers/\(id)/remote-trust", method: "POST", body: [:])
+    }
+
     func decide(approval id: String, allow: Bool) async throws {
         let _: Done = try await send("api/approvals/\(id)", method: "POST", body: ["decision": allow ? "allow" : "deny"])
     }

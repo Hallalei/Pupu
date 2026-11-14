@@ -1,6 +1,7 @@
 import { parseDesktopDown, parseDesktopUp, type DesktopDown, type DesktopUp } from "./desktop.ts";
 import { parseModelDown, parseModelUp, type LocalModelInfo, type ModelDown, type ModelUp } from "./model-relay.ts";
 import type { ComputerPolicy } from "./policy.ts";
+import type { RemoteConfirm } from "./remote-confirm.ts";
 
 /**
  * 电脑桥的帧。云端和本机桥共用这一份。
@@ -290,6 +291,10 @@ export type ComputerView = {
   readonly stale: boolean;
   readonly lastSeenAt: number | null;
   readonly policy: ComputerPolicy;
+  /** 远程控制前要不要确认，见 remote-confirm.ts。 */
+  readonly remoteConfirm: RemoteConfirm;
+  /** 「每台设备确认一次」时，看的这台设备确认过没有。只在给某台设备的状态里有。 */
+  readonly remoteTrusted?: boolean;
   /** 屏幕授权还有效。 */
   readonly screen: boolean;
   /** 在线时，有没有人正在用它（键盘鼠标 1 分钟内动过）。老的桥不报，没有这一项。 */

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
+import { REMOTE_CONFIRMS, mayChangeRemoteConfirm, type RemoteConfirm } from "../bridge/remote-confirm";
 import type { ConnectorService, ConnectorView } from "../connectors/store";
 import { mayChangePolicy, type DeviceView } from "../devices";
 import type { InviteList } from "../directory";
@@ -121,6 +122,7 @@ export function Settings({
   onModelSaved,
   onRevoke,
   onSetPolicy,
+  onSetRemoteConfirm,
   devices,
   members,
   actor,
@@ -144,6 +146,7 @@ export function Settings({
   onModelSaved: () => Promise<void>;
   onRevoke: (id: string) => Promise<void>;
   onSetPolicy: (id: string, policy: ComputerPolicy) => Promise<void>;
+  onSetRemoteConfirm: (id: string, level: RemoteConfirm) => Promise<void>;
   devices: readonly DeviceView[];
   members: readonly MemberView[];
   /** 发请求的是谁（见 members.ts 的 `actorOf`），按钮灰不灰和接口的规则对得上；本机开发没设访问口令时是 null。 */
@@ -307,6 +310,8 @@ export function Settings({
             actor={actor}
             onRevoke={() => onRevoke(featured.id)}
             onSetPolicy={(policy) => onSetPolicy(featured.id, policy)}
+            onSetRemoteConfirm={(level) => onSetRemoteConfirm(featured.id, level)}
+            canConfirm={remoteConfirmable(confirmBy, passkeys)}
             onClose={() => onPage(null)}
           />
         )}
@@ -339,6 +344,8 @@ export function Settings({
           onPage("computers");
         }}
         onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
+        onSetRemoteConfirm={(level) => onSetRemoteConfirm(computer.id, level)}
+        canConfirm={remoteConfirmable(confirmBy, passkeys)}
         onClose={() => onPage(null)}
       />
     ) : (
@@ -854,9 +861,59 @@ function PolicySelect({
   );
 }
 
+/** 这台设备上能不能按确认：网页要有一把通行密钥，连过手机的去手机上确认。null 是能。 */
+function remoteConfirmable(confirmBy: ConfirmWhere, passkeys: Passkeys | null): string | null {
+  if (confirmBy === "here") return null;
+  if (confirmBy === "phone") return "要远程控制前确认，在手机 App 上改。";
+  return passkeys && passkeys.keys.length > 0 ? null : "要远程控制前确认，先加一把通行密钥。";
+}
+
+/** 远程控制前要不要确认：和分级一样的小胶囊。这里按不了确认，要确认的两档灰掉；放宽只有主人。 */
+function RemoteConfirmSelect({
+  computer,
+  actor,
+  canConfirm,
+  sending,
+  onChange
+}: {
+  computer: ComputerView;
+  actor: Actor | null | undefined;
+  canConfirm: boolean;
+  sending: boolean;
+  onChange: (level: RemoteConfirm) => void;
+}) {
+  return (
+    <span className="relative shrink-0">
+      <select
+        aria-label={`远程控制「${computer.name}」前要不要确认`}
+        value={computer.remoteConfirm}
+        disabled={sending}
+        onChange={(event) => {
+          const next = event.target.value as RemoteConfirm;
+          if (next !== computer.remoteConfirm) onChange(next);
+        }}
+        className="tap h-8 appearance-none rounded-full border border-separator bg-surface py-0 pr-7 pl-3 text-subheadline text-foreground"
+      >
+        {REMOTE_CONFIRMS.map(([level, name]) => (
+          <option
+            key={level}
+            value={level}
+            disabled={
+              (level !== "none" && !canConfirm) || !mayChangeRemoteConfirm(computer.remoteConfirm, level, actor, computer.ownerId)
+            }
+          >
+            {name}
+          </option>
+        ))}
+      </select>
+      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-muted" />
+    </span>
+  );
+}
+
 /**
  * 一台电脑：名字和在不在线、什么时候先问你、吊销，一组排下来。电脑页最上面那台和点进去的那一页都是它。
- * 远程控制只有手机上有（云端也只让手机看远程桌面），这里不放。
+ * 主人自己的电脑多一行「远程控制前」确认几档，见 ../bridge/remote-confirm.ts。
  */
 function ComputerPanel({
   computer,
@@ -865,6 +922,8 @@ function ComputerPanel({
   actor,
   onRevoke,
   onSetPolicy,
+  onSetRemoteConfirm,
+  canConfirm,
   onClose
 }: {
   computer: ComputerView;
@@ -875,11 +934,15 @@ function ComputerPanel({
   actor: Actor | null | undefined;
   onRevoke: () => Promise<void>;
   onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
+  onSetRemoteConfirm: (level: RemoteConfirm) => Promise<void>;
+  /** 选要确认的档位前，这里能不能确认：null 是能，不然是灰掉时的那句话。 */
+  canConfirm: string | null;
   /** 关掉设置：远程桌面盖满整个窗口，设置弹窗还开着会抢走键盘焦点。 */
   onClose: () => void;
 }) {
   const row = useRowAction();
   const policy = useRowAction();
+  const remoteConfirm = useRowAction();
   const remote = useRemoteDesktop(computer.id);
   // 和 iOS 一样只给主人自己的电脑；离线的放一行灰的说明。
   const mine = !here && computer.ownerId !== null && computer.ownerId === actor?.memberId;
@@ -928,6 +991,18 @@ function ComputerPanel({
             onChange={(next) => void policy.run(() => onSetPolicy(next))}
           />
         </div>
+        {(actor === null || (computer.ownerId !== null && computer.ownerId === actor?.memberId)) && (
+          <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
+            <span className="min-w-0 flex-1 text-body">远程控制前</span>
+            <RemoteConfirmSelect
+              computer={computer}
+              actor={actor}
+              canConfirm={canConfirm === null}
+              sending={remoteConfirm.sending}
+              onChange={(next) => void remoteConfirm.run(() => onSetRemoteConfirm(next))}
+            />
+          </div>
+        )}
         {mayRevoke(actor, computer.ownerId) &&
           (row.confirming ? (
             <div className="px-4 py-3">
@@ -949,7 +1024,8 @@ function ComputerPanel({
             </button>
           ))}
       </div>
-      <RowError error={policy.error ?? row.error} />
+      {canConfirm !== null && (actor === null || computer.ownerId === actor?.memberId) && <Note>{canConfirm}</Note>}
+      <RowError error={policy.error ?? remoteConfirm.error ?? row.error} />
     </section>
   );
 }

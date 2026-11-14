@@ -107,6 +107,29 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
         }
     }
 
+    /// 远程控制前要不要确认，和云端 bridge/remote-confirm.ts 一样的三档、一样的字。手机上的确认是面容 ID。
+    enum RemoteConfirm: String, Sendable, CaseIterable {
+        case none
+        case device
+        case always
+
+        var title: String {
+            switch self {
+            case .none: "不用确认"
+            case .device: "每台设备确认一次"
+            case .always: "每次都确认"
+            }
+        }
+
+        var strictness: Int {
+            switch self {
+            case .none: 0
+            case .device: 1
+            case .always: 2
+            }
+        }
+    }
+
     let id: String
     let name: String
     /// 主人的成员 id：用谁的账号登录电脑 App 就是谁的。还没主人是 nil。
@@ -118,6 +141,13 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
     let policy: String?
     /// 屏幕授权还有效。
     let screen: Bool?
+
+    let remoteConfirm: String?
+    /// 这台手机确认过（只在档位是「每台设备确认一次」时有）。
+    let remoteTrusted: Bool?
+
+    /// 老云端没有这一项：照以前每次都确认。
+    var currentRemoteConfirm: RemoteConfirm { remoteConfirm.flatMap(RemoteConfirm.init(rawValue:)) ?? .always }
 
     var currentPolicy: Policy { policy.flatMap(Policy.init(rawValue:)) ?? .askRisky }
 

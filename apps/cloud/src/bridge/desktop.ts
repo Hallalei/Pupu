@@ -4,6 +4,8 @@
  * 一台电脑同一时间只有一个观看者，新来的要明说接管，租约靠心跳续，过期的判断放在桥上，
  * 这样 Durable Object 休眠或重启都不会让一个掉线的手机一直占着屏幕。
  */
+import type { RemoteConfirm } from "./remote-confirm.ts";
+
 export const DESKTOP_PATH = "/api/desktop/";
 export const DESKTOP_TAG = "pupu-desktop";
 /** 手机多久发一次心跳；桥超过 DESKTOP_EXPIRE_MS 没收到就停。两个数值取自 Cindy。 */
@@ -234,22 +236,39 @@ export function parseDesktopUp(value: unknown): DesktopUp | null {
   }
 }
 
+/** 这次连接带来的确认：电脑设的档位、这台设备确认过没有、这次带的票是谁按通行密钥换的。 */
+export type DesktopAccess = {
+  readonly confirm: RemoteConfirm;
+  readonly trusted: boolean;
+  readonly confirmedBy: string | null;
+};
+
 /**
- * 能不能开这台电脑的远程桌面。开远程桌面等于人坐在这台电脑前，所以要人亲手确认，和审批一样：
- * - 主人自己的手机直接能开；还没主人的电脑（迁移前配的）哪台手机都行。
- * - 网页和电脑 App 开在 Pupu 能操作的电脑上，它能自己点，所以要主人刚为这台电脑按过通行密钥：
- *   `confirmedBy` 是这次连接带来的确认是谁做的（见 server.ts 的 `desktopTicket`）。没主人的电脑不给。
+ * 能不能开这台电脑的远程桌面：只给电脑主人自己。
+ * - 手机：主人的手机就行（要不要先按面容由 App 按档位判）；还没主人的电脑（迁移前配的）哪台手机都行。
+ * - 网页和电脑 App：电脑要有主人、是主人本人，再按电脑设的档位（remote-confirm.ts）：
+ *   不用确认直接开；每台设备确认一次的，这台设备确认过或者这次带了主人换的票；每次都确认的，每次都要票。
+ *   票是主人刚按过通行密钥换的（见 server.ts 的 `desktopTicket`），网页开在 Pupu 能操作的电脑上，只有系统弹窗它点不到。
  * `actor` 是 null 是本机开发没带凭据。
  */
 export function mayViewDesktop(
   actor: { readonly kind: string; readonly memberId: string | null } | null | undefined,
   ownerId: string | null,
-  confirmedBy: string | null = null
+  access: DesktopAccess = { confirm: "always", trusted: false, confirmedBy: null }
 ): boolean {
   if (actor === null) return true;
   if (actor === undefined) return false;
   if (actor.kind === "phone") return ownerId === null || actor.memberId === ownerId;
-  return ownerId !== null && actor.memberId === ownerId && confirmedBy === ownerId;
+  if (ownerId === null || actor.memberId !== ownerId) return false;
+  const confirmed = access.confirmedBy === ownerId;
+  switch (access.confirm) {
+    case "none":
+      return true;
+    case "device":
+      return access.trusted || confirmed;
+    case "always":
+      return confirmed;
+  }
 }
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */

@@ -303,24 +303,31 @@ final class RemoteDesktopViewController: UIViewController {
     }
 
     /// 打开之前过一次 Face ID。这台设备没设密码时不拦。
+    /// 设置里「远程控制前」那一档说了算（2026-11-14 定，默认不用确认）：不用确认直接开；
+    /// 每台设备确认一次，这台手机按过一次面容就记在云端，之后直接开；每次都确认，每次按面容。
     static func open(_ computer: Computer, endpoint: Endpoint, from host: UIViewController) {
-        #if targetEnvironment(simulator)
-        // 模拟器上验证不了，直接开。
-        host.present(RemoteDesktopViewController(computer: computer, endpoint: endpoint), animated: true)
-        return
-        #else
-        let context = LAContext()
-        var problem: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &problem) else {
-            host.present(RemoteDesktopViewController(computer: computer, endpoint: endpoint), animated: true)
+        let level = computer.currentRemoteConfirm
+        let present = { host.present(RemoteDesktopViewController(computer: computer, endpoint: endpoint), animated: true) }
+        if level == .none || (level == .device && computer.remoteTrusted == true) {
+            present()
             return
         }
         Task {
-            let passed = (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "打开「\(computer.name)」的远程桌面")) ?? false
-            if passed {
-                host.present(RemoteDesktopViewController(computer: computer, endpoint: endpoint), animated: true)
-            }
+            guard await confirmOwner(computer) else { return }
+            if level == .device { try? await Store.shared.api?.trustRemote(computer: computer.id) }
+            present()
         }
+    }
+
+    private static func confirmOwner(_ computer: Computer) async -> Bool {
+        #if targetEnvironment(simulator)
+        // 模拟器上验证不了，当作按过了。
+        return true
+        #else
+        let context = LAContext()
+        var problem: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &problem) else { return true }
+        return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "打开「\(computer.name)」的远程桌面")) ?? false
         #endif
     }
 }

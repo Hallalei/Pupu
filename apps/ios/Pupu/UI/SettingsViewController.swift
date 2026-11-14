@@ -50,6 +50,7 @@ final class SettingsViewController: UICollectionViewController {
         case services
         case computers
         case remoteDesktop
+        case remoteConfirm
         case policy(computerId: String)
         case abilities
         case revokeComputer
@@ -76,6 +77,7 @@ final class SettingsViewController: UICollectionViewController {
         case computer(Computer)
         case noComputer
         case remoteDesktop(Computer)
+        case remoteConfirm(Computer)
         case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case revokeComputer(Computer)
         case notifications(Push.Status, busy: Bool)
@@ -299,6 +301,8 @@ final class SettingsViewController: UICollectionViewController {
         if computer.ownerId == nil || computer.ownerId == me?.id {
             snapshot.appendSections([.remoteDesktop])
             snapshot.appendItems([.remoteDesktop(computer.settled)], toSection: .remoteDesktop)
+            snapshot.appendSections([.remoteConfirm])
+            snapshot.appendItems([.remoteConfirm(computer.settled)], toSection: .remoteConfirm)
         }
         snapshot.appendSections([.policy(computerId: id), .abilities])
         snapshot.appendItems(Computer.Policy.allCases.map {
@@ -503,6 +507,9 @@ final class SettingsViewController: UICollectionViewController {
             background.cornerRadius = Theme.Size.control / 2
             cell.backgroundConfiguration = background
             cell.accessibilityTraits = computer.online ? .button : [.button, .notEnabled]
+        case .remoteConfirm(let computer):
+            content.text = "远程控制前"
+            cell.accessories = [.customView(configuration: .init(customView: remoteConfirmMenu(for: computer), placement: .trailing()))]
         case .policy(let computerId, let policy, let selected):
             content.text = policy.title
             let allowed = Store.shared.computer(id: computerId).map { mayChangePolicy($0, to: policy) } ?? false
@@ -904,6 +911,43 @@ final class SettingsViewController: UICollectionViewController {
         return button
     }
 
+    /// 远程控制前确认几档：和分级一样的小胶囊。手机按面容确认，三档都能选；放宽只有主人（这一行也只给主人）。
+    private func remoteConfirmMenu(for computer: Computer) -> UIButton {
+        var config = UIButton.Configuration.gray()
+        config.title = computer.currentRemoteConfirm.title
+        config.image = UIImage(systemName: "chevron.up.chevron.down")
+        config.imagePlacement = .trailing
+        config.imagePadding = 4
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .caption2, scale: .small)
+        config.cornerStyle = .capsule
+        config.buttonSize = .small
+        config.baseForegroundColor = Theme.ink
+        let actions = Computer.RemoteConfirm.allCases.map { level in
+            UIAction(title: level.title, state: computer.currentRemoteConfirm == level ? .on : .off) { [weak self] _ in
+                guard level != computer.currentRemoteConfirm else { return }
+                self?.setRemoteConfirm(level, of: computer.id)
+            }
+        }
+        let button = UIButton(configuration: config)
+        button.menu = UIMenu(options: .singleSelection, children: actions)
+        button.showsMenuAsPrimaryAction = true
+        button.accessibilityLabel = "远程控制「\(computer.name)」前：\(computer.currentRemoteConfirm.title)"
+        return button
+    }
+
+    private func setRemoteConfirm(_ level: Computer.RemoteConfirm, of computerId: String) {
+        guard let api = Store.shared.api else { return }
+        Task {
+            do {
+                try await api.setRemoteConfirm(level, computer: computerId)
+                UISelectionFeedbackGenerator().selectionChanged()
+            } catch {
+                self.show(error.localizedDescription)
+            }
+            Store.shared.refresh()
+        }
+    }
+
     /// 改分级不用再确认（2026-11-13 定）：主人在哪个端都能改，别人只能往严里改。
     private func mayChangePolicy(_ computer: Computer, to policy: Computer.Policy) -> Bool {
         if policy.strictness >= computer.currentPolicy.strictness { return true }
@@ -1111,6 +1155,6 @@ private extension Computer {
     /// 不去掉的话，每次心跳格子都被删了重建，正点着的那一下就丢了。
     var settled: Computer {
         guard online, lastSeenAt != nil else { return self }
-        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen)
+        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen, remoteConfirm: remoteConfirm, remoteTrusted: remoteTrusted)
     }
 }

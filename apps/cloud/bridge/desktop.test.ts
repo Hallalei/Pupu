@@ -159,15 +159,15 @@ describe("远程桌面的租约", () => {
   });
 
   test("网页和电脑 App 要主人刚为这台电脑按过通行密钥", () => {
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", "m1"), true);
-    assert.equal(mayViewDesktop({ kind: "desktop", memberId: "m1" }, "m1", "m1"), true);
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", null), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", { confirm: "always", trusted: false, confirmedBy: "m1" }), true);
+    assert.equal(mayViewDesktop({ kind: "desktop", memberId: "m1" }, "m1", { confirm: "always", trusted: false, confirmedBy: "m1" }), true);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", { confirm: "always", trusted: false, confirmedBy: null }), false);
     // 票是别人换的、或者不是主人：都不行。
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", "m2"), false);
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m2" }, "m1", "m2"), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", { confirm: "always", trusted: false, confirmedBy: "m2" }), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m2" }, "m1", { confirm: "always", trusted: false, confirmedBy: "m2" }), false);
     // 没主人的电脑手机能开，网页不行。
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, null, "m1"), false);
-    assert.equal(mayViewDesktop({ kind: "browser", memberId: null }, null, null), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, null, { confirm: "always", trusted: false, confirmedBy: "m1" }), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: null }, null, { confirm: "always", trusted: false, confirmedBy: null }), false);
   });
 
   test("只有主人自己的手机能看", () => {
@@ -178,6 +178,19 @@ describe("远程桌面的租约", () => {
     assert.equal(mayViewDesktop({ kind: "phone", memberId: null }, null), true);
     assert.equal(mayViewDesktop(undefined, "m1"), false);
     assert.equal(mayViewDesktop(null, "m1"), true);
+  });
+
+  test("确认档位：不用确认主人直接开，每台设备确认一次认这台设备，每次都确认要票", () => {
+    const owner = { kind: "browser" as const, memberId: "m1" };
+    const other = { kind: "browser" as const, memberId: "m2" };
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "none", trusted: false, confirmedBy: null }), true);
+    assert.equal(mayViewDesktop(other, "m1", { confirm: "none", trusted: false, confirmedBy: null }), false);
+    assert.equal(mayViewDesktop(owner, null, { confirm: "none", trusted: false, confirmedBy: null }), false);
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "device", trusted: false, confirmedBy: null }), false);
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "device", trusted: true, confirmedBy: null }), true);
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "device", trusted: false, confirmedBy: "m1" }), true);
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "always", trusted: true, confirmedBy: null }), false);
+    assert.equal(mayViewDesktop(owner, "m1", { confirm: "always", trusted: true, confirmedBy: "m1" }), true);
   });
 });
 
