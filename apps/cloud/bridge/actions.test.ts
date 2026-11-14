@@ -24,13 +24,22 @@ async function workspace(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "pupu-actions-"));
 }
 
-async function waitFor(ready: () => boolean | Promise<boolean>, label: string): Promise<void> {
+async function waitFor(ready: () => boolean | Promise<boolean>, label: string, ms = 4_000): Promise<void> {
   const started = Date.now();
-  while (Date.now() - started < 4_000) {
+  while (Date.now() - started < ms) {
     if (await ready()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`等太久：${label}`);
+}
+
+/** exit 帧之前送到的输出，拼起来。没有 exit 帧就是全部。 */
+function outputBeforeExit(frames: readonly UpFrame[]): string {
+  const end = frames.findIndex((frame) => frame.type === "exit");
+  return frames
+    .slice(0, end < 0 ? undefined : end)
+    .flatMap((frame) => (frame.type === "output" ? [frame.text] : []))
+    .join("");
 }
 
 test("读写和列目录限制在主目录里", async (t) => {
@@ -80,23 +89,42 @@ test("前台命令把输出送回来，同一请求不跑第二遍", async (t) =
   await waitFor(() => frames.some((frame) => frame.type === "exit"), "exit");
   const started = frames.find((frame) => frame.type === "started");
   assert.equal(started?.type, "started");
-  const output = frames.filter((frame) => frame.type === "output").map((frame) => frame.text).join("");
-  assert.match(output, /hello/);
+  // 云端收到 exit 就收尾，输出必须都在它前面。
+  assert.equal(outputBeforeExit(frames), "hello\n");
   const exit = frames.find((frame) => frame.type === "exit");
   assert.equal(exit?.type, "exit");
   if (exit?.type === "exit") assert.equal(exit.code, 0);
   if (started?.type !== "started") return;
   const log = await readFile(started.outputPath, "utf8");
   assert.match(log, /\$ echo hello/);
-  assert.match(log, /hello/);
-  assert.match(log, /--- exit 0 ---/);
+  assert.match(log, /\n\nhello\n\n--- exit 0 ---\n$/);
 
   const again: UpFrame[] = [];
   await perform("echo-1", { kind: "run", command: "echo hello", background: false }, hostIn(root, again));
   assert.equal(again.some((frame) => frame.type === "started"), true);
-  assert.equal(again.some((frame) => frame.type === "exit"), true);
+  assert.equal(outputBeforeExit(again), "hello\n");
   const logAfter = await readFile(started.outputPath, "utf8");
   assert.equal(logAfter.split("$ echo hello").length, 2);
+});
+
+test("前台命令甩到后台的子进程占着输出，shell 退出后照样回 exit", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pidFile = path.join(root, "holder.pid");
+  t.after(async () => {
+    const pid = Number(await readFile(pidFile, "utf8").catch(() => ""));
+    if (pid) process.kill(pid, "SIGTERM");
+  });
+  const frames: UpFrame[] = [];
+  await perform(
+    "holder-1",
+    { kind: "run", command: `echo top; sleep 30 & echo $! > ${pidFile}`, background: false },
+    hostIn(root, frames)
+  );
+  await waitFor(() => frames.some((frame) => frame.type === "exit"), "exit while holder runs", 15_000);
+  assert.equal(outputBeforeExit(frames), "top\n");
+  const exit = frames.find((frame) => frame.type === "exit");
+  assert.equal(exit?.type === "exit" ? exit.code : undefined, 0);
 });
 
 test("后台命令不往连接上送输出，取消会停掉进程", async (t) => {
