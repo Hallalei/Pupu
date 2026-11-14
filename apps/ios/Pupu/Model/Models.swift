@@ -21,6 +21,10 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
     let children: [SpaceChild]?
     /// 只有全员空间给：现在这个人能不能切「只派活」（组织创建者能）。
     let mayManage: Bool?
+    /// 空间色 id（mist、sage…，见云端 space-look.ts）。部署后头几分钟老云端可能不给，按雾蓝画。
+    let color: String?
+    /// 空间图标 id（folder、rocket…）。没有就在标记方块里写名字的第一个字。
+    let icon: String?
 
     /// 全员空间：原来的主会话（root），组织里的人都在。云端 projects.ts 的 EVERYONE_ID。
     static let everyoneId = "everyone"
@@ -419,10 +423,12 @@ nonisolated struct Connectors: Decodable, Sendable, Hashable {
 
 /// 输入框的提示和空聊天里 Pupu 的开场白。「我的 Pupu」是自己的私聊；全员是原来的主会话，排在空间第一个。
 nonisolated enum ChatCopy {
-    static let everyoneHint = "发给组织里所有人和 Pupu"
-    static let privateHint = "只发给 Pupu"
-    static let everyoneIntro = "组织里的人都看得到这里。\n小事我直接办，要持续推进的事放进空间里。"
-    static let privateIntro = "这里只有你和我，别人看不到。\n小事我直接办，要持续推进的事放进空间里。"
+    /// 「我的 Pupu」输入栏的占位（规范 Composer）。
+    static let privateHint = "给 Pupu 发消息"
+    /// 空间输入栏的占位。
+    static func spaceHint(_ name: String) -> String { "在「\(name)」里说" }
+    /// 「我的 Pupu」还没有消息时，问候下面的说明（规范 ChatEmpty）。
+    static let privateIntro = "这里只有你和我。\n要一起推进的事，建个空间叫上大家。"
 }
 
 /// 这台手机能进的两条聊天。
@@ -491,6 +497,9 @@ nonisolated struct DocsView: Decodable, Sendable {
     nonisolated struct Place: Decodable, Sendable, Hashable {
         let id: String?
         let name: String
+        /// 空间的颜色和图标，资料按空间分组时画标记方块。组织层没有。
+        let color: String?
+        let icon: String?
     }
     let docs: [DocMeta]
     let places: [Place]

@@ -5,8 +5,9 @@ import UIKit
 /// 这几处的做法参考了 Signal-iOS 的 ConversationViewController（只看思路，没有搬代码）：
 /// 输入栏是贴着 keyboardLayoutGuide 的普通子视图，列表的底部留白跟着输入栏的位置改。
 final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGestureRecognizerDelegate {
-    /// 空会话的样子。聊天：Pupu 先介绍自己，再给三个开场建议。项目：一张写着项目名和目标的卡片。
+    /// 空会话的样子（规范 ChatEmpty）：Pupu 先介绍自己。聊天下面再给三个开场建议；空间只说这是哪儿、要做什么。
     enum Opening {
+        /// 聊天：问候下面的说明（没有就只写问候）和开场建议。
         case intro(String)
         case project(Project)
         /// 空间的子会话：第一条就是派来的事，不用开场。
@@ -14,8 +15,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     }
 
     let session: String
-    /// 用户滚动时告诉外面到没到最新的消息。
-    var onScroll: ((Bool) -> Void)?
     /// 点了协调模式主会话里的任务卡：打开那个子会话。
     var onOpenChild: ((String) -> Void)?
     /// 转来的第一条上面写的字。子会话里是「从「空间」派来」。
@@ -26,7 +25,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private let openProject: (String) -> Void
     private let identity: Identity
 
-    private static let starters = ["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事", "我现在有哪些项目？"]
+    private static let starters = ["帮我规划一下这周要做的事", "大家最近在忙什么", "建一个空间"]
     /// 离底部这么近就算在底部，新内容来了跟着滚。
     private static let stickDistance: CGFloat = 80
     /// 右滑过这么远松手就是回复。
@@ -54,16 +53,20 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     private var collectionView: UICollectionView!
     private var source: UICollectionViewDiffableDataSource<Int, String>!
     private let composer = ComposerView()
-    private let statusLabel = UILabel(style: .footnote, color: Theme.inkSkyMuted, lines: 0)
+    private let statusLabel = UILabel(style: .footnote, color: Theme.inkMuted, lines: 0)
     private let quotePreview = QuotePreview()
     private let bottom = UIStackView()
-    private let overlay = UIVisualEffectView(effect: nil)
-    private let scrim = UIView()
+    /// 输入栏后面垫的一块卡片底色，滚到输入栏后面的消息不从两边露出来。
+    private let backdrop = FadeEdgeView(.bottom)
+    /// 引用回复时压在对话上的一层 `scrim`，不加模糊。
+    private let overlay = UIView()
+    /// 卡片上沿的淡出：列表顶上 16pt。
+    private let topFade = FadeEdgeView(.top)
     private let empty = UIStackView()
     private let flow = FlowView()
     private let spinner = UIActivityIndicatorView(style: .medium)
-    /// 往上翻了才出现：右下角的玻璃圆按钮，点了回到最新的消息。
-    private let jump = UIButton(configuration: .glass())
+    /// 往上翻了才出现：右下角 `surface` 底的 36pt 圆按钮，`shadow-raised`，点了回到最新的消息。
+    private let jump = UIButton.round(image: "chevron.down", background: Theme.surface, foreground: Theme.ink, label: "回到底部")
 
     private var quote: String?
     private var stick = true {
@@ -105,6 +108,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         _ = view.keyboardLayoutGuide
         setUpList()
         setUpEmpty()
+        setUpBackdrop()
         setUpOverlay()
         setUpBottom()
         setUpJump()
@@ -123,7 +127,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         super.viewDidLayoutSubviews()
         if view.bounds.width != width {
             width = view.bounds.width
-            flow.preferredWidth = width - Theme.Space.s6 * 2
+            flow.preferredWidth = min(width, Theme.Size.columnMax) - Theme.Space.s6 * 2
             reconfigureAll()
         }
         // 输入栏浮在列表上面：列表底部留出输入栏（和键盘）占的高度。
@@ -139,39 +143,48 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     // MARK: - 布局
 
     private func setUpList() {
-        let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(60))
-        let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
-        let section = NSCollectionLayoutSection(group: group)
-        // 项目对话的第一条让开项目名胶囊：对话短到滚不动时，它不能一直盖着字。
-        var clearance: CGFloat = 0
-        if case .project = opening { clearance = ProjectPill.height + Theme.Space.s2 }
-        section.contentInsets = NSDirectionalEdgeInsets(
-            top: Theme.Space.s2 + clearance,
-            leading: Theme.Space.s4,
-            bottom: Theme.Space.s4,
-            trailing: Theme.Space.s4
-        )
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout(section: section))
+        // 对话列最宽 column-max，iPad 和横屏居中放。
+        let layout = UICollectionViewCompositionalLayout { _, environment in
+            let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(60))
+            let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+            let section = NSCollectionLayoutSection(group: group)
+            let side = max(Theme.Space.s4, (environment.container.effectiveContentSize.width - Theme.Size.columnMax) / 2)
+            section.contentInsets = NSDirectionalEdgeInsets(top: Theme.Space.s3, leading: side, bottom: Theme.Space.s4, trailing: side)
+            return section
+        }
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collectionView.backgroundColor = .clear
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
-        collectionView.topEdgeEffect.style = .soft
+        // 卡片上沿和输入栏后面用自己的淡出（FadeEdgeView），不用系统的模糊边缘。
+        collectionView.topEdgeEffect.isHidden = true
+        collectionView.bottomEdgeEffect.isHidden = true
         collectionView.delegate = self
         view.addSubview(collectionView)
         collectionView.pin(to: view)
+        topFade.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(topFade)
+        NSLayoutConstraint.activate([
+            topFade.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topFade.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topFade.topAnchor.constraint(equalTo: view.topAnchor),
+            topFade.heightAnchor.constraint(equalToConstant: Theme.Space.s4)
+        ])
 
         let users = registration(UserCell.self)
         let others = registration(OtherCell.self)
         let assistants = registration(AssistantCell.self)
         let typing = registration(TypingCell.self)
         let tags = registration(TagCell.self)
-        let tools = registration(ToolCell.self)
+        let tools = registration(ToolCallCell.self)
         let notices = registration(NoticeCell.self)
+        let handoffs = registration(HandoffCell.self)
         let errors = registration(ErrorCell.self)
         let reports = registration(ReportCell.self)
-        let tasks = registration(TaskCardCell.self)
+        let tasks = registration(TaskListCell.self)
         let browsers = registration(BrowserCardCell.self)
         let computers = registration(ComputerCardCell.self)
+        let times = registration(TimeCell.self)
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] view, path, id in
             switch self?.rowsByID[id]?.kind {
             case .user: return view.dequeueConfiguredReusableCell(using: users, for: path, item: id)
@@ -180,11 +193,15 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             case .typing: return view.dequeueConfiguredReusableCell(using: typing, for: path, item: id)
             case .projectTag: return view.dequeueConfiguredReusableCell(using: tags, for: path, item: id)
             case .tool: return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
-            case .computer: return view.dequeueConfiguredReusableCell(using: computers, for: path, item: id)
-            case .notice, .handoff: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
+            case .computer(let task):
+                if task.usesScreen { return view.dequeueConfiguredReusableCell(using: computers, for: path, item: id) }
+                return view.dequeueConfiguredReusableCell(using: tools, for: path, item: id)
+            case .notice: return view.dequeueConfiguredReusableCell(using: notices, for: path, item: id)
+            case .handoff: return view.dequeueConfiguredReusableCell(using: handoffs, for: path, item: id)
             case .report: return view.dequeueConfiguredReusableCell(using: reports, for: path, item: id)
             case .browser: return view.dequeueConfiguredReusableCell(using: browsers, for: path, item: id)
-            case .task: return view.dequeueConfiguredReusableCell(using: tasks, for: path, item: id)
+            case .task, .tasks: return view.dequeueConfiguredReusableCell(using: tasks, for: path, item: id)
+            case .time: return view.dequeueConfiguredReusableCell(using: times, for: path, item: id)
             case .error, nil: return view.dequeueConfiguredReusableCell(using: errors, for: path, item: id)
             }
         }
@@ -215,65 +232,52 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         empty.translatesAutoresizingMaskIntoConstraints = false
         switch opening {
         case .project(let project):
-            let card = SurfaceView(.strong, radius: Theme.Radius.panel, lifted: true)
-            let name = UILabel(text: project.name, style: .headline, lines: 0)
-            let goal = UILabel(
-                text: project.goal.isBlank ? "还没写目标。在下面说说这个项目要做成什么样。" : project.goal,
-                style: .subheadline,
-                color: Theme.inkMuted,
-                lines: 0
-            )
-            let stack = UIStackView(arrangedSubviews: [name, goal])
-            stack.axis = .vertical
-            stack.spacing = Theme.Space.s1
-            card.contentView.addSubview(stack)
-            stack.pin(to: card.contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: Theme.Space.s4, bottom: Theme.Space.s4, right: Theme.Space.s4))
-            empty.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: empty.widthAnchor).isActive = true
+            empty.addArrangedSubview(greeting("这是「\(project.name)」。说说要做什么，我来拆。"))
         case .child:
             break
         case .intro(let text):
-            let greeting = UILabel(text: "我是 Pupu", style: .greeting, color: Theme.inkSky)
-            greeting.accessibilityTraits = .header
-            let intro = UILabel(style: .message, color: Theme.inkSky, lines: 0)
-            let attributes = Theme.messageAttributes(color: Theme.inkSky)
-            let paragraph = Theme.messageParagraph()
-            paragraph.alignment = .center
-            var centered = attributes
-            centered[.paragraphStyle] = paragraph
-            intro.attributedText = NSAttributedString(
-                string: text,
-                attributes: centered
-            )
-            let words = UIStackView(arrangedSubviews: [greeting, intro])
-            words.axis = .vertical
-            words.alignment = .center
-            words.spacing = Theme.Space.s2
             flow.setItems(Self.starters.map(starterButton))
-            empty.addArrangedSubview(words)
+            empty.addArrangedSubview(greeting(text))
             empty.addArrangedSubview(flow)
         }
         empty.isHidden = true
         view.addSubview(empty)
     }
 
+    /// 问候「我是 Pupu」用 `greeting`、`ink`；说明用 `message`、`ink-muted`，居中。
+    private func greeting(_ text: String) -> UIView {
+        let title = UILabel(text: "我是 Pupu", style: .greeting)
+        title.textAlignment = .center
+        title.accessibilityTraits = .header
+        let words = UIStackView(arrangedSubviews: [title])
+        words.axis = .vertical
+        words.alignment = .center
+        words.spacing = Theme.Space.s2
+        if !text.isBlank {
+            let intro = UILabel(style: .message, color: Theme.inkMuted, lines: 0)
+            var attributes = Theme.messageAttributes(color: Theme.inkMuted)
+            let paragraph = Theme.messageParagraph()
+            paragraph.alignment = .center
+            attributes[.paragraphStyle] = paragraph
+            intro.attributedText = NSAttributedString(string: text, attributes: attributes)
+            words.addArrangedSubview(intro)
+        }
+        return words
+    }
+
+    /// 开场建议：`surface-inset` 胶囊，`subheadline`、`ink`，左右 `space-3`。点一个就把这句话直接发出去。
     private func starterButton(_ text: String) -> UIButton {
-        var config = UIButton.Configuration.plain()
+        var config = UIButton.Configuration.filled()
         config.title = text
         config.baseForegroundColor = Theme.ink
+        config.baseBackgroundColor = Theme.surfaceInset
         config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: Theme.Space.s3, bottom: 7, trailing: Theme.Space.s3)
+        config.contentInsets = NSDirectionalEdgeInsets(top: Theme.Space.s2, leading: Theme.Space.s3, bottom: Theme.Space.s2, trailing: Theme.Space.s3)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var attributes = attributes
             attributes.font = Theme.font(.subheadline)
             return attributes
         }
-        var background = UIBackgroundConfiguration.clear()
-        background.backgroundColor = Theme.surfaceGlass
-        background.visualEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        background.strokeColor = Theme.lineGlass
-        background.strokeWidth = 1
-        config.background = background
         let button = UIButton(configuration: config)
         button.addAction(UIAction { [weak self] _ in
             guard let self, !self.sending else { return }
@@ -283,11 +287,17 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         return button
     }
 
-    /// 引用回复时把对话压一层并模糊，点空白处取消。
+    /// 输入栏后面那块：从输入栏上方一点铺到卡片下沿，压在引用的压暗层下面。
+    private func setUpBackdrop() {
+        backdrop.isUserInteractionEnabled = false
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdrop)
+    }
+
+    /// 引用回复时把对话压一层 `scrim`（不加模糊），点空白处取消。
     private func setUpOverlay() {
-        scrim.backgroundColor = Theme.scrim
-        overlay.contentView.addSubview(scrim)
-        scrim.pin(to: overlay.contentView)
+        overlay.backgroundColor = Theme.scrim
+        overlay.alpha = 0
         overlay.isHidden = true
         overlay.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cancelQuote)))
         overlay.isAccessibilityElement = true
@@ -309,7 +319,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         quotePreview.isHidden = true
         statusLabel.textAlignment = .center
         statusLabel.isHidden = true
-        spinner.color = Theme.inkSky
+        spinner.color = Theme.inkMuted
         spinner.hidesWhenStopped = true
         spinner.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(spinner)
@@ -322,25 +332,32 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         bottom.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bottom)
 
-        // 列表滚到输入栏后面时，系统在这一段画底部的滚动边缘效果。
-        let edge = UIScrollEdgeElementContainerInteraction()
-        edge.scrollView = collectionView
-        edge.edge = .bottom
-        bottom.addInteraction(edge)
-
+        // 输入栏离卡片左右 space-4、离卡片下沿 space-3（不让开底部安全区，卡片自己已经离屏幕边 6）；键盘弹出时贴着键盘。
+        // 最宽和对话列一样，iPad 和横屏居中。
+        view.keyboardLayoutGuide.usesBottomSafeArea = false
+        let fill = bottom.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -Theme.Space.s4 * 2)
+        fill.priority = .defaultHigh
+        let emptyFill = empty.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -Theme.Space.s6 * 2)
+        emptyFill.priority = .defaultHigh
         let middle = UILayoutGuide()
         view.addLayoutGuide(middle)
         NSLayoutConstraint.activate([
-            bottom.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
-            bottom.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Theme.Space.s4),
+            bottom.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            bottom.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.Size.columnMax - Theme.Space.s4 * 2),
+            fill,
             bottom.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -Theme.Space.s3),
+            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: bottom.topAnchor, constant: -Theme.Space.s3),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             middle.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             middle.bottomAnchor.constraint(equalTo: bottom.topAnchor),
             spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
             empty.centerYAnchor.constraint(equalTo: middle.centerYAnchor),
-            empty.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.Space.s6),
-            empty.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Theme.Space.s6)
+            empty.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            empty.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.Size.columnMax - Theme.Space.s6 * 2),
+            emptyFill
         ])
     }
 
@@ -473,6 +490,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         }
     }
 
+    /// 换了样子的行（比如工具卡片后来用上了屏幕，变成电脑卡）要整行重建，不能原地改。
     private static func cellType(_ kind: ChatRow.Kind) -> Int {
         switch kind {
         case .user: 0
@@ -480,19 +498,26 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         case .typing: 2
         case .projectTag: 3
         case .tool: 4
-        case .computer: 10
-        case .notice, .handoff: 5
+        case .computer(let task): task.usesScreen ? 10 : 4
+        case .notice: 5
+        case .handoff: 12
         case .error: 6
         case .report: 7
         case .other: 8
         case .browser: 9
-        case .task: 11
+        case .task, .tasks: 11
+        case .time: 13
         }
     }
 
+    /// 对话列的宽：两边各留 space-4，最宽 column-max。
+    private var columnWidth: CGFloat {
+        min((width > 0 ? width : view.bounds.width) - Theme.Space.s4 * 2, Theme.Size.columnMax - Theme.Space.s4 * 2)
+    }
+
+    /// 气泡最宽占对话列的 bubble-max。
     private var bubbleWidth: CGFloat {
-        let available = (width > 0 ? width : view.bounds.width) - Theme.Space.s4 * 2
-        return floor(available * Theme.Size.bubbleMax)
+        floor(columnWidth * Theme.Size.bubbleMax)
     }
 
     private func configure(_ cell: ChatCell, row: ChatRow) {
@@ -510,42 +535,52 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
             cell.onQuote = { [weak self] in self?.jump(toQuote: quote ?? "", from: id) }
         case .assistant(let text):
             guard let cell = cell as? AssistantCell else { return }
-            cell.configure(text: text, width: width)
+            // Pupu 的回复不受 bubble-max 限制，占满内容列。
+            cell.configure(text: text, width: columnWidth)
             cell.onLink = { url in UIApplication.shared.open(url) }
         case .typing(let retrying):
             (cell as? TypingCell)?.configure(retrying: retrying)
         case .projectTag(let name, let projectId):
             guard let cell = cell as? TagCell else { return }
-            cell.configure(name: name, enabled: projectId != nil)
+            cell.configure(name: name, project: projectId.flatMap { id in Store.shared.projects.first { $0.id == id } })
             cell.onTap = { [weak self] in if let projectId { self?.openProject(projectId) } }
         case .tool(let step):
-            guard let cell = cell as? ToolCell else { return }
-            cell.configure(step: step, width: width)
-            let canOpen = !step.output.isBlank || step.outputPath != nil
-            cell.onToggle = canOpen ? { [weak self] in self?.toggle(id) } : nil
+            guard let cell = cell as? ToolCallCell else { return }
+            cell.configure(step: step, width: columnWidth)
+            cell.onToggle = { [weak self] target in self?.toggle(target, in: id) }
         case .computer(let task):
-            guard let cell = cell as? ComputerCardCell else { return }
-            cell.configure(task: task, width: width / Theme.Size.bubbleMax)
-            cell.onToggle = { [weak self] in self?.toggle(id) }
-            cell.onTakeOver = takeOver(task)
+            if let cell = cell as? ComputerCardCell {
+                cell.configure(task: task, width: columnWidth)
+                cell.onToggle = { [weak self] target in self?.toggle(target, in: id) }
+                cell.onTakeOver = takeOver(task)
+            } else if let cell = cell as? ToolCallCell {
+                cell.configure(task: task, width: columnWidth)
+                cell.onToggle = { [weak self] target in self?.toggle(target, in: id) }
+            }
         case .notice(let text):
-            (cell as? NoticeCell)?.configure(heading: nil, body: text, width: width)
+            (cell as? NoticeCell)?.configure(text, width: bubbleWidth)
         case .handoff(let task):
-            (cell as? NoticeCell)?.configure(heading: handoffHeading, body: task, width: width)
+            (cell as? HandoffCell)?.configure(heading: handoffHeading, body: task, width: columnWidth)
         case .task(let task):
-            guard let cell = cell as? TaskCardCell else { return }
-            cell.configure(task: task, width: width)
-            cell.onOpen = { [weak self] in self?.onOpenChild?(task.session) }
+            guard let cell = cell as? TaskListCell else { return }
+            cell.configure(tasks: [task], width: columnWidth)
+            cell.onOpen = { [weak self] session in self?.onOpenChild?(session) }
+        case .tasks(let tasks):
+            guard let cell = cell as? TaskListCell else { return }
+            cell.configure(tasks: tasks, width: columnWidth)
+            cell.onOpen = { [weak self] session in self?.onOpenChild?(session) }
+        case .time(let at):
+            (cell as? TimeCell)?.configure(at: at)
         case .error(let text):
             (cell as? ErrorCell)?.configure(text, width: width)
         case .report(let card):
             guard let cell = cell as? ReportCell else { return }
-            cell.configure(card: card, width: width)
+            cell.configure(card: card, project: Store.shared.projects.first { $0.id == card.projectId }, width: width)
             cell.onOpen = { [weak self] in self?.openProject(card.projectId) }
         case .browser(let task):
             guard let cell = cell as? BrowserCardCell else { return }
             let image = frameFor(task)
-            cell.configure(task: task, frame: image, planOpen: planOpen.contains(id), width: bubbleWidth / Theme.Size.bubbleMax, canStop: state.running || task.holding)
+            cell.configure(task: task, frame: image, planOpen: planOpen.contains(id), width: columnWidth, canStop: state.running || task.holding)
             cell.onStop = { [weak self] in self?.stopBrowser() }
             cell.onTogglePlan = { [weak self] in
                 guard let self else { return }
@@ -624,16 +659,16 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         source.apply(snapshot, animatingDifferences: false)
     }
 
-    /// 点开或收起：一步操作的输出、一组操作。
-    /// 点的那一行原地向下展开，不跟着底部走；展开后露出被输入栏挡住的部分。
-    private func toggle(_ id: String) {
+    /// 点开或收起：卡片里一步的输出（`tool:<callId>`）、一组操作、电脑卡的「步骤」。row 是这张卡片所在的行。
+    /// 卡片原地向下展开，不跟着底部走；展开后露出被输入栏挡住的部分。
+    private func toggle(_ id: String, in row: String) {
         if toggled.contains(id) { toggled.remove(id) } else { toggled.insert(id) }
         UISelectionFeedbackGenerator().selectionChanged()
         stick = false
         let change = {
             self.render()
             self.collectionView.layoutIfNeeded()
-            self.reveal(id)
+            self.reveal(row)
         }
         if UIAccessibility.isReduceMotionEnabled {
             change()
@@ -678,23 +713,14 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         return collectionView.contentSize.height + inset.bottom - collectionView.bounds.height - collectionView.contentOffset.y
     }
 
-    /// 高度是估的，滚到底以后量出真实高度，内容可能又变长了，所以再对一次。
     private func setUpJump() {
-        jump.configuration?.image = UIImage(systemName: "chevron.down")
-        jump.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        jump.configuration?.baseForegroundColor = Theme.ink
-        jump.configuration?.cornerStyle = .capsule
-        jump.configuration?.contentInsets = .zero
-        jump.accessibilityLabel = "回到底部"
+        jump.applyShadow(.raised)
         jump.isHidden = true
         jump.alpha = 0
         jump.addAction(UIAction { [weak self] _ in self?.jumpToBottom() }, for: .primaryActionTriggered)
-        jump.translatesAutoresizingMaskIntoConstraints = false
         view.insertSubview(jump, belowSubview: overlay)
         NSLayoutConstraint.activate([
-            jump.widthAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
-            jump.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
-            jump.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Theme.Space.s4),
+            jump.trailingAnchor.constraint(equalTo: bottom.trailingAnchor),
             jump.bottomAnchor.constraint(equalTo: bottom.topAnchor, constant: -Theme.Space.s3)
         ])
     }
@@ -717,6 +743,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
+    /// 高度是估的，滚到底以后量出真实高度，内容可能又变长了，所以再对一次。
     private func scrollToBottom() {
         for _ in 0..<3 {
             collectionView.layoutIfNeeded()
@@ -730,7 +757,6 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
         stick = distanceFromBottom < Self.stickDistance
-        onScroll?(stick)
     }
 
     /// 点状态栏回到顶上，不算拖动，也要记下已经不在底部。
@@ -791,8 +817,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         composer.placeholder = "回复消息"
         overlay.isHidden = false
         UIView.animate(withDuration: 0.25) {
-            self.overlay.effect = UIBlurEffect(style: .systemUltraThinMaterial)
-            self.scrim.alpha = 1
+            self.overlay.alpha = 1
             self.quotePreview.isHidden = false
             self.quotePreview.alpha = 1
             self.view.layoutIfNeeded()
@@ -805,8 +830,7 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
         quote = nil
         composer.placeholder = placeholder
         UIView.animate(withDuration: 0.2) {
-            self.overlay.effect = nil
-            self.scrim.alpha = 0
+            self.overlay.alpha = 0
             self.quotePreview.isHidden = true
             self.quotePreview.alpha = 0
             self.view.layoutIfNeeded()
@@ -887,8 +911,10 @@ final class ChatViewController: UIViewController, UICollectionViewDelegate, UIGe
               bubble.window != nil
         else { return nil }
         let parameters = UIPreviewParameters()
-        parameters.backgroundColor = .clear
-        parameters.visiblePath = UIBezierPath(roundedRect: bubble.bounds, cornerRadius: cell.bubbleRadius)
+        parameters.backgroundColor = cell.previewBackground
+        let outset = cell.previewOutset
+        let frame = bubble.bounds.inset(by: UIEdgeInsets(top: -outset.top, left: -outset.left, bottom: -outset.bottom, right: -outset.right))
+        parameters.visiblePath = UIBezierPath(roundedRect: frame, cornerRadius: cell.bubbleRadius)
         return UITargetedPreview(view: bubble, parameters: parameters)
     }
 

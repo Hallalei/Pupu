@@ -19,7 +19,7 @@ final class RemoteDesktopViewController: UIViewController {
     private let video = RTCMTLVideoView()
     private let still = UIImageView()
     private let badge = UILabel()
-    private let backButton = UIButton(configuration: .glass())
+    private let backButton = UIButton.island(image: "chevron.left")
     private let tools = UIStackView()
     private let keyboard = DesktopKeyboardField()
     private var track: RTCVideoTrack?
@@ -112,16 +112,16 @@ final class RemoteDesktopViewController: UIViewController {
     // MARK: 界面
 
     private func setupChrome() {
-        backButton.configuration?.image = UIImage(systemName: "chevron.left")
+        backButton.configuration?.contentInsets = .zero
         backButton.accessibilityLabel = "返回"
         backButton.addAction(UIAction { [weak self] _ in self?.close() }, for: .touchUpInside)
         view.addSubview(backButton)
 
-        badge.font = .preferredFont(forTextStyle: .footnote)
-        badge.textColor = .white
-        badge.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        badge.font = Theme.font(.footnote)
+        badge.textColor = Theme.onIsland
+        badge.backgroundColor = Theme.islandFill
         badge.textAlignment = .center
-        badge.layer.cornerRadius = 12
+        badge.layer.cornerRadius = 14
         badge.layer.masksToBounds = true
         badge.isHidden = true
         view.addSubview(badge)
@@ -135,8 +135,7 @@ final class RemoteDesktopViewController: UIViewController {
             ("keyboard", "键盘", #selector(toggleKeyboard)),
             ("slider.horizontal.3", "控制", #selector(openControls))
         ] {
-            let button = UIButton(configuration: .glass())
-            button.configuration?.image = UIImage(systemName: symbol)
+            let button = UIButton.island(image: symbol)
             button.accessibilityLabel = name
             button.addTarget(self, action: action, for: .touchUpInside)
             NSLayoutConstraint.activate([
@@ -152,12 +151,14 @@ final class RemoteDesktopViewController: UIViewController {
         let safe = view.safeAreaInsets
         let landscape = view.bounds.width > view.bounds.height
         let size = Theme.Size.control
-        // 横屏不放返回，控制面板里有断开。
+        // 横屏不放返回，控制面板里有断开。返回是 36 的圆，顶边贴着安全区；胶囊和它在同一行居中。
         backButton.isHidden = landscape
-        backButton.frame = CGRect(x: safe.left + Theme.Space.s3, y: max(safe.top, Theme.Space.s3), width: size, height: size)
+        let back = Theme.Size.controlSmall
+        let top = max(safe.top, Theme.Space.s3)
+        backButton.frame = CGRect(x: safe.left + Theme.Space.s3, y: top, width: back, height: back)
         badge.sizeToFit()
         let badgeWidth = badge.bounds.width + Theme.Space.s6
-        badge.frame = CGRect(x: (view.bounds.width - badgeWidth) / 2, y: max(safe.top, Theme.Space.s3) + 8, width: badgeWidth, height: 28)
+        badge.frame = CGRect(x: (view.bounds.width - badgeWidth) / 2, y: top + (back - 28) / 2, width: badgeWidth, height: 28)
         if landscape {
             tools.axis = .vertical
             let height = size * 4 + Theme.Space.s3 * 3
@@ -489,7 +490,7 @@ final class DesktopControlsViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.surfaceStrong
+        view.backgroundColor = Theme.surfaceSheet
         let stack = UIStackView()
         stack.axis = .vertical
         stack.spacing = Theme.Space.s4
@@ -535,21 +536,23 @@ final class DesktopControlsViewController: UIViewController {
             stack.addArrangedSubview(row("网络往返", label))
         }
 
-        var secondary = UIButton.Configuration.gray()
-        secondary.title = "右键点一下"
-        stack.addArrangedSubview(UIButton(configuration: secondary, primaryAction: UIAction { [weak self] _ in
-            self?.dismiss(animated: true) { self?.onRightClick?() }
-        }))
-        secondary.title = "画面复原"
-        stack.addArrangedSubview(UIButton(configuration: secondary, primaryAction: UIAction { [weak self] _ in
-            self?.dismiss(animated: true) { self?.onReset?() }
-        }))
-        var danger = UIButton.Configuration.filled()
-        danger.title = "断开"
-        danger.baseBackgroundColor = Theme.danger
-        stack.addArrangedSubview(UIButton(configuration: danger, primaryAction: UIAction { [weak self] _ in
-            self?.onDisconnect?()
-        }))
+        // 规范 RemoteDesktop：「点右键」「画面复原」surface-inset 底、ink 字，「断开」surface-inset 底、danger-ink 字。
+        for (title, ink, action) in [
+            ("点右键", Theme.ink, { [weak self] in self?.dismiss(animated: true) { self?.onRightClick?() } }),
+            ("画面复原", Theme.ink, { [weak self] in self?.dismiss(animated: true) { self?.onReset?() } }),
+            ("断开", Theme.dangerInk, { [weak self] in self?.onDisconnect?() })
+        ] as [(String, UIColor, () -> Void)] {
+            var config = UIButton.Configuration.gray()
+            config.title = title
+            config.cornerStyle = .capsule
+            config.paint(fill: Theme.surfaceInset, ink: ink)
+            let button = UIButton(configuration: config, primaryAction: UIAction { _ in action() })
+            button.configurationUpdateHandler = { button in
+                button.configuration?.paint(fill: Theme.surfaceInset, ink: ink, pressed: button.isHighlighted)
+            }
+            button.heightAnchor.constraint(equalToConstant: Theme.Size.control).isActive = true
+            stack.addArrangedSubview(button)
+        }
     }
 
     private func row(_ title: String, _ control: UIView) -> UIView {

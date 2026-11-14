@@ -82,21 +82,26 @@ final class ApprovalStackView: UIView {
     }
 }
 
-final class ApprovalCardView: SurfaceView {
+/// 审批卡片（规范 ApprovalCard）：`surface` 底，1pt `line` 外框，圆角 `radius-row` 加 2，内边距 `space-4`，各部分之间 `space-3`，不加阴影。
+/// 「拒绝」（`surface-inset` 底）在左，「允许」（`action`）在右，等宽。
+final class ApprovalCardView: OutlineView {
     let approval: Approval
     private let decided: (String) -> Void
     private let more = UILabel(style: .caption, color: Theme.inkMuted)
-    private let deny = UIButton.glass(title: "拒绝")
+    private let deny = UIButton.secondary(title: "拒绝")
     private let allow = UIButton.action(title: "允许")
 
     /// `decided` 在这台手机批成了以后调，卡片交给外面收起。
     init(approval: Approval, decided: @escaping (String) -> Void) {
         self.approval = approval
         self.decided = decided
-        super.init(.strong, radius: Theme.Radius.panel, lifted: true)
+        super.init(radius: Theme.Radius.row + 2)
+        backgroundColor = Theme.surface
 
-        let mark = WaitingMark()
+        let mark = WaitingMark(icon: true)
         let meta = UILabel(text: "\(approval.computerName) · \(Ago.text(approval.createdAt))", style: .caption, color: Theme.inkMuted)
+        meta.lineBreakMode = .byTruncatingTail
+        meta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let top = UIStackView(arrangedSubviews: [mark, meta, UIView(), more])
         top.spacing = Theme.Space.s2
         top.alignment = .center
@@ -121,8 +126,8 @@ final class ApprovalCardView: SurfaceView {
         let stack = UIStackView(arrangedSubviews: rows)
         stack.axis = .vertical
         stack.spacing = Theme.Space.s3
-        contentView.addSubview(stack)
-        stack.pin(to: contentView, insets: UIEdgeInsets(top: Theme.Space.s4, left: Theme.Space.s4, bottom: Theme.Space.s4, right: Theme.Space.s4))
+        addSubview(stack)
+        stack.pin(to: self, insets: UIEdgeInsets(top: Theme.Space.s4, left: Theme.Space.s4, bottom: Theme.Space.s4, right: Theme.Space.s4))
         NSLayoutConstraint.activate([
             deny.heightAnchor.constraint(greaterThanOrEqualToConstant: Theme.Size.control),
             allow.heightAnchor.constraint(equalTo: deny.heightAnchor)
@@ -167,24 +172,30 @@ final class ApprovalCardView: SurfaceView {
     }
 }
 
-/// 「等你批准」标记：warning 底、on-warning 字。
+/// 「等你批准」标记：`warning` 底、`on-warning` 字的小胶囊，`caption` 600。审批卡片上带 `hand.raised` 图标，对话里的卡片上不带。
 final class WaitingMark: UIView {
-    init(text: String = "等你批准") {
+    init(text: String = "等你批准", icon: Bool = false) {
         super.init(frame: .zero)
         backgroundColor = Theme.warning
         layer.cornerCurve = .continuous
-        let icon = UIImageView(image: UIImage(systemName: "hand.raised.fill"))
-        icon.tintColor = Theme.onWarning
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption2)
         let label = UILabel(text: text, style: .caption, color: Theme.onWarning)
         label.font = Theme.font(.caption, weight: .semibold)
-        let stack = UIStackView(arrangedSubviews: [icon, label])
+        var views: [UIView] = [label]
+        if icon {
+            let image = UIImageView(image: UIImage(systemName: "hand.raised.fill"))
+            image.tintColor = Theme.onWarning
+            image.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption2)
+            views.insert(image, at: 0)
+        }
+        let stack = UIStackView(arrangedSubviews: views)
         stack.spacing = Theme.Space.s1
         stack.alignment = .center
         addSubview(stack)
         stack.pin(to: self, insets: UIEdgeInsets(top: 2, left: Theme.Space.s2, bottom: 2, right: Theme.Space.s2))
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
+        isAccessibilityElement = true
+        accessibilityLabel = text
     }
 
     required init?(coder: NSCoder) { fatalError() }

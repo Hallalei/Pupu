@@ -1,20 +1,30 @@
 import UIKit
 
-// 协作版的空间界面，照原型画板 PhoneSwitch、PhoneInvite、PhoneTask（claude.ai 上的「Pupu 协作版原型」）：
-// 切换 sheet、邀请 sheet、子会话页。接口见云端 server.ts 的 /api/spaces。
+// 空间的几个界面，照规范 SpaceSwitcher、SpaceSettings、SubSession：切换 sheet、空间设置 sheet、子会话页。
+// 接口见云端 server.ts 的 /api/spaces。和网页 Spaces.tsx 一起改。
 
-/// 空间成员的头像叠在一起，最多三个。
+/// 成员的头像叠在一起（规范 Avatar「叠在一起」）：22，后一个压前一个 7，每个外描 2pt 所在的底色，最多 3 个，再多写「+N」。
 final class SpaceAvatarStack: UIStackView {
     private let size: CGFloat
+    private let ring: UIColor
+    private let fill: UIColor
 
-    init(size: CGFloat = 24) {
+    /// ring：外描的颜色，取头像下面的底色。fill：没换头像的首字垫的圆，要和 ring 分得开。
+    init(size: CGFloat = Theme.Size.avatarSmall, ring: UIColor, fill: UIColor = Theme.surfaceInset) {
         self.size = size
+        self.ring = ring
+        self.fill = fill
         super.init(frame: .zero)
         spacing = -7
         alignment = .center
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         isAccessibilityElement = false
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (stack: SpaceAvatarStack, _: UITraitCollection) in
+            for view in stack.arrangedSubviews where view is UIImageView {
+                view.layer.borderColor = stack.ring.resolvedColor(with: stack.traitCollection).cgColor
+            }
+        }
     }
 
     required init(coder: NSCoder) { fatalError() }
@@ -28,45 +38,49 @@ final class SpaceAvatarStack: UIStackView {
                 Avatars.shared.image(member.avatar),
                 letter: Avatars.letter(member.displayName),
                 size: size,
-                pixelArt: Avatars.isPixelArt(member.avatar)
+                pixelArt: Avatars.isPixelArt(member.avatar),
+                fill: fill
             )
             let view = UIImageView(image: image)
             view.layer.cornerRadius = size / 2
             view.layer.borderWidth = 2
-            view.layer.borderColor = UIColor.white.withAlphaComponent(0.82).cgColor
+            view.layer.borderColor = ring.resolvedColor(with: traitCollection).cgColor
             view.clipsToBounds = true
             view.widthAnchor.constraint(equalToConstant: size).isActive = true
             view.heightAnchor.constraint(equalToConstant: size).isActive = true
             addArrangedSubview(view)
         }
+        if members.count > 3 {
+            let more = UILabel(text: "+\(members.count - 3)", style: .caption, color: Theme.inkMuted)
+            addArrangedSubview(more)
+            setCustomSpacing(Theme.Space.s1, after: arrangedSubviews[arrangedSubviews.count - 2])
+        }
         isHidden = members.isEmpty
     }
 }
 
-/// 空间行右边的标记：L3、L4 是成员头像，全组织是楼的图标。
-private func spaceMark(_ project: Project, size: CGFloat = 24) -> UIView {
-    if project.isOpen {
-        let icon = UIImageView(image: UIImage(systemName: "building.2"))
-        icon.tintColor = Theme.ink
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
-        icon.isAccessibilityElement = true
-        icon.accessibilityLabel = "全组织"
+/// 空间行右边的成员：全组织看得到的是楼，别的是成员头像叠。
+private func membersMark(_ project: Project, ring: UIColor, fill: UIColor) -> UIView {
+    if project.isEveryone || project.isOpen {
+        let icon = UIImageView(image: UIImage(systemName: "building.2", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17)))
+        icon.tintColor = Theme.inkMuted
+        icon.isAccessibilityElement = false
         icon.setContentHuggingPriority(.required, for: .horizontal)
         return icon
     }
-    let stack = SpaceAvatarStack(size: size)
+    let stack = SpaceAvatarStack(ring: ring, fill: fill)
     stack.show(project.memberIds)
     return stack
 }
 
-/// 子会话状态的小圆点：等批是琥珀，在做是墨色，做完是绿。
+/// 子会话状态的小圆点：等批是 warning，在做是 action，做完是 online，还没开始是 offline。旁边一定写字。
 func childDot(_ status: SpaceChild.Status, size: CGFloat = 8) -> UIView {
     let dot = UIView()
     dot.backgroundColor = switch status {
     case .waiting: Theme.warning
-    case .working: Theme.ink
+    case .working: Theme.action
     case .done: Theme.online
-    case .idle: Theme.inkMuted
+    case .idle: Theme.offline
     }
     dot.layer.cornerRadius = size / 2
     dot.translatesAutoresizingMaskIntoConstraints = false
@@ -75,28 +89,27 @@ func childDot(_ status: SpaceChild.Status, size: CGFloat = 8) -> UIView {
     return dot
 }
 
-/// sheet 里的一组：圆角浅底，行之间有细线。
+/// sheet 里的一组：`surface-inset` 底、`radius-row`，行之间 1pt `line`。
 private final class SheetGroup: UIView {
-    let stack = UIStackView()
-
-    init(_ rows: [UIView], separatorInset: CGFloat = 52) {
+    init(_ rows: [UIView], separatorInset: CGFloat = 48) {
         super.init(frame: .zero)
-        backgroundColor = .secondarySystemGroupedBackground
+        backgroundColor = Theme.surfaceInset
         layer.cornerRadius = Theme.Radius.row
         layer.cornerCurve = .continuous
         clipsToBounds = true
+        let stack = UIStackView()
         stack.axis = .vertical
         addSubview(stack)
         stack.pin(to: self)
         for (index, row) in rows.enumerated() {
             if index > 0, !(row is SheetSubRow) {
-                let line = UIView()
-                line.backgroundColor = .separator
                 let holder = UIView()
+                let line = UIView()
+                line.backgroundColor = Theme.line
                 holder.addSubview(line)
                 line.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([
-                    holder.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+                    holder.heightAnchor.constraint(equalToConstant: 1),
                     line.topAnchor.constraint(equalTo: holder.topAnchor),
                     line.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
                     line.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: separatorInset),
@@ -111,16 +124,15 @@ private final class SheetGroup: UIView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
-/// sheet 里能点的一行：左边图标，中间名字，右边标记。按下时变暗。
+/// sheet 里的一行：左边图标，中间名字，右边标记。能点的按下时铺一层 `line`。
 private class SheetRow: UIControl {
-    let row = UIStackView()
     private let action: (() -> Void)?
 
-    init(leading: UIView?, title: String, weight: UIFont.Weight = .regular, detail: String? = nil, trailing: [UIView] = [], height: CGFloat = 52, insetLeading: CGFloat = Theme.Space.s4, action: (() -> Void)?) {
+    init(leading: UIView?, title: String, style: Theme.Text = .body, weight: UIFont.Weight? = nil, detail: String? = nil, trailing: [UIView] = [], height: CGFloat = 52, insetLeading: CGFloat = Theme.Space.s4, spacing: CGFloat = Theme.Space.s3, action: (() -> Void)?) {
         self.action = action
         super.init(frame: .zero)
-        let name = UILabel(text: title, style: .body)
-        name.font = Theme.font(.body, weight: weight)
+        let name = UILabel(text: title, style: style)
+        if let weight { name.font = Theme.font(style, weight: weight) }
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         var text: UIView = name
@@ -132,7 +144,8 @@ private class SheetRow: UIControl {
             text = words
         }
         text.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        row.spacing = Theme.Space.s3
+        let row = UIStackView()
+        row.spacing = spacing
         row.alignment = .center
         for view in [leading].compactMap({ $0 }) + trailing {
             view.setContentHuggingPriority(.required, for: .horizontal)
@@ -153,7 +166,7 @@ private class SheetRow: UIControl {
     required init?(coder: NSCoder) { fatalError() }
 
     override var isHighlighted: Bool {
-        didSet { backgroundColor = isHighlighted && action != nil ? Theme.scrim : .clear }
+        didSet { backgroundColor = isHighlighted && action != nil ? Theme.line : .clear }
     }
 
     /// 行里的控件（邀请、移出、开关）自己接；别处都算点这一行。开关点到的是它里面的子视图，往上找到控件本身。
@@ -168,29 +181,80 @@ private class SheetRow: UIControl {
     }
 }
 
-/// 当前空间下面的子会话：缩进，点 + 名字 + 状态字。
+/// 挂在空间下面的子会话：缩进，高 40，状态圆点 + 名字 + 状态词。前面不画分隔线。
 private final class SheetSubRow: SheetRow {}
 
-/// 切换空间的 sheet：「我的 Pupu」和「Artifacts」，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
+/// 当前的那一行打勾（16），别的留出同样宽，名字对齐。
+private func currentMark(_ on: Bool) -> UIView {
+    let check = UIImageView(image: UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)))
+    check.tintColor = Theme.ink
+    check.contentMode = .center
+    check.alpha = on ? 1 : 0
+    check.isAccessibilityElement = false
+    check.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    return check
+}
+
+/// 未读：6 的墨色圆点，跟着加粗的名字。
+private func unreadDot() -> UIView {
+    let dot = UIView()
+    dot.backgroundColor = Theme.ink
+    dot.layer.cornerRadius = 3
+    dot.isAccessibilityElement = false
+    dot.translatesAutoresizingMaskIntoConstraints = false
+    dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+    dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+    return dot
+}
+
+/// sheet 的内容：竖着一列，左右 14，组和组之间 14。
+private func sheetPage(in view: UIView, keyboardDismiss: Bool = false) -> UIStackView {
+    view.backgroundColor = Theme.surfaceSheet
+    let scroll = UIScrollView()
+    scroll.alwaysBounceVertical = true
+    if keyboardDismiss { scroll.keyboardDismissMode = .interactive }
+    view.addSubview(scroll)
+    scroll.pin(to: view)
+    let page = UIStackView()
+    page.axis = .vertical
+    page.spacing = 14
+    page.translatesAutoresizingMaskIntoConstraints = false
+    scroll.addSubview(page)
+    NSLayoutConstraint.activate([
+        page.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s5),
+        page.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
+        page.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: 14),
+        page.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -14)
+    ])
+    return page
+}
+
+/// 切换 sheet（规范 SpaceSwitcher）：「我的 Pupu」和「Artifacts」一组；「空间」和「新空间」，全员在第一个，
+/// 每个空间下面挂着正在做和等你批准的子会话；最底下是自己，点开设置。
 final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
+    private let pupuUnread: Bool
     private let everyoneUnread: Bool
     private let openPupu: () -> Void
     private let openDocs: () -> Void
     private let open: (Project) -> Void
     private let openChild: (Project, SpaceChild) -> Void
     private let create: () -> Void
-    private let content = UIStackView()
+    private let openSettings: () -> Void
+    private var content: UIStackView!
     private var token: StoreToken?
 
-    init(current: String?, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void) {
+    /// current：现在在的空间，在「我的 Pupu」时是 nil。
+    init(current: String?, pupuUnread: Bool, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.current = current
+        self.pupuUnread = pupuUnread
         self.everyoneUnread = everyoneUnread
         self.openPupu = openPupu
         self.openDocs = openDocs
         self.open = open
         self.openChild = openChild
         self.create = create
+        self.openSettings = openSettings
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -198,21 +262,7 @@ final class SpaceSwitcherViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
-        let scroll = UIScrollView()
-        scroll.alwaysBounceVertical = true
-        view.addSubview(scroll)
-        scroll.pin(to: view)
-        content.axis = .vertical
-        content.spacing = Theme.Space.s4
-        content.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s6),
-            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
-            content.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
-            content.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -Theme.Space.s4)
-        ])
+        content = sheetPage(in: view)
         token = Store.shared.observe { [weak self] in self?.render() }
         render()
     }
@@ -221,86 +271,73 @@ final class SpaceSwitcherViewController: UIViewController {
     private var shown: Int?
 
     private func render() {
-        let waiting = ComputerActivity.waitingProjects(Store.shared.activity)
         let pupu = Avatars.shared.pupu()
+        let me = Store.shared.members.first(where: \.current)
         var key = Hasher()
         key.combine(Store.shared.spaces)
-        key.combine(Set(waiting))
         key.combine(pupu.image != nil)
+        key.combine(me)
+        key.combine(Avatars.shared.image(me?.avatar) != nil)
         let shownNow = key.finalize()
         guard shownNow != shown else { return }
         shown = shownNow
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let avatar = UIImageView(image: Avatars.round(pupu.image, letter: "P", size: 28, pixelArt: pupu.pixelArt))
-        let docsIcon = UIImageView(image: UIImage(systemName: "doc.text"))
-        docsIcon.tintColor = Theme.ink
-        docsIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
-        docsIcon.contentMode = .center
-        docsIcon.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        content.addArrangedSubview(SheetGroup([
-            SheetRow(leading: avatar, title: "我的 Pupu", weight: .semibold) { [weak self] in self?.finish { $0.openPupu() } },
-            SheetRow(leading: docsIcon, title: "Artifacts") { [weak self] in self?.finish { $0.openDocs() } }
-        ]))
 
-        let label = UILabel(text: "空间", style: .footnote, color: Theme.inkMuted)
-        label.font = Theme.font(.footnote, weight: .medium)
+        let avatar = UIImageView(image: Avatars.round(pupu.image, letter: "P", size: 30, pixelArt: pupu.pixelArt))
+        let pupuRow = SheetRow(
+            leading: avatar,
+            title: "我的 Pupu",
+            style: .headline,
+            trailing: (pupuUnread ? [unreadDot()] : []) + [currentMark(current == nil)]
+        ) { [weak self] in self?.finish { $0.openPupu() } }
+        if current == nil { pupuRow.accessibilityValue = "当前" } else if pupuUnread { pupuRow.accessibilityValue = "有新消息" }
+        let docsIcon = UIImageView(image: UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)))
+        docsIcon.tintColor = Theme.inkMuted
+        docsIcon.contentMode = .center
+        docsIcon.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        let docsRow = SheetRow(leading: docsIcon, title: "Artifacts", trailing: [currentMark(false)]) { [weak self] in
+            self?.finish { $0.openDocs() }
+        }
+        content.addArrangedSubview(SheetGroup([pupuRow, docsRow], separatorInset: 62))
+
         var config = UIButton.Configuration.plain()
         config.title = "新空间"
-        config.image = UIImage(systemName: "plus")
+        config.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         config.imagePadding = Theme.Space.s1
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
+        config.contentInsets = .zero
         config.baseForegroundColor = Theme.ink
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var attributes = attributes
             attributes.font = Theme.font(.subheadline, weight: .semibold)
             return attributes
         }
         let button = UIButton(configuration: config)
+        button.heightAnchor.constraint(equalToConstant: Theme.Size.control).isActive = true
         button.addAction(UIAction { [weak self] _ in self?.finish { $0.create() } }, for: .primaryActionTriggered)
-        let header = UIStackView(arrangedSubviews: [label, UIView(), button])
+        let header = UIStackView(arrangedSubviews: [UILabel(text: "空间", style: .footnote, color: Theme.inkMuted), UIView(), button])
         header.alignment = .center
         header.isLayoutMarginsRelativeArrangement = true
         header.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
         content.addArrangedSubview(header)
-        content.setCustomSpacing(Theme.Space.s1, after: header)
+        content.setCustomSpacing(0, after: header)
 
         var rows: [UIView] = []
         for project in Store.shared.spaces {
             let selected = project.id == current
-            let icon = UIImageView(image: UIImage(systemName: project.isEveryone ? "building.2" : "folder"))
-            icon.tintColor = Theme.ink
-            icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
-            icon.setContentHuggingPriority(.required, for: .horizontal)
-            var trailing: [UIView] = []
-            if project.isEveryone && everyoneUnread {
-                let dot = UIView()
-                dot.backgroundColor = Theme.danger
-                dot.layer.cornerRadius = 4
-                dot.isAccessibilityElement = false
-                dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
-                dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
-                trailing.append(dot)
-            }
-            if waiting.contains(project.id) { trailing.append(WaitingMark()) }
-            if !project.isEveryone { trailing.append(spaceMark(project)) }
-            let check = UIImageView(image: UIImage(systemName: "checkmark"))
-            check.tintColor = Theme.ink
-            check.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
-            check.alpha = selected ? 1 : 0
-            check.isAccessibilityElement = false
-            check.setContentHuggingPriority(.required, for: .horizontal)
-            trailing.append(check)
-            let row = SheetRow(leading: icon, title: project.name, weight: selected ? .semibold : .regular, trailing: trailing) { [weak self] in
+            let fresh = project.isEveryone && everyoneUnread
+            let mark = SpaceMarkView()
+            mark.show(project)
+            var trailing: [UIView] = fresh ? [unreadDot()] : []
+            trailing.append(membersMark(project, ring: Theme.surfaceInset, fill: Theme.surface))
+            trailing.append(currentMark(selected))
+            let row = SheetRow(leading: mark, title: project.name, weight: selected || fresh ? .semibold : nil, trailing: trailing) { [weak self] in
                 self?.finish { $0.open(project) }
             }
-            if selected { row.accessibilityValue = "当前" } else if project.isEveryone && everyoneUnread { row.accessibilityValue = "有新消息" }
+            if selected { row.accessibilityValue = "当前" } else if fresh { row.accessibilityValue = "有新消息" }
             rows.append(row)
-            guard selected else { continue }
-            for child in project.spaceChildren.reversed() {
+            for child in project.spaceChildren where child.status == .working || child.status == .waiting {
                 let status = UILabel(text: child.status.label, style: .footnote, color: Theme.inkMuted)
-                status.setContentHuggingPriority(.required, for: .horizontal)
-                let sub = SheetSubRow(leading: childDot(child.status), title: child.title, trailing: [status], height: 40, insetLeading: 52) { [weak self] in
+                let sub = SheetSubRow(leading: childDot(child.status), title: child.title, style: .subheadline, trailing: [status], height: 40, insetLeading: 48, spacing: 10) { [weak self] in
                     self?.finish { $0.openChild(project, child) }
                 }
                 sub.accessibilityLabel = "\(child.title)，\(child.status.label)"
@@ -308,24 +345,50 @@ final class SpaceSwitcherViewController: UIViewController {
             }
         }
         if !rows.isEmpty { content.addArrangedSubview(SheetGroup(rows)) }
+
+        let name = me?.displayName ?? "设置"
+        let mine = UIImageView(image: Avatars.round(
+            Avatars.shared.image(me?.avatar),
+            letter: Avatars.letter(me?.displayName ?? "我"),
+            size: 30,
+            pixelArt: Avatars.isPixelArt(me?.avatar),
+            fill: Theme.surface
+        ))
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)))
+        chevron.tintColor = Theme.inkFaint
+        let settings = SheetRow(leading: mine, title: name, trailing: [chevron]) { [weak self] in self?.finish { $0.openSettings() } }
+        settings.accessibilityLabel = "设置"
+        content.addArrangedSubview(SheetGroup([settings]))
     }
 
-    /// 先收起 sheet 再做，接下来要弹的（新空间的对话框、子会话页）不会被 sheet 挡住。
+    /// 先收起 sheet 再做，接下来要弹的（新空间的对话框、子会话页、设置）不会被 sheet 挡住。
     private func finish(_ then: @escaping (SpaceSwitcherViewController) -> Void) {
         UISelectionFeedbackGenerator().selectionChanged()
         dismiss(animated: true) { then(self) }
     }
 }
 
-/// 邀请 sheet：成员名单、找组织里的人、谁看得到、只派活。只有建的人能邀请、移出、改密级、切只派活；别人只看名单。
-/// 全员空间也用它当设置：只有「只派活」一项，组织创建者才打得开。
-final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
+/// 空间设置（规范 SpaceSettings）：大号标记和名字、色板、图标、找人、成员、谁看得到、只派活。
+/// 颜色和图标是空间的主人改，全员是组织的创建者；拉人、移人、改范围只有主人；别人只看名单。全员没有成员和范围。
+final class SpaceSettingsViewController: UIViewController, UITextFieldDelegate {
     private let projectId: String
-    private let content = UIStackView()
-    private let search = UITextField()
+    private var page: UIStackView!
+    private let mark = SpaceMarkView(large: true)
     private let titleLabel = UILabel(style: .title)
-    private var token: StoreToken?
+    private let swatches = UIStackView()
+    private var swatchViews: [(color: Theme.SpaceColor, view: SwatchControl)] = []
+    private let iconStrip = FadeTrailingView()
+    private var iconViews: [(icon: Theme.SpaceIcon, view: SwatchControl)] = []
+    private let search = FieldView()
+    /// 成员、谁看得到、只派活：跟着数据重建。上面几块不重建，图标滑到哪、打到一半的字都留着。
+    private let dynamic = UIStackView()
+    private let failureLabel = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
+    /// 点了颜色、图标马上换上，不等云端回来；云端回来一样了就不用再记。
+    private var pickedColor: Theme.SpaceColor?
+    private var pickedIcon: Theme.SpaceIcon?
     private var busy = false
+    private var failure: String?
+    private var token: StoreToken?
 
     init(projectId: String) {
         self.projectId = projectId
@@ -336,49 +399,64 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
-        titleLabel.font = Theme.font(.title, weight: .semibold)
-        titleLabel.accessibilityTraits = .header
-        var close = UIButton.Configuration.gray()
-        close.image = UIImage(systemName: "xmark")
-        close.cornerStyle = .capsule
-        close.baseForegroundColor = Theme.ink
-        close.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
-        let closeButton = UIButton(configuration: close)
-        closeButton.accessibilityLabel = "关闭"
-        closeButton.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
-        closeButton.widthAnchor.constraint(equalToConstant: Theme.Size.controlSmall).isActive = true
-        closeButton.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall).isActive = true
-        let header = UIStackView(arrangedSubviews: [titleLabel, UIView(), closeButton])
-        header.alignment = .center
+        page = sheetPage(in: view, keyboardDismiss: true)
 
-        let scroll = UIScrollView()
-        scroll.alwaysBounceVertical = true
-        scroll.keyboardDismissMode = .interactive
-        view.addSubview(scroll)
-        scroll.pin(to: view)
-        let page = UIStackView(arrangedSubviews: [header, content])
-        page.axis = .vertical
-        page.spacing = Theme.Space.s4
-        page.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(page)
-        NSLayoutConstraint.activate([
-            page.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s6),
-            page.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
-            page.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
-            page.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -Theme.Space.s4)
-        ])
-        content.axis = .vertical
-        content.spacing = Theme.Space.s4
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.accessibilityTraits = .header
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let close = UIButton.round(image: "xmark", label: "关闭")
+        close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+        let header = UIStackView(arrangedSubviews: [mark, titleLabel, close])
+        header.spacing = 10
+        header.alignment = .center
+        page.addArrangedSubview(header)
+
+        for color in Theme.SpaceColor.allCases {
+            let swatch = SwatchControl(side: 30, edge: true)
+            swatch.backgroundColor = color.swatch
+            swatch.accessibilityLabel = color.name
+            swatch.addAction(UIAction { [weak self] _ in self?.pick(color: color) }, for: .primaryActionTriggered)
+            swatches.addArrangedSubview(swatch)
+            swatchViews.append((color, swatch))
+        }
+        swatches.distribution = .equalSpacing
+        swatches.isLayoutMarginsRelativeArrangement = true
+        swatches.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: Theme.Space.s2, bottom: 6, trailing: Theme.Space.s2)
+        swatches.accessibilityLabel = "空间颜色"
+        page.addArrangedSubview(swatches)
+
+        for icon in Theme.SpaceIcon.allCases {
+            let button = SwatchControl(side: 36, edge: false)
+            button.image.image = icon.image
+            button.accessibilityLabel = icon.name
+            button.addAction(UIAction { [weak self] _ in self?.pick(icon: icon) }, for: .primaryActionTriggered)
+            iconStrip.row.addArrangedSubview(button)
+            iconViews.append((icon, button))
+        }
+        iconStrip.accessibilityLabel = "空间图标"
+        page.addArrangedSubview(iconStrip)
 
         search.placeholder = "组织里的人"
-        search.font = Theme.font(.body)
-        search.adjustsFontForContentSizeCategory = true
         search.clearButtonMode = .whileEditing
         search.returnKeyType = .done
         search.accessibilityLabel = "找人"
         search.delegate = self
+        let glass = UIImageView(image: UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15)))
+        glass.tintColor = Theme.inkMuted
+        glass.contentMode = .center
+        glass.frame = CGRect(x: Theme.Space.s3, y: 0, width: 16, height: Theme.Size.control)
+        let holder = UIView(frame: CGRect(x: 0, y: 0, width: 28, height: Theme.Size.control))
+        holder.addSubview(glass)
+        search.leftView = holder
+        search.leftViewMode = .always
         search.addAction(UIAction { [weak self] _ in self?.render() }, for: .editingChanged)
+        page.addArrangedSubview(search)
+
+        dynamic.axis = .vertical
+        dynamic.spacing = 14
+        page.addArrangedSubview(dynamic)
+        failureLabel.isHidden = true
+        page.addArrangedSubview(failureLabel)
 
         token = Store.shared.observe { [weak self] in self?.render() }
         render()
@@ -399,61 +477,99 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
             dismiss(animated: true)
             return
         }
+        let mine = project.isEveryone ? project.mayManage == true : project.isOwner(me)
+        let storedColor = Theme.SpaceColor(id: project.color)
+        let storedIcon = project.icon.flatMap(Theme.SpaceIcon.init(rawValue:))
+        if pickedColor == storedColor { pickedColor = nil }
+        if pickedIcon == storedIcon { pickedIcon = nil }
+        let color = pickedColor ?? storedColor
+        let icon = pickedIcon ?? storedIcon
+
+        titleLabel.text = project.name
+        mark.show(color: color.rawValue, icon: icon?.rawValue, name: project.name)
+        showLookPickers(mine)
+        for item in swatchViews {
+            item.view.on = item.color == color
+            item.view.isEnabled = !busy
+        }
+        for item in iconViews {
+            let on = item.icon == icon
+            item.view.on = on
+            item.view.backgroundColor = on ? color.mark : Theme.surfaceInset
+            item.view.image.tintColor = on ? Theme.onMark : Theme.ink
+            item.view.isEnabled = !busy
+        }
+        let searching = mine && !project.isEveryone
+        if search.isHidden == searching { search.isHidden = !searching }
+        failureLabel.text = failure
+        if failureLabel.isHidden == (failure != nil) { failureLabel.isHidden = failure == nil }
+
         var key = Hasher()
         key.combine(project)
         key.combine(Store.shared.members)
         key.combine(search.text)
+        key.combine(busy)
         let shownNow = key.finalize()
         guard shownNow != shown else { return }
         shown = shownNow
-        titleLabel.text = project.name
-        // 搜索框不能跟着重建，不然打字时键盘会收起来。
-        content.arrangedSubviews.forEach { if $0 !== search.superview?.superview { $0.removeFromSuperview() } }
-        if project.isEveryone {
-            if project.mayManage == true { content.addArrangedSubview(modeGroup(project, detail: "Pupu 不自己动手，事情交给各个空间去做")) }
-            return
+        dynamic.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        if !project.isEveryone { dynamic.addArrangedSubview(membersGroup(project, mine: mine)) }
+        if mine && !project.isEveryone { levelGroup(project).forEach(dynamic.addArrangedSubview) }
+        if mine {
+            let detail = project.isEveryone ? "Pupu 不自己动手，事情交给各个空间去做" : "Pupu 不自己动手，事情交给子会话去做"
+            dynamic.addArrangedSubview(modeGroup(project, detail: detail))
         }
-        let owner = project.isOwner(me)
-        if owner { content.insertArrangedSubview(searchBox(), at: 0) }
+    }
 
+    /// 色板和图标只给能改的人看。
+    private func showLookPickers(_ visible: Bool) {
+        if swatches.isHidden == visible { swatches.isHidden = !visible }
+        if iconStrip.isHidden == visible { iconStrip.isHidden = !visible }
+    }
+
+    /// 成员：头像 32、名字；建的人写「建的人」，主人看别人有「移出」，搜到的人有「邀请」。
+    private func membersGroup(_ project: Project, mine: Bool) -> UIView {
         let query = (search.text ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-        let members = Store.shared.members
-        let inSpace = members.filter { project.memberIds.contains($0.id) }
-        let others = owner ? members.filter { !project.memberIds.contains($0.id) } : []
-        let listed = (inSpace + others).filter { member in
-            query.isEmpty || member.displayName.lowercased().contains(query) || member.email.lowercased().contains(query)
-        }
+        let inSpace = Set(project.memberIds)
+        let people = Store.shared.members
+            .filter { mine || inSpace.contains($0.id) }
+            .filter { query.isEmpty || $0.displayName.lowercased().contains(query) || $0.email.lowercased().contains(query) }
+            .sorted { a, b in
+                let owner = (a.id == project.ownerId ? 1 : 0, b.id == project.ownerId ? 1 : 0)
+                if owner.0 != owner.1 { return owner.0 > owner.1 }
+                return (inSpace.contains(a.id) ? 1 : 0) > (inSpace.contains(b.id) ? 1 : 0)
+            }
         var rows: [UIView] = []
-        for member in listed {
+        for member in people {
             let avatar = UIImageView(image: Avatars.round(
                 Avatars.shared.image(member.avatar),
                 letter: Avatars.letter(member.displayName),
-                size: Theme.Size.avatar,
-                pixelArt: Avatars.isPixelArt(member.avatar)
+                size: 32,
+                pixelArt: Avatars.isPixelArt(member.avatar),
+                fill: Theme.surface
             ))
             var trailing: [UIView] = []
             if member.id == project.ownerId {
                 trailing.append(UILabel(text: "建的人", style: .subheadline, color: Theme.inkMuted))
-            } else if owner, project.memberIds.contains(member.id) {
+            } else if mine, inSpace.contains(member.id) {
                 trailing.append(chip("移出", prominent: false) { [weak self] in self?.change(["kind": "remove", "memberId": member.id]) })
-            } else if owner {
+            } else if mine {
                 trailing.append(chip("邀请", prominent: true) { [weak self] in self?.change(["kind": "add", "memberId": member.id]) })
             }
-            rows.append(SheetRow(leading: avatar, title: member.displayName, trailing: trailing, height: 56, action: nil))
+            rows.append(SheetRow(leading: avatar, title: member.displayName, trailing: trailing, action: nil))
         }
         if rows.isEmpty {
             rows.append(SheetRow(leading: nil, title: query.isEmpty ? "还没有成员" : "组织里没有这个人", action: nil))
         }
-        content.addArrangedSubview(SheetGroup(rows, separatorInset: 60))
+        return SheetGroup(rows, separatorInset: 60)
+    }
 
-        guard owner else { return }
+    /// 谁看得到：三选一，系统单选的样子，选中的是 `ink`。
+    private func levelGroup(_ project: Project) -> [UIView] {
         let label = UILabel(text: "谁看得到", style: .footnote, color: Theme.inkMuted)
-        label.font = Theme.font(.footnote, weight: .medium)
         let holder = UIView()
         holder.addSubview(label)
         label.pin(to: holder, insets: UIEdgeInsets(top: 0, left: Theme.Space.s1, bottom: 0, right: 0))
-        content.addArrangedSubview(holder)
-        content.setCustomSpacing(Theme.Space.s1, after: holder)
         let level = project.level ?? "L2"
         let options: [(String, String, String)] = [
             ("L3", "只有成员", "成员在自己的 Pupu 里也问得到"),
@@ -462,87 +578,95 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
         ]
         let radios = options.map { value, title, detail -> UIView in
             let on = value == level || (value == "L2" && level == "L1")
-            let mark = UIImageView(image: UIImage(systemName: on ? "largecircle.fill.circle" : "circle"))
-            mark.tintColor = on ? Theme.ink : Theme.inkMuted
-            mark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .title3)
-            mark.setContentHuggingPriority(.required, for: .horizontal)
-            let row = SheetRow(leading: mark, title: title, detail: detail, height: 56) { [weak self] in
+            let radio = UIImageView(image: UIImage(systemName: on ? "largecircle.fill.circle" : "circle", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20)))
+            radio.tintColor = on ? Theme.ink : Theme.inkFaint
+            let row = SheetRow(leading: radio, title: title, detail: detail, height: 56) { [weak self] in
                 guard !on else { return }
                 self?.change(["kind": "level", "level": value])
             }
             row.accessibilityTraits = on ? [.button, .selected] : .button
+            row.isEnabled = !busy
             return row
         }
-        let group = SheetGroup(radios, separatorInset: 48)
+        let group = SheetGroup(radios)
         group.accessibilityLabel = "谁看得到"
-        content.addArrangedSubview(group)
-        content.addArrangedSubview(modeGroup(project, detail: "Pupu 不自己动手，事情交给子会话去做"))
+        // 组标题和组之间近一点。
+        let column = UIStackView(arrangedSubviews: [holder, group])
+        column.axis = .vertical
+        column.spacing = Theme.Space.s2
+        return [column]
     }
 
-    /// 只派活：默认关，开了 Pupu 只把事派给子会话。
+    /// 只派活：默认关，开了 Pupu 只把事派出去。
     private func modeGroup(_ project: Project, detail: String) -> UIView {
         let toggle = UISwitch()
         toggle.isOn = project.delegateOnly
         toggle.onTintColor = Theme.action
+        toggle.thumbTintColor = toggle.isOn ? Theme.onAction : nil
+        toggle.isEnabled = !busy
         toggle.accessibilityLabel = "只派活"
+        toggle.accessibilityHint = detail
         toggle.addAction(UIAction { [weak self, weak toggle] _ in
             guard let toggle else { return }
+            toggle.thumbTintColor = toggle.isOn ? Theme.onAction : nil
             self?.change(["kind": "mode", "mode": toggle.isOn ? "coordinator" : "direct"])
         }, for: .valueChanged)
-        toggle.accessibilityHint = detail
         let row = SheetRow(leading: nil, title: "只派活", detail: detail, trailing: [toggle], height: 64, action: nil)
         // VoiceOver 直接落在开关上。
         row.isAccessibilityElement = false
         return SheetGroup([row])
     }
 
-    private func searchBox() -> UIView {
-        if let box = search.superview?.superview { return box }
-        let glass = UIImageView(image: UIImage(systemName: "magnifyingglass"))
-        glass.tintColor = Theme.inkMuted
-        glass.setContentHuggingPriority(.required, for: .horizontal)
-        let row = UIStackView(arrangedSubviews: [glass, search])
-        row.spacing = Theme.Space.s2
-        row.alignment = .center
-        let box = UIView()
-        box.backgroundColor = .secondarySystemGroupedBackground
-        box.layer.cornerRadius = Theme.Radius.tag
-        box.layer.cornerCurve = .continuous
-        box.addSubview(row)
-        row.pin(to: box, insets: UIEdgeInsets(top: 0, left: Theme.Space.s3, bottom: 0, right: Theme.Space.s2))
-        box.heightAnchor.constraint(equalToConstant: Theme.Size.control).isActive = true
-        return box
-    }
-
+    /// 行里的按钮：高 32，左右 14，`subheadline` 600。「邀请」是主操作（一屏可以有几个，这里例外），「移出」是轻按钮。
     private func chip(_ title: String, prominent: Bool, action: @escaping () -> Void) -> UIButton {
         var config = prominent ? UIButton.Configuration.filled() : UIButton.Configuration.plain()
         config.title = title
         config.cornerStyle = .capsule
-        config.baseBackgroundColor = Theme.action
-        config.baseForegroundColor = prominent ? Theme.onAction : Theme.inkMuted
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14)
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-            var attributes = attributes
-            attributes.font = Theme.font(.subheadline, weight: .semibold)
-            return attributes
-        }
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
+        let fill = prominent ? Theme.action : UIColor.clear
+        let ink = prominent ? Theme.onAction : Theme.inkMuted
+        config.paint(fill: fill, ink: ink, style: .subheadline)
         let button = UIButton(configuration: config)
-        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.configurationUpdateHandler = { button in
+            let on = button.isEnabled
+            button.configuration?.paint(
+                fill: prominent ? (on ? Theme.action : Theme.actionOff) : (button.isHighlighted ? Theme.line : .clear),
+                ink: prominent ? (on ? Theme.onAction : Theme.inkMuted) : Theme.inkMuted,
+                pressed: prominent && button.isHighlighted,
+                style: .subheadline
+            )
+        }
+        button.isEnabled = !busy
+        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
         button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
         return button
+    }
+
+    private func pick(color: Theme.SpaceColor) {
+        guard !busy else { return }
+        pickedColor = color
+        change(["kind": "color", "color": color.rawValue])
+    }
+
+    private func pick(icon: Theme.SpaceIcon) {
+        guard !busy else { return }
+        pickedIcon = icon
+        change(["kind": "icon", "icon": icon.rawValue])
     }
 
     private func change(_ body: [String: String]) {
         guard !busy, let api = Store.shared.api else { return }
         busy = true
+        failure = nil
         UISelectionFeedbackGenerator().selectionChanged()
+        render()
         Task {
             do {
                 try await api.changeSpace(projectId, body)
             } catch {
-                let alert = UIAlertController(title: "没做成", message: error.localizedDescription, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "好", style: .default))
-                present(alert, animated: true)
+                failure = error.localizedDescription
+                pickedColor = nil
+                pickedIcon = nil
             }
             busy = false
             // 没做成时开关已经拨过去了：按现在的数据重画一次。
@@ -553,14 +677,119 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
     }
 }
 
-/// 子会话页：主会话派出去的一件事。顶上是名字和状态，第一条是「从「空间」派来」，人可以接着说。
+/// 色板和图标的圆：选中的外面隔 2 再描 2 的 `ink`（中间露出 sheet 底）；色板没选中时往里描一圈很淡的边。
+private final class SwatchControl: UIControl {
+    let image = UIImageView()
+    private let ring = CAShapeLayer()
+    private let edge: Bool
+
+    init(side: CGFloat, edge: Bool) {
+        self.edge = edge
+        super.init(frame: .zero)
+        layer.cornerRadius = side / 2
+        ring.fillColor = nil
+        ring.lineWidth = 2
+        ring.isHidden = true
+        layer.addSublayer(ring)
+        image.contentMode = .scaleToFill
+        image.layer.magnificationFilter = .nearest
+        image.isUserInteractionEnabled = false
+        image.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(image)
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: side),
+            heightAnchor.constraint(equalToConstant: side),
+            image.widthAnchor.constraint(equalToConstant: 16),
+            image.heightAnchor.constraint(equalToConstant: 16),
+            image.centerXAnchor.constraint(equalTo: centerXAnchor),
+            image.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+        isAccessibilityElement = true
+        updateColors()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: SwatchControl, _: UITraitCollection) in
+            view.updateColors()
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    var on = false {
+        didSet {
+            guard on != oldValue else { return }
+            updateColors()
+        }
+    }
+
+    private func updateColors() {
+        ring.isHidden = !on
+        ring.strokeColor = Theme.ink.resolvedColor(with: traitCollection).cgColor
+        layer.borderWidth = edge && !on ? 1 : 0
+        layer.borderColor = UIColor(white: 0, alpha: 0x0f / 255).cgColor
+        accessibilityTraits = on ? [.button, .selected] : .button
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ring.frame = bounds
+        ring.path = UIBezierPath(ovalIn: bounds.insetBy(dx: -3, dy: -3)).cgPath
+    }
+
+    /// 色板 30、图标 36，点按区补到 44。
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let grow = max(0, (Theme.Size.control - bounds.width) / 2)
+        return bounds.insetBy(dx: -grow, dy: -grow).contains(point)
+    }
+}
+
+/// 横着滑的一行图标，右边淡出。末尾留出淡出的那一段，滑到头最后一个也看得清。
+private final class FadeTrailingView: UIView {
+    let row = UIStackView()
+    private let scroll = UIScrollView()
+    private let fade = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.alwaysBounceHorizontal = true
+        addSubview(scroll)
+        scroll.pin(to: self)
+        row.spacing = 10
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: Theme.Space.s1, leading: Theme.Space.s2, bottom: Theme.Space.s1, trailing: 56)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            row.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            row.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)
+        ])
+        fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+        fade.locations = [0, 0.8, 1]
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.mask = fade
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        fade.frame = bounds
+    }
+}
+
+/// 子会话页（规范 SubSession）：主会话派出去的一件事，整页推进去。窗框还是这个空间的颜色，上面一张会话卡。
+/// 顶栏左边返回，中间名字和状态；第一条是「从「空间」派来」，人可以接着说。
 final class ChildSessionViewController: UIViewController {
     private let projectId: String
     private let session: String
     private let chat: ChatViewController
-    private let name = UILabel(style: .headline)
-    private let status = UILabel(style: .footnote, color: Theme.inkSkyMuted)
-    private let dotHolder = UIView()
+    private let card = CardView()
+    private let back: BarButton
+    private let titleView = ChildTitleView()
     private var token: StoreToken?
 
     init(identity: Identity, project: Project, child: SpaceChild) {
@@ -575,40 +804,30 @@ final class ChildSessionViewController: UIViewController {
             openProject: { _ in }
         )
         chat.handoffHeading = "从「\(project.name)」派来"
+        back = BarButton(image: "chevron.left", label: "回到「\(project.name)」")
         super.init(nibName: nil, bundle: nil)
-        navigationItem.backButtonDisplayMode = .minimal
+        navigationItem.hidesBackButton = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
+        view.backgroundColor = Store.shared.project(id: projectId)?.frameColor ?? Theme.canvas
         let appearance = UINavigationBarAppearance()
         appearance.configureWithTransparentBackground()
         navigationItem.standardAppearance = appearance
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
+        navigationItem.leftBarButtonItem = back.barItem()
+        navigationItem.titleView = titleView
+        back.addAction(UIAction { [weak self] _ in self?.navigationController?.popViewController(animated: true) }, for: .primaryActionTriggered)
 
-        name.textColor = Theme.inkSky
-        name.font = Theme.font(.headline, weight: .semibold)
-        name.lineBreakMode = .byTruncatingTail
-        let line = UIStackView(arrangedSubviews: [dotHolder, status])
-        line.spacing = 6
-        line.alignment = .center
-        let title = UIStackView(arrangedSubviews: [name, line])
-        title.axis = .vertical
-        title.alignment = .leading
-        title.spacing = 2
-        title.isAccessibilityElement = true
-        title.accessibilityTraits = .header
-        navigationItem.titleView = title
-
+        card.placeAsSession(in: view)
         addChild(chat)
-        view.addSubview(chat.view)
-        chat.view.pin(to: view)
+        card.contentView.addSubview(chat.view)
+        chat.view.pin(to: card.contentView)
         chat.didMove(toParent: self)
-        setContentScrollView(chat.contentScrollView(for: .top), for: .top)
         token = Store.shared.observe { [weak self] in self?.update() }
         update()
     }
@@ -619,13 +838,7 @@ final class ChildSessionViewController: UIViewController {
             if Store.shared.loaded, Store.shared.project(id: projectId) == nil { navigationController?.popViewController(animated: true) }
             return
         }
-        name.text = child.title
-        let when = child.reportedAt.map { " · \(Ago.text($0))" } ?? ""
-        status.text = child.status.label + (child.status == .done ? when : "")
-        dotHolder.subviews.forEach { $0.removeFromSuperview() }
-        let dot = childDot(child.status)
-        dotHolder.addSubview(dot)
-        dot.pin(to: dotHolder)
-        navigationItem.titleView?.accessibilityLabel = "\(child.title)，\(status.text ?? "")"
+        titleView.show(child)
+        view.backgroundColor = project.frameColor
     }
 }

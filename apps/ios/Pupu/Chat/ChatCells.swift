@@ -41,6 +41,10 @@ class ChatCell: UICollectionViewCell {
     /// 长按菜单的预览和「闪一下」用的视图：有气泡的行返回气泡。
     var bubbleView: UIView? { nil }
     var bubbleRadius: CGFloat { Theme.Radius.bubble }
+    /// 预览的底色：气泡自己有底，透明就行；没有底的（Pupu 的回复）铺卡片的底。
+    var previewBackground: UIColor { .clear }
+    /// 预览比 `bubbleView` 往外多出的一圈。
+    var previewOutset: UIEdgeInsets { .zero }
 
     /// 放一个靠左、靠右或居中的视图，最宽占 `fraction`。
     func place(_ view: UIView, alignment: NSTextAlignment, fraction: CGFloat = Theme.Size.bubbleMax) {
@@ -97,15 +101,15 @@ final class UserCell: ChatCell {
 
 // MARK: - 别人的消息
 
-/// 靠左，头像在气泡旁边，名字在气泡里：滚动的字不直接写在天空上。
+/// 靠左：28pt 头像在气泡左下旁边，名字写在气泡里第一行（`footnote`、`ink-muted`）。
 final class OtherCell: ChatCell {
-    private let avatar = SurfaceView(.strong, radius: Theme.Size.avatar / 2)
-    private let initial = UILabel(style: .footnote)
+    private let avatar = SurfaceView(.inset, radius: Theme.Size.avatarMessage / 2)
+    private let initial = UILabel(style: .caption)
     private let picture = UIImageView()
     private var avatarPath: String?
     private var avatarToken: NSObjectProtocol?
     private let bubble = SurfaceView(.user, radius: Theme.Radius.bubble)
-    private let name = UILabel(style: .footnote)
+    private let name = UILabel(style: .footnote, color: Theme.inkMuted)
     private let label = UILabel(style: .message, lines: 0)
     private let quote = QuoteStrip()
     var onQuote: (() -> Void)?
@@ -117,7 +121,7 @@ final class OtherCell: ChatCell {
         initial.pin(to: avatar.contentView)
         picture.contentMode = .scaleAspectFill
         picture.clipsToBounds = true
-        picture.layer.cornerRadius = Theme.Size.avatar / 2
+        picture.layer.cornerRadius = Theme.Size.avatarMessage / 2
         avatar.contentView.addSubview(picture)
         picture.pin(to: avatar.contentView)
         // 头像图拿到了再补上：列表不用为了一张图整个重画。
@@ -129,22 +133,22 @@ final class OtherCell: ChatCell {
             }
         }
         NSLayoutConstraint.activate([
-            avatar.widthAnchor.constraint(equalToConstant: Theme.Size.avatar),
-            avatar.heightAnchor.constraint(equalToConstant: Theme.Size.avatar)
+            avatar.widthAnchor.constraint(equalToConstant: Theme.Size.avatarMessage),
+            avatar.heightAnchor.constraint(equalToConstant: Theme.Size.avatarMessage)
         ])
 
         let text = UIStackView(arrangedSubviews: [name, label])
         text.axis = .vertical
+        text.spacing = Theme.Space.s0_5
         bubble.contentView.addSubview(text)
         text.pin(to: bubble.contentView, insets: Bubble.insets)
-
         let column = UIStackView(arrangedSubviews: [quote, bubble])
         column.axis = .vertical
         column.alignment = .leading
         column.spacing = Theme.Space.s1
 
         let row = UIStackView(arrangedSubviews: [avatar, column])
-        row.alignment = .top
+        row.alignment = .bottom
         row.spacing = Theme.Space.s2
         place(row, alignment: .left)
         quote.addAction(UIAction { [weak self] _ in self?.onQuote?() }, for: .touchUpInside)
@@ -156,7 +160,7 @@ final class OtherCell: ChatCell {
     override var bubbleView: UIView? { bubble }
 
     func configure(body: String, quote text: String?, sender: Sender, avatar path: String?, width: CGFloat) {
-        let column = width - Theme.Size.avatar - Theme.Space.s2
+        let column = width - Theme.Size.avatarMessage - Theme.Space.s2
         initial.text = sender.name.first.map { String($0).uppercased() }
         avatarPath = path
         showAvatar()
@@ -178,9 +182,10 @@ final class OtherCell: ChatCell {
     }
 }
 
-/// 气泡上方那条引用：点它滚回原消息。
+/// 发出去的引用（规范 QuoteReply）：`surface-inset` 底、`radius-row`，左边 2pt `ink-muted` 竖线，
+/// `footnote`、`ink-muted`，最多两行。点它滚回原消息。
 final class QuoteStrip: UIControl {
-    private let surface = SurfaceView(.glass, radius: Theme.Radius.row)
+    private let surface = SurfaceView(.inset, radius: Theme.Radius.row)
     private let label = UILabel(style: .footnote, color: Theme.inkMuted, lines: 2)
 
     init() {
@@ -195,7 +200,7 @@ final class QuoteStrip: UIControl {
         let row = UIStackView(arrangedSubviews: [bar, label])
         row.spacing = Theme.Space.s2
         surface.contentView.addSubview(row)
-        row.pin(to: surface.contentView, insets: UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s3, bottom: Theme.Space.s2, right: Theme.Space.s3))
+        row.pin(to: surface.contentView, insets: UIEdgeInsets(top: 6, left: Theme.Space.s3, bottom: 6, right: Theme.Space.s3))
         accessibilityTraits = .button
         accessibilityHint = "滚回被引用的消息"
     }
@@ -215,10 +220,9 @@ final class QuoteStrip: UIControl {
 
 // MARK: - Pupu 的消息
 
+/// Pupu 的回复不套气泡（规范 MessageBubble）：没有底色、描边和头像，用 `message` 直接写在卡片上，占满整列。
 final class AssistantCell: ChatCell {
-    private let bubble = SurfaceView(.strong, radius: Theme.Radius.bubble, lifted: true)
     private let stack = UIStackView()
-    private var full: NSLayoutConstraint!
     private var text = ""
     var onLink: ((URL) -> Void)?
 
@@ -226,20 +230,21 @@ final class AssistantCell: ChatCell {
         super.init(frame: frame)
         stack.axis = .vertical
         stack.spacing = Theme.Space.s2
-        bubble.contentView.addSubview(stack)
-        stack.pin(to: bubble.contentView, insets: Bubble.insets)
-        place(bubble, alignment: .left)
-        full = bubble.widthAnchor.constraint(equalToConstant: 0)
+        place(stack, alignment: .left, fraction: 1)
+        stack.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
         isAccessibilityElement = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var bubbleView: UIView? { bubble }
+    override var bubbleView: UIView? { stack }
+    override var bubbleRadius: CGFloat { Theme.Radius.row }
+    /// 长按时浮起来的预览铺上卡片的底，四周留一点，字不贴边。
+    override var previewBackground: UIColor { Theme.surface }
+    override var previewOutset: UIEdgeInsets { UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s3, bottom: Theme.Space.s2, right: Theme.Space.s3) }
 
     func configure(text next: String, width: CGFloat) {
         let segments = Markdown.segments(next)
-        let inner = width - Bubble.horizontal
         let views = stack.arrangedSubviews
         for (index, segment) in segments.enumerated() {
             let existing = index < views.count ? views[index] : nil
@@ -247,7 +252,7 @@ final class AssistantCell: ChatCell {
             case .text(let attributed):
                 let label = (existing as? LinkLabel) ?? replace(at: index, with: LinkLabel())
                 if text != next || label.attributedText != attributed { label.attributedText = attributed }
-                label.preferredMaxLayoutWidth = inner
+                label.preferredMaxLayoutWidth = width
                 label.onLink = { [weak self] url in self?.onLink?(url) }
             case .code(let code):
                 let block = (existing as? CodeScrollView) ?? replace(at: index, with: CodeScrollView())
@@ -256,9 +261,6 @@ final class AssistantCell: ChatCell {
         }
         for view in stack.arrangedSubviews.dropFirst(segments.count) { view.removeFromSuperview() }
         text = next
-        // 有代码块就占满宽度，代码在块里横向滚动。
-        full.constant = width
-        full.isActive = segments.contains { if case .code = $0 { true } else { false } }
         accessibilityLabel = "Pupu：" + Markdown.plainText(next)
     }
 
@@ -304,16 +306,16 @@ final class CodeScrollView: UIScrollView {
 
 // MARK: - 正在想
 
-/// Pupu 还没出字：三个点依次明暗。
+/// Pupu 还没出字：`bubble-user` 底的小气泡里三个点，`ink-muted`，依次明暗。
 final class TypingCell: ChatCell {
-    private let bubble = SurfaceView(.strong, radius: Theme.Radius.bubble, lifted: true)
+    private let bubble = SurfaceView(.user, radius: Theme.Radius.bubble)
     private let dots = (0..<3).map { _ in UIView() }
     private let label = UILabel(style: .subheadline, color: Theme.inkMuted)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         let row = UIStackView(arrangedSubviews: dots)
-        row.spacing = Theme.Space.s1
+        row.spacing = 5
         row.alignment = .center
         for dot in dots {
             dot.backgroundColor = Theme.inkMuted
@@ -366,221 +368,106 @@ final class TypingCell: ChatCell {
 
 // MARK: - 项目标签
 
+/// 回复上方的项目标签：这件事交给了哪个空间，点一下过去。规范没画，和网页一样照 SpaceMark 加名字：
+/// `surface-inset` 底，高 32，标记方块离左边 6，外圆角跟着方块（6 加 6），名字 `footnote`。
 final class TagCell: ChatCell {
-    private let button = UIButton(configuration: .plain())
+    private let button = UIControl()
+    private let mark = SpaceMarkView()
+    private let name = UILabel(style: .footnote)
     var onTap: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "folder")
-        config.imagePadding = Theme.Space.s2
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .footnote)
-        config.baseForegroundColor = Theme.ink
-        config.titleLineBreakMode = .byTruncatingTail
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: Theme.Space.s3, bottom: 6, trailing: Theme.Space.s3)
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-            var attributes = attributes
-            attributes.font = Theme.font(.footnote)
-            return attributes
-        }
-        var background = UIBackgroundConfiguration.clear()
-        background.backgroundColor = Theme.surfaceStrong
-        background.visualEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        background.strokeColor = Theme.lineGlass
-        background.strokeWidth = 1
-        background.cornerRadius = Theme.Radius.tag
-        config.background = background
-        button.configuration = config
-        button.layer.shadowColor = UIColor(red: 15 / 255, green: 23 / 255, blue: 42 / 255, alpha: 1).cgColor
-        button.layer.shadowOpacity = 0.06
-        button.layer.shadowRadius = 10
-        button.layer.shadowOffset = CGSize(width: 0, height: 6)
+        button.backgroundColor = Theme.surfaceInset
+        button.layer.cornerRadius = Theme.Radius.mark + 6
+        button.layer.cornerCurve = .continuous
+        name.lineBreakMode = .byTruncatingTail
+        let row = UIStackView(arrangedSubviews: [mark, name])
+        row.spacing = Theme.Space.s2
+        row.alignment = .center
+        row.isUserInteractionEnabled = false
+        button.addSubview(row)
+        row.pin(to: button, insets: UIEdgeInsets(top: 6, left: 6, bottom: 6, right: Theme.Space.s3))
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
         button.addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .primaryActionTriggered)
+        button.addAction(UIAction { [weak self] _ in self?.button.alpha = 0.6 }, for: [.touchDown, .touchDragEnter])
+        button.addAction(UIAction { [weak self] _ in self?.button.alpha = 1 }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
+        button.isAccessibilityElement = true
+        button.accessibilityTraits = .button
         place(button, alignment: .left, fraction: 0.8)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(name: String, enabled: Bool) {
-        button.configuration?.title = name
-        button.isEnabled = enabled
-        button.accessibilityLabel = "项目：\(name)"
-        button.accessibilityHint = enabled ? "打开这个项目" : nil
-    }
-}
-
-// MARK: - 电脑上的操作
-
-/// 一步操作，或者合起来的一组。收起时一行，点开看输出。只能看，不能操作。
-final class ToolCell: ChatCell {
-    private let card = SurfaceView(.strong, radius: Theme.Radius.row)
-    private let icon = UIImageView()
-    private let title = UILabel(style: .subheadline)
-    private let result = UILabel(style: .caption, color: Theme.inkMuted)
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let waiting = WaitingMark()
-    private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
-    private let output = OutputView()
-    private let path = UILabel(style: .caption, color: Theme.inkMuted, lines: 0)
-    private var width: NSLayoutConstraint!
-    var onToggle: (() -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        icon.tintColor = Theme.inkMuted
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .subheadline)
-        icon.contentMode = .center
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.tintColor = Theme.inkMuted
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for view in [result, spinner, waiting] as [UIView] {
-            view.setContentHuggingPriority(.required, for: .horizontal)
-            view.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-        spinner.hidesWhenStopped = true
-
-        let header = UIStackView(arrangedSubviews: [icon, title, result, spinner, waiting, chevron])
-        header.spacing = Theme.Space.s2
-        header.alignment = .center
-        header.heightAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
-
-        let stack = UIStackView(arrangedSubviews: [header, output, path])
-        stack.axis = .vertical
-        stack.spacing = Theme.Space.s2
-        card.contentView.addSubview(stack)
-        stack.pin(to: card.contentView, insets: UIEdgeInsets(top: Theme.Space.s2_5, left: Theme.Space.s3, bottom: Theme.Space.s2_5, right: Theme.Space.s3))
-        place(card, alignment: .left)
-        width = card.widthAnchor.constraint(equalToConstant: 0)
-        width.priority = .defaultHigh
-        width.isActive = true
-
-        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
-        isAccessibilityElement = true
-        accessibilityTraits = .button
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var bubbleView: UIView? { card }
-    override var bubbleRadius: CGFloat { Theme.Radius.row }
-
-    @objc private func tapped() {
-        onToggle?()
-    }
-
-    func configure(step: ToolStep, width: CGFloat) {
-        self.width.constant = width
-        icon.image = UIImage(systemName: step.icon)
-        title.text = step.title
-        show(step.status, failures: step.status == .failed ? 1 : 0)
-        let hasOutput = !step.output.isBlank || step.outputPath != nil
-        chevron.isHidden = !hasOutput
-        chevron.transform = step.expanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
-        output.isHidden = !(step.expanded && !step.output.isBlank)
-        output.configure(step.output, width: width - Theme.Space.s3 * 2)
-        path.isHidden = !(step.expanded && step.outputPath != nil)
-        path.text = step.outputPath.map { "完整输出：\($0)" }
-        path.preferredMaxLayoutWidth = width - Theme.Space.s3 * 2
-        accessibilityLabel = "\(step.title)，\(result.text ?? (step.status == .waiting ? "等你批准" : "进行中"))"
-        accessibilityValue = hasOutput ? (step.expanded ? "已展开" : "已收起") : nil
-    }
-
-    private func show(_ status: ToolStep.Status, failures: Int) {
-        let text: String? = switch status {
-        case .done: "完成"
-        case .failed: failures > 1 ? "\(failures) 件没成" : "失败"
-        case .denied: "已拒绝"
-        case .expired: "没人批，作废了"
-        case .unfinished: "没做完"
-        case .running, .waiting: nil
-        }
-        result.text = text
-        result.isHidden = text == nil
-        result.textColor = status == .failed ? Theme.dangerInk : Theme.inkMuted
-        waiting.isHidden = status != .waiting
-        if status == .running { spinner.startAnimating() } else { spinner.stopAnimating() }
-    }
-}
-
-/// 工具的输出：等宽字、surface-inset 底，最多 12 行，多了在块里滚动。
-final class OutputView: UIScrollView {
-    private let label = UILabel(style: .code, lines: 0)
-    private var height: NSLayoutConstraint!
-
-    init() {
-        super.init(frame: .zero)
-        backgroundColor = Theme.surfaceInset
-        layer.cornerRadius = Theme.Radius.tag
-        layer.cornerCurve = .continuous
-        label.lineBreakMode = .byCharWrapping
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        let content = contentLayoutGuide
-        height = heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Theme.Space.s3),
-            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Theme.Space.s3),
-            label.topAnchor.constraint(equalTo: content.topAnchor, constant: Theme.Space.s2),
-            label.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Theme.Space.s2),
-            label.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor, constant: -Theme.Space.s3 * 2),
-            height
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(_ text: String, width: CGFloat) {
-        let inner = width - Theme.Space.s3 * 2
-        if label.text != text { label.text = text }
-        label.preferredMaxLayoutWidth = inner
-        let natural = ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
-        let limit = ceil(Theme.font(.code).lineHeight * 12)
-        height.constant = min(natural, limit) + Theme.Space.s2 * 2
-        isScrollEnabled = natural > limit
+    /// project 是对得上的那个空间，用它的颜色和图标；对不上（建了又删了）就只有名字，按钮点不了。
+    func configure(name text: String, project: Project?) {
+        name.text = text
+        if let project { mark.show(project) } else { mark.show(color: nil, icon: nil, name: text) }
+        button.isEnabled = project != nil
+        button.accessibilityLabel = "空间：\(text)"
+        button.accessibilityHint = project != nil ? "打开这个空间" : nil
     }
 }
 
 // MARK: - 提示和出错
 
-/// 居中的小卡片：「上下文已重置」，或者项目里「从聊天转来」的事。文字不直接压在天空上。
+/// 居中的一句提示：「上下文已重置」「已切换到 DeepSeek」。`surface-inset` 底、`radius-row`，`footnote`、`ink-muted`，最宽 85%。
 final class NoticeCell: ChatCell {
-    private let surface = SurfaceView(.glass, radius: Theme.Radius.row)
-    private let heading = UILabel(style: .caption, color: Theme.inkMuted)
-    private let label = UILabel(style: .subheadline, lines: 0)
+    private let surface = SurfaceView(.inset, radius: Theme.Radius.row)
+    private let label = UILabel(style: .footnote, color: Theme.inkMuted, lines: 0)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        heading.textAlignment = .center
-        let stack = UIStackView(arrangedSubviews: [heading, label])
-        stack.axis = .vertical
-        stack.spacing = 2
-        surface.contentView.addSubview(stack)
-        stack.pin(to: surface.contentView, insets: UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s3, bottom: Theme.Space.s2, right: Theme.Space.s3))
+        label.textAlignment = .center
+        surface.contentView.addSubview(label)
+        label.pin(to: surface.contentView, insets: UIEdgeInsets(top: Theme.Space.s2, left: Theme.Space.s3, bottom: Theme.Space.s2, right: Theme.Space.s3))
         place(surface, alignment: .center)
         isAccessibilityElement = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(heading text: String?, body: String, width: CGFloat) {
-        heading.text = text
-        heading.isHidden = text == nil
-        label.text = body
-        label.font = Theme.font(text == nil ? .caption : .subheadline)
-        label.textColor = text == nil ? Theme.inkMuted : Theme.ink
-        label.textAlignment = text == nil ? .center : .natural
+    func configure(_ text: String, width: CGFloat) {
+        label.text = text
         label.preferredMaxLayoutWidth = width - Theme.Space.s3 * 2
-        accessibilityLabel = [text, body].compactMap { $0 }.joined(separator: "：")
+        accessibilityLabel = text
     }
 }
 
-/// 对话里的出错提示：跟在出事的那一步后面，靠左。
+/// 子会话最上面那块「从主会话派来」（规范 SubSession）：占满整列，`surface-inset` 底、圆角 14，
+/// 第一行 `footnote` 600 写从哪来，下面 `footnote`、`ink-muted` 是派来时的那段话。
+final class HandoffCell: ChatCell {
+    private let surface = SurfaceView(.inset, radius: 14)
+    private let heading = UILabel(style: .footnote)
+    private let label = UILabel(style: .footnote, color: Theme.inkMuted, lines: 0)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        heading.font = Theme.font(.footnote, weight: .semibold)
+        let stack = UIStackView(arrangedSubviews: [heading, label])
+        stack.axis = .vertical
+        stack.spacing = Theme.Space.s0_5
+        surface.contentView.addSubview(stack)
+        stack.pin(to: surface.contentView, insets: UIEdgeInsets(top: Theme.Space.s2_5, left: 14, bottom: Theme.Space.s2_5, right: 14))
+        place(surface, alignment: .left, fraction: 1)
+        surface.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        isAccessibilityElement = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(heading text: String, body: String, width: CGFloat) {
+        heading.text = text
+        label.text = body
+        label.preferredMaxLayoutWidth = width - 28
+        accessibilityLabel = "\(text)：\(body)"
+    }
+}
+
+/// 对话里的出错提示（规范 StatusLine）：跟在出事的那一步后面，靠左，内边距和气泡一样，`subheadline`、`danger-ink`。
+/// 规范写 `surface` 底，会话卡本身就是 `surface`，和网页一样照预览用 `surface-inset`。
 final class ErrorCell: ChatCell {
-    private let surface = SurfaceView(.strong, radius: Theme.Radius.row)
+    private let surface = SurfaceView(.inset, radius: Theme.Radius.row)
     private let label = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
 
     override init(frame: CGRect) {
@@ -597,5 +484,37 @@ final class ErrorCell: ChatCell {
         label.text = text
         label.preferredMaxLayoutWidth = width - Bubble.horizontal
         accessibilityLabel = text
+    }
+}
+
+/// 时间分隔线：隔了一段时间才出现，居中的 `footnote`、`ink-muted`，两边 `line` 细线：「今天 14:02」。
+final class TimeCell: ChatCell {
+    private let label = UILabel(style: .footnote, color: Theme.inkMuted)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let rules = (0..<2).map { _ in
+            let rule = UIView()
+            rule.backgroundColor = Theme.line
+            rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            return rule
+        }
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [rules[0], label, rules[1]])
+        row.spacing = Theme.Space.s2
+        row.alignment = .center
+        rules[0].widthAnchor.constraint(equalTo: rules[1].widthAnchor).isActive = true
+        row.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(row)
+        row.pin(to: body)
+        isAccessibilityElement = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(at: Double) {
+        label.text = ChatRows.dividerTime(at)
+        accessibilityLabel = label.text
     }
 }

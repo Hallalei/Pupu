@@ -14,7 +14,7 @@ nonisolated struct ChatRow: Equatable, Sendable {
         /// Pupu 还没出字：一个只有三个点的气泡。
         case typing(retrying: Bool)
         case projectTag(name: String, projectId: String?)
-        /// 电脑上的一步。只在电脑任务卡展开时出现在卡片下面。
+        /// 电脑上的一步。拼行时都收进 `computer` 那张卡里，单独出现只是还没合卡的中间状态。
         case tool(ToolStep)
         /// Pupu 在一台电脑上连着做的几步，画成一张卡。
         case computer(ComputerTask)
@@ -25,9 +25,13 @@ nonisolated struct ChatRow: Equatable, Sendable {
         case handoff(String)
         /// 聊天里，项目报回来的结果。
         case report(ReportCard)
-        /// 协调模式的主会话派出去的一件事，点进子会话。
+        /// 协调模式的主会话派出去的一件事，点进子会话。拼完行以后，连着的几件合成一块 `tasks`。
         case task(SpaceTask)
+        /// 连着派出去的几件事，列成一块（规范 TaskList）。
+        case tasks([SpaceTask])
         case error(String)
+        /// 时间分隔线：和上一条消息隔了 `ChatRows.timeGap` 以上的那条前面画一条。值是毫秒。
+        case time(Double)
     }
 
     let id: String
@@ -52,6 +56,10 @@ nonisolated struct ToolStep: Equatable, Sendable {
     var expanded: Bool
     /// 这一步带回来的截图，没有是 nil。
     var image: StepImage? = nil
+    /// 用了屏幕（`computer_` 开头的工具）。用过屏幕的那几步画成电脑卡，只跑命令、读写文件的画成工具卡片。
+    var screen: Bool = false
+    /// 发起这一步的那条回复的时间（毫秒），不知道是 0。
+    var at: Double = 0
 }
 
 /// 浏览器任务卡片。和网页的 chat-rows.ts 里的 BrowserTask 是同一套规则，两边一起改。
@@ -90,8 +98,11 @@ nonisolated struct ComputerTask: Equatable, Sendable {
     let computerId: String?
     let computer: String?
     let state: State
-    /// 右上角那几个字：「正在做」「等你批准」「用完了 · 3 步」。
+    /// 右上角那几个字。电脑卡：「正在用」「等你批准」「用完了」「出错了」「已停下」。
+    /// 工具卡片：做完了不写字；「等你批准」「失败」「2 件没成」「没做完」；正在做是转圈。
     let status: String
+    /// 这几步里有用屏幕的：画成电脑卡（规范 ComputerCard），不然画成工具卡片（ToolCallCard）。
+    let usesScreen: Bool
     /// 卡片下沿那一行：最近的一步，不带电脑名。
     let latest: String
     let steps: [ToolStep]
@@ -124,6 +135,9 @@ nonisolated struct ChatContext: Sendable {
 }
 
 nonisolated enum ChatRows {
+    /// 两条消息隔了这么久（毫秒），中间画一条时间分隔线。规范只说「隔了一段时间」，和网页一样取半小时。
+    static let timeGap: Double = 30 * 60_000
+
     private struct Result {
         let text: String
         let details: JSON?
@@ -148,6 +162,8 @@ nonisolated enum ChatRows {
         var rows: [ChatRow] = []
         /// 浏览器的那几步：按行 id 记下动作和参数，下面合成卡片。
         var marks: [String: BrowserMark] = [:]
+        /// 上一条有时间的消息是什么时候，决定要不要画时间分隔线。
+        var lastAt: Double = 0
         for message in messages where !retried.contains(message.id) {
             // 报告卡按时间穿插：排在它之后的第一条消息前面。系统记录没有时间，不算。
             while let report = reports.first, message.timestamp > 0, report.at <= message.timestamp {
@@ -198,7 +214,8 @@ nonisolated enum ChatRows {
                             result: results[callId],
                             output: outputs[callId],
                             running: view.running,
-                            context: context
+                            context: context,
+                            at: message.timestamp
                         ) {
                             if name.hasPrefix("browser_") {
                                 marks[row.id] = BrowserMark(op: String(name.dropFirst(8)), arguments: arguments)
@@ -221,12 +238,19 @@ nonisolated enum ChatRows {
             case .tool:
                 break
             }
+            if !own.isEmpty, message.timestamp > 0, message.role == .user || message.role == .assistant {
+                if lastAt > 0, message.timestamp - lastAt >= timeGap {
+                    rows.append(ChatRow(id: "time:\(message.id)", kind: .time(message.timestamp)))
+                }
+                lastAt = message.timestamp
+            }
             for index in own.indices { own[index].gap = index == 0 ? 12 : 8 }
             rows += own
         }
         rows += reports.map(reportRow)
         rows = browserCards(rows, marks: marks, running: view.running, context: context)
         rows = computerCards(rows, running: view.running, context: context)
+        rows = taskLists(rows)
         if view.running && !(view.live?.hasText ?? false) {
             rows.append(ChatRow(id: "typing", kind: .typing(retrying: view.retry != nil)))
         }
@@ -301,7 +325,8 @@ nonisolated enum ChatRows {
         result: Result?,
         output: String?,
         running: Bool,
-        context: ChatContext
+        context: ChatContext,
+        at: Double
     ) -> ChatRow? {
         switch name {
         case "create_project":
@@ -342,7 +367,9 @@ nonisolated enum ChatRows {
                 output: readable(String((result?.text ?? output ?? "").prefix(4000)), status: status),
                 outputPath: result?.details?["outputPath"]?.string,
                 expanded: (status == .failed) != context.toggled.contains(id),
-                image: result?.image
+                image: result?.image,
+                screen: name.hasPrefix("computer_"),
+                at: at
             )))
         }
     }
@@ -555,7 +582,7 @@ nonisolated enum ChatRows {
 
     /// 把电脑上的几步合成卡片：卡片放在第一步的位置，后面同一台电脑上的步骤收进去，中间说的话照常显示。
     /// 用户发了新消息、项目报回结果、系统通知、浏览器任务，或者换了一台电脑，就另起一张。
-    /// 卡片展开时，每一步排在卡片下面，点开看输出。和网页的 chat-rows.ts 一起改。
+    /// 每一步收在卡片里：电脑卡展开后列出每一步，工具卡片一步时直接带输出、几步时点开看。和网页的 chat-rows.ts 一起改。
     private static func computerCards(_ rows: [ChatRow], running: Bool, context: ChatContext) -> [ChatRow] {
         struct Open {
             let index: Int
@@ -576,30 +603,16 @@ nonisolated enum ChatRows {
                 }
                 cards[open!].steps.append(step)
                 continue
-            case .user, .other, .handoff, .notice, .report, .browser:
+            case .user, .other, .handoff, .notice, .report, .browser, .time:
                 open = nil
             default:
                 break
             }
             result.append(row)
         }
-        var inserted = 0
         for (position, card) in cards.enumerated() {
-            let index = card.index + inserted
             let task = computerTask(card.id, steps: card.steps, context: context, live: running && position == cards.count - 1)
-            result[index] = ChatRow(id: card.id, kind: .computer(task), gap: result[index].gap)
-            if task.expanded {
-                // 卡片上已经写了是哪台电脑，下面每一步不再重复。
-                let steps = card.steps.map { step in
-                    let short = ToolStep(
-                        callId: step.callId, computer: step.computer, icon: step.icon, title: stepText(step),
-                        status: step.status, output: step.output, outputPath: step.outputPath, expanded: step.expanded, image: step.image
-                    )
-                    return ChatRow(id: "tool:\(step.callId)", kind: .tool(short), gap: 8)
-                }
-                result.insert(contentsOf: steps, at: index + 1)
-                inserted += steps.count
-            }
+            result[card.index] = ChatRow(id: card.id, kind: .computer(task), gap: result[card.index].gap)
         }
         return result
     }
@@ -608,18 +621,38 @@ nonisolated enum ChatRows {
         let name = steps.first?.computer
         let computer = context.computers.first { $0.name == name || $0.id == name }
         let latest = steps.last
+        let usesScreen = steps.contains(where: \.screen)
         let state: ComputerTask.State
-        let status: String
         if steps.contains(where: { $0.status == .waiting }) {
-            (state, status) = (.waiting, "等你批准")
+            state = .waiting
         } else if steps.contains(where: { $0.status == .running }) || (live && latest?.status == .done) {
-            (state, status) = (.live, "正在做")
+            state = .live
         } else if latest?.status == .failed {
-            (state, status) = (.failed, "出错了")
+            state = .failed
         } else if let latest, latest.status != .done {
-            (state, status) = (.stopped, "已停下")
+            state = .stopped
         } else {
-            (state, status) = (.done, "用完了 · \(steps.count) 步")
+            state = .done
+        }
+        let failures = steps.filter { $0.status == .failed }.count
+        let status: String = if usesScreen {
+            switch state {
+            case .waiting: "等你批准"
+            case .live: "正在用"
+            case .failed: "出错了"
+            case .stopped: "已停下"
+            case .done: "用完了"
+            }
+        } else if state == .waiting {
+            "等你批准"
+        } else if state == .live {
+            "正在做"
+        } else if failures > 0 {
+            failures > 1 || steps.count > 1 ? "\(failures) 件没成" : "失败"
+        } else if state == .stopped {
+            "没做完"
+        } else {
+            ""
         }
         return ComputerTask(
             id: id,
@@ -627,11 +660,47 @@ nonisolated enum ChatRows {
             computer: computer?.name ?? name,
             state: state,
             status: status,
+            usesScreen: usesScreen,
             latest: latest.map(stepText) ?? "",
             steps: steps,
             screen: steps.last { $0.image != nil }?.image,
             expanded: (state == .failed) != context.toggled.contains(id)
         )
+    }
+
+    /// 连着派出去的几件事合成一块：第一件的位置放整块，后面的去掉。
+    private static func taskLists(_ rows: [ChatRow]) -> [ChatRow] {
+        var result: [ChatRow] = []
+        for row in rows {
+            guard case .task(let task) = row.kind else {
+                result.append(row)
+                continue
+            }
+            if let last = result.last, case .tasks(let tasks) = last.kind {
+                result[result.count - 1].kind = .tasks(tasks + [task])
+            } else {
+                result.append(ChatRow(id: row.id, kind: .tasks([task]), gap: row.gap))
+            }
+        }
+        return result
+    }
+
+    /// 时间分隔线上的字：「今天 14:02」「昨天 09:15」「11月12日 14:02」，不是今年的带年份。和网页 chat-rows.ts 的 dividerTime 一样。
+    static func dividerTime(_ at: Double, now: Date = .now, calendar: Calendar = .current) -> String {
+        let date = Date(timeIntervalSince1970: at / 1000)
+        let clock = clockTime(at, calendar: calendar)
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if days == 0 { return "今天 \(clock)" }
+        if days == 1 { return "昨天 \(clock)" }
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        let day = "\(parts.month ?? 0)月\(parts.day ?? 0)日"
+        return parts.year == calendar.component(.year, from: now) ? "\(day) \(clock)" : "\(parts.year ?? 0)年\(day) \(clock)"
+    }
+
+    /// 几点几分：「14:03」。
+    static func clockTime(_ at: Double, calendar: Calendar = .current) -> String {
+        let parts = calendar.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: at / 1000))
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
     }
 
     /// 一步的标题去掉开头的「在「mbpro」上」，卡片上已经写了是哪台电脑。

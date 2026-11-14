@@ -44,26 +44,36 @@ final class Avatars {
         return (UIImage(named: "pupu-avatar"), true)
     }
 
-    /// 圆形头像：有图画图，没图画名字的第一个字。设置页的列表格子用。
-    static func round(_ image: UIImage?, letter: String, size: CGFloat, pixelArt: Bool, fill: UIColor = Theme.action, ink: UIColor = Theme.onAction) -> UIImage {
+    /// 圆形头像：有图画图（像素画最近邻缩放），没图画名字的第一个字（规范 Avatar「没有头像」：`surface-inset` 圆底，字 600 `ink`）。
+    /// 首字头像的底色和字色是动态色：浅色、深色各画一张放进同一个 UIImageAsset，图片视图跟着主题自己换。
+    static func round(_ image: UIImage?, letter: String, size: CGFloat, pixelArt: Bool, fill: UIColor = Theme.surfaceInset, ink: UIColor = Theme.ink) -> UIImage {
         let bounds = CGRect(x: 0, y: 0, width: size, height: size)
-        return UIGraphicsImageRenderer(size: bounds.size).image { context in
-            UIBezierPath(ovalIn: bounds).addClip()
-            if let image {
+        let renderer = UIGraphicsImageRenderer(size: bounds.size)
+        if let image {
+            return renderer.image { context in
+                UIBezierPath(ovalIn: bounds).addClip()
                 context.cgContext.interpolationQuality = pixelArt ? .none : .high
                 image.draw(in: bounds)
-                return
             }
-            fill.setFill()
-            context.fill(bounds)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: size * 0.45, weight: .semibold),
-                .foregroundColor: ink
-            ]
-            let text = letter as NSString
-            let measured = text.size(withAttributes: attributes)
-            text.draw(at: CGPoint(x: (size - measured.width) / 2, y: (size - measured.height) / 2), withAttributes: attributes)
         }
+        let asset = UIImageAsset()
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            let drawn = renderer.image { context in
+                UIBezierPath(ovalIn: bounds).addClip()
+                fill.resolvedColor(with: traits).setFill()
+                context.fill(bounds)
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: size * 0.45, weight: .semibold),
+                    .foregroundColor: ink.resolvedColor(with: traits)
+                ]
+                let text = letter as NSString
+                let measured = text.size(withAttributes: attributes)
+                text.draw(at: CGPoint(x: (size - measured.width) / 2, y: (size - measured.height) / 2), withAttributes: attributes)
+            }
+            asset.register(drawn, with: traits)
+        }
+        return asset.image(with: UITraitCollection.current)
     }
 
     /// 名字的第一个字，大写。
@@ -94,7 +104,7 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
     override func viewDidLoad() {
         super.viewDidLoad()
         title = target == .pupu ? "Pupu 的头像" : "头像"
-        view.backgroundColor = .systemGroupedBackground
+        view.backgroundColor = Theme.surfaceSheet
         navigationItem.largeTitleDisplayMode = .always
 
         let scroll = UIScrollView()
@@ -143,8 +153,8 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
 
     private func card(_ content: UIView, insets: CGFloat) -> UIView {
         let card = UIView()
-        card.backgroundColor = .secondarySystemGroupedBackground
-        card.layer.cornerRadius = Theme.Radius.panel / 2 + 4
+        card.backgroundColor = Theme.surfaceInset
+        card.layer.cornerRadius = Theme.Radius.row
         card.layer.cornerCurve = .continuous
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
@@ -203,7 +213,7 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
             let selected = current == item.url
             item.view.accessibilityTraits = selected ? [.button, .selected] : .button
             item.view.layer.borderWidth = selected ? 3 : 0
-            item.view.layer.borderColor = Theme.ink.cgColor
+            item.view.layer.borderColor = Theme.ink.resolvedColor(with: traitCollection).cgColor
             item.view.isEnabled = !busy
         }
         actions.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -232,8 +242,8 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
 
     private func divider() -> UIView {
         let line = UIView()
-        line.backgroundColor = .separator
-        line.heightAnchor.constraint(equalToConstant: 1 / (view.window?.screen.scale ?? 3)).isActive = true
+        line.backgroundColor = Theme.line
+        line.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return line
     }
 

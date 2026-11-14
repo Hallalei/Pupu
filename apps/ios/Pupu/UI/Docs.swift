@@ -139,7 +139,7 @@ final class DocPageViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
+        view.backgroundColor = Theme.surfaceSheet
         let scroll = UIScrollView()
         scroll.alwaysBounceVertical = true
         view.addSubview(scroll)
@@ -265,7 +265,7 @@ final class UploadDocViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "上传"
-        view.backgroundColor = .systemGroupedBackground
+        view.backgroundColor = Theme.surfaceSheet
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "上传", primaryAction: UIAction { [weak self] _ in self?.save() })
         navigationItem.rightBarButtonItem?.style = .done
@@ -337,21 +337,21 @@ final class UploadDocViewController: UIViewController {
         let stack = UIStackView(arrangedSubviews: rows)
         stack.axis = .vertical
         let card = UIView()
-        card.backgroundColor = .secondarySystemGroupedBackground
-        card.layer.cornerRadius = Theme.Radius.panel
+        card.backgroundColor = Theme.surfaceInset
+        card.layer.cornerRadius = Theme.Radius.row
         card.layer.cornerCurve = .continuous
         card.addSubview(stack)
         stack.pin(to: card)
         for (index, row) in rows.enumerated() where index > 0 {
             let line = UIView()
-            line.backgroundColor = .separator
+            line.backgroundColor = Theme.line
             line.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(line)
             NSLayoutConstraint.activate([
                 line.topAnchor.constraint(equalTo: row.topAnchor),
                 line.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: Theme.Space.s4),
                 line.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-                line.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale)
+                line.heightAnchor.constraint(equalToConstant: 1)
             ])
         }
         return card

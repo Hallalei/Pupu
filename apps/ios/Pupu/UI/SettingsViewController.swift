@@ -538,15 +538,15 @@ final class SettingsViewController: UICollectionViewController {
         case .member(let member, let removable):
             content.text = member.current ? "\(member.email) · 你" : member.email
             content.secondaryText = member.label
+            // 规范 Avatar：成员列表 32；行是 surface-inset 底，首字的圆垫 surface。
             content.image = Avatars.round(
                 Avatars.shared.image(member.avatar),
                 letter: Avatars.letter(member.displayName),
-                size: Theme.Size.avatar,
+                size: 32,
                 pixelArt: Avatars.isPixelArt(member.avatar),
-                fill: Theme.surfaceStrong,
-                ink: Theme.ink
+                fill: Theme.surface
             )
-            content.imageProperties.maximumSize = CGSize(width: Theme.Size.avatar, height: Theme.Size.avatar)
+            content.imageProperties.maximumSize = CGSize(width: 32, height: 32)
             content.imageToTextPadding = Theme.Space.s3
             if removable {
                 let remove = UIButton(configuration: .plain(), primaryAction: UIAction(title: "移除") { [weak self] _ in

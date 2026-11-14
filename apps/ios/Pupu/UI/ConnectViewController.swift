@@ -182,7 +182,7 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
     }
 
     private func field(_ field: UITextField) -> UIView {
-        let surface = SurfaceView(.strong, radius: Theme.Radius.row)
+        let surface = SurfaceView(.inset, radius: Theme.Radius.field)
         surface.contentView.addSubview(field)
         field.pin(to: surface.contentView, insets: UIEdgeInsets(top: 14, left: Theme.Space.s4, bottom: 14, right: Theme.Space.s3))
         return surface
