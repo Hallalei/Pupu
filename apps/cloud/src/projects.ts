@@ -1,7 +1,11 @@
 /**
  * Pupu 自己的数据：项目，以及零散的设置。
  * 和 pi 共用这个 Durable Object 的 SQLite。pi 的表都带 `pi_` 前缀，这里用 `pupu_`。
+ *
+ * 项目就是协作方案里的「空间」：带密级（见 access.ts）和成员。早先的项目都是 L2，全组织可见。
  */
+
+import type { Level } from "./access.ts";
 
 export type Project = {
   readonly id: string;
@@ -15,7 +19,35 @@ export type Project = {
   readonly progress: string;
   readonly createdAt: number;
   readonly updatedAt: number;
+  /** 密级，见 access.ts。 */
+  readonly level: Level;
+  /** 建这个空间的成员。早先的项目和本机开发建的没有。 */
+  readonly ownerId: string | null;
+  /** 空间成员。L2、L1 全组织可见，这张名单只在 L3、L4 决定谁能看。 */
+  readonly members: readonly string[];
+  /** `direct`：主会话自己动手，和以前的项目一样。`coordinator`：主会话只委派和汇报，见 delegation.ts。 */
+  readonly mode: SpaceMode;
 };
+
+export type SpaceMode = "direct" | "coordinator";
+
+/** 写空间的密级和成员，走 pi 的同一个写队列（`DurableObjectSqliteDatabase`），不会被卷进 pi 正开着的事务。 */
+type SpaceValue = string | number | null;
+
+export type SpaceWriter = {
+  run(sql: string, ...params: SpaceValue[]): Promise<unknown>;
+  transaction<T>(callback: (tx: { run(sql: string, ...params: SpaceValue[]): Promise<unknown> }) => Promise<T>): Promise<T>;
+};
+
+const LEVELS: readonly Level[] = ["L1", "L2", "L3", "L4"];
+
+function levelOf(value: SqlStorageValue): Level {
+  return LEVELS.find((level) => level === value) ?? "L2";
+}
+
+/** 每行带上成员名单，逗号分隔。 */
+const SELECT_PROJECTS = `SELECT p.*, (SELECT group_concat(member_id) FROM pupu_project_members m WHERE m.project_id = p.id) AS members
+  FROM pupu_projects p`;
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -55,7 +87,11 @@ function toProject(row: Row): Project {
     background: String(row.background),
     progress: String(row.progress ?? ""),
     createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at)
+    updatedAt: Number(row.updated_at),
+    level: levelOf(row.level ?? null),
+    ownerId: row.owner_id === null || row.owner_id === undefined ? null : String(row.owner_id),
+    members: row.members ? String(row.members).split(",").sort() : [],
+    mode: row.mode === "coordinator" ? "coordinator" : "direct"
   };
 }
 
@@ -84,6 +120,23 @@ export class ProjectStore {
       if (!columns.some((column) => column.name === "progress")) {
         this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN progress TEXT NOT NULL DEFAULT ''");
       }
+      // 协作版：项目成了空间，补上密级和主人。老项目都是 L2，和原来一样全组织可见。
+      if (!columns.some((column) => column.name === "level")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN level TEXT NOT NULL DEFAULT 'L2'");
+      }
+      if (!columns.some((column) => column.name === "owner_id")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN owner_id TEXT");
+      }
+      if (!columns.some((column) => column.name === "mode")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN mode TEXT NOT NULL DEFAULT 'direct'");
+      }
+      this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_project_members (
+        project_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        added_by TEXT,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, member_id)
+      )`);
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -111,21 +164,21 @@ export class ProjectStore {
 
   listProjects(): Project[] {
     return this.#db()
-      .exec("SELECT * FROM pupu_projects ORDER BY updated_at DESC")
+      .exec(`${SELECT_PROJECTS} ORDER BY p.updated_at DESC`)
       .toArray()
       .map(toProject);
   }
 
   getProject(id: string): Project | undefined {
     const [row] = this.#db()
-      .exec("SELECT * FROM pupu_projects WHERE id = ?", id)
+      .exec(`${SELECT_PROJECTS} WHERE p.id = ?`, id)
       .toArray();
     return row ? toProject(row) : undefined;
   }
 
   projectBySession(session: string): Project | undefined {
     const [row] = this.#db()
-      .exec("SELECT * FROM pupu_projects WHERE session = ?", session)
+      .exec(`${SELECT_PROJECTS} WHERE p.session = ?`, session)
       .toArray();
     return row ? toProject(row) : undefined;
   }
@@ -175,5 +228,68 @@ export class ProjectStore {
       Date.now(),
       session
     );
+  }
+
+  /**
+   * 建一个 L3 空间：只有建的人和 Pupu。会话要先建好。
+   * 第一步只写好、测好，还没有接到任何工具和接口上（协作方案第 7 节：上线后先不能有 L3 空间）。
+   */
+  async createSpace(
+    writer: SpaceWriter,
+    input: { session: string; name: string; goal: string; background: string; ownerId: string },
+    now: number
+  ): Promise<Project> {
+    this.#db();
+    const id = crypto.randomUUID();
+    await writer.transaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO pupu_projects (id, session, name, goal, background, created_at, updated_at, level, owner_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'L3', ?)`,
+        id,
+        input.session,
+        input.name,
+        input.goal,
+        input.background,
+        now,
+        now,
+        input.ownerId
+      );
+      await tx.run(
+        "INSERT INTO pupu_project_members (project_id, member_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+        id,
+        input.ownerId,
+        input.ownerId,
+        now
+      );
+    });
+    return this.getProject(id)!;
+  }
+
+  /** 拉一个组织成员进空间。已经在里面就什么都不做。 */
+  async addMember(writer: SpaceWriter, projectId: string, memberId: string, by: string, now: number): Promise<void> {
+    this.#db();
+    await writer.run(
+      "INSERT OR IGNORE INTO pupu_project_members (project_id, member_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+      projectId,
+      memberId,
+      by,
+      now
+    );
+  }
+
+  async removeMember(writer: SpaceWriter, projectId: string, memberId: string): Promise<void> {
+    this.#db();
+    await writer.run("DELETE FROM pupu_project_members WHERE project_id = ? AND member_id = ?", projectId, memberId);
+  }
+
+  async setLevel(writer: SpaceWriter, projectId: string, level: Level, now: number): Promise<void> {
+    this.#db();
+    await writer.run("UPDATE pupu_projects SET level = ?, updated_at = ? WHERE id = ?", level, now, projectId);
+  }
+
+  /** 切换主会话的模式。这一版没有接到任何入口。 */
+  async setMode(writer: SpaceWriter, projectId: string, mode: SpaceMode, now: number): Promise<void> {
+    this.#db();
+    await writer.run("UPDATE pupu_projects SET mode = ?, updated_at = ? WHERE id = ?", mode, now, projectId);
   }
 }

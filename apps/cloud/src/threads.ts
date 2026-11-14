@@ -3,6 +3,7 @@
  * 谁能打开、谁看得到、提示词怎么写，都从这里的 `Thread` 判断，别的地方不比较会话 id。
  */
 
+import { seesWork } from "./access.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 
 /** pi 的根会话，和 agents/harness/pi 的 ROOT_SESSION 是同一个值。写在这里，网页和测试不用引 pi 的服务端代码。 */
@@ -11,9 +12,14 @@ export const MAIN_SESSION = "1";
 export type Thread =
   | { readonly kind: "main"; readonly session: string }
   | { readonly kind: "private"; readonly session: string; readonly memberId: string }
-  | { readonly kind: "project"; readonly session: string; readonly project: Project };
+  | { readonly kind: "project"; readonly session: string; readonly project: Project }
+  /** 空间的子会话：主会话派来的一件事，见 delegation.ts。受众和它的空间一样。 */
+  | { readonly kind: "child"; readonly session: string; readonly project: Project; readonly title: string };
 
-export type ChatThread = Exclude<Thread, { kind: "project" }>;
+export type ChatThread = Exclude<Thread, { kind: "project" | "child" }>;
+
+/** 子会话属于哪个空间。 */
+export type ChildLookup = (session: string) => { readonly project: Project; readonly title: string } | undefined;
 
 export type PrivateChatRow = {
   readonly memberId: string;
@@ -27,21 +33,7 @@ export type PrivateChatRow = {
 export type ChatLine = { readonly session: string; readonly lastAt: number | null };
 export type ChatsView = { readonly main: ChatLine; readonly private: ChatLine | null };
 
-/** 打开这条会话：主会话和项目谁都行，私聊只有本人。没有成员身份的只进得了公开的。查不到的会话不让开。 */
-export function mayOpen(thread: Thread | undefined, viewer: string | null): boolean {
-  if (!thread) return false;
-  return thread.kind !== "private" || thread.memberId === viewer;
-}
-
-/**
- * 这个会话里发起的动作（审批卡、「正在做」）给不给 `viewer` 看。公开会话谁都看；私聊发起的只给发起人和批准这一步的人。
- * 说不准是哪个会话的（`thread` 是 undefined）按私聊算，只给批准的人。
- */
-export function seesWork(thread: Thread | undefined, viewer: string | null, approver: string | null): boolean {
-  if (thread && thread.kind !== "private") return true;
-  if (viewer === null) return false;
-  return viewer === approver || (thread?.kind === "private" && thread.memberId === viewer);
-}
+export { mayOpen, seesWork } from "./access.ts";
 
 /** `viewer` 看得到哪些调用。`session` 是 null 时说不准是哪个会话的。 */
 export function workFilter(
@@ -74,13 +66,19 @@ function toRow(row: Row): PrivateChatRow {
 export class ThreadStore {
   readonly #sql: SqlStorage;
   readonly #projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">;
+  readonly #childOf: ChildLookup;
   /** 正在建的私聊。建会话要等，同一个人的两个请求不能各建一个。 */
   readonly #creating = new Map<string, Promise<PrivateChatRow>>();
   #ready = false;
 
-  constructor(sql: SqlStorage, projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">) {
+  constructor(
+    sql: SqlStorage,
+    projects: Pick<ProjectStore, "projectBySession" | "meta" | "setMeta">,
+    childOf: ChildLookup = () => undefined
+  ) {
     this.#sql = sql;
     this.#projects = projects;
+    this.#childOf = childOf;
   }
 
   #db(): SqlStorage {
@@ -101,7 +99,9 @@ export class ThreadStore {
     const [row] = this.#db().exec("SELECT member_id FROM pupu_private_chats WHERE session = ?", session).toArray();
     if (row) return { kind: "private", session, memberId: String(row.member_id) };
     const project = this.#projects.projectBySession(session);
-    return project ? { kind: "project", session, project } : undefined;
+    if (project) return { kind: "project", session, project };
+    const child = this.#childOf(session);
+    return child ? { kind: "child", session, project: child.project, title: child.title } : undefined;
   }
 
   byMember(memberId: string): PrivateChatRow | undefined {

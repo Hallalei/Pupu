@@ -12,7 +12,7 @@
 
 ## How to get to it (user POV)
 
-- 网页宽屏：侧栏「项目」右边的「新项目」按钮。
+- 网页宽屏：侧栏「空间」右边的「新空间」按钮（协作版起是空间，见 spaces.md）。
 - 手机：顶部两段的「项目」，左上角 ≡ 打开列表。
 - 聊天里让 Pupu 建项目（需要模型）。
 
@@ -33,5 +33,5 @@ Preconditions: 网页路径已打开，`page` 是 TaskSpace 的 `p1`。
 ## Gotchas
 
 - `waitForSelector` 不支持 `>>` 接 `text=`，用 `page.snapshot()` 或 `waitForFunction` 判断。
-- 窄屏下侧栏隐藏，`button[aria-label="新项目"]` 不可见，走 `button[aria-label="全部项目"]` 再点 `text="新项目"`。
+- 窄屏下侧栏隐藏，`button[aria-label="新项目"]` 不可见，走 `button[aria-label="全部空间"]` 再点 `button[aria-label="新空间"]`。
 - 宽屏没有 ≡ 和胶囊，列表在侧栏。

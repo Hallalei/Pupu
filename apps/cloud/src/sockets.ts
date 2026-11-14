@@ -4,7 +4,7 @@ import type { AgentEventStream } from "@earendil-works/pi-durable";
 import type { Connection, ConnectionContext } from "agents/lifecycle";
 import type { WebSocketMessage, WebSocketsOptions } from "agents/websockets";
 import type { PiHarness, PiSessionId } from "agents/harness/pi";
-import type { ClientMessage, ServerMessage } from "./protocol";
+import { FORBIDDEN_CLOSE_CODE, type ClientMessage, type ServerMessage } from "./protocol.ts";
 import type { BridgeSocket } from "./bridge/hub";
 import { DEVICE_HEADER, deviceOfTags, deviceTag } from "./devices.ts";
 import { sentInput, type Sender } from "./messages.ts";
@@ -160,6 +160,25 @@ export class PiSessionSockets {
       if (this.#routes.some((route) => tags.includes(route.tag))) continue;
       const message = messageFor(deviceOfTags(tags));
       if (message) send(socket, message);
+    }
+  }
+
+  /**
+   * 空间的成员或密级变了：已经开着的连接重新过一遍，不再在受众里的断开（`FORBIDDEN_CLOSE_CODE`）。
+   * 只靠每条消息前的检查不够，流式推送不经过那里。
+   */
+  revalidate(): void {
+    for (const socket of this.#getWebSockets()) {
+      const tags = this.#getTags(socket);
+      if (this.#routes.some((route) => tags.includes(route.tag))) continue;
+      const session = sessionOf(tags);
+      if (session === undefined || this.#mayOpen(session, deviceOfTags(tags))) continue;
+      void this.#unwatch(socket);
+      try {
+        socket.close(FORBIDDEN_CLOSE_CODE, "打不开这条聊天");
+      } catch {
+        // 已经断了。
+      }
     }
   }
 

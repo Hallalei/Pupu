@@ -2,7 +2,7 @@
 import { useAgent } from "agents/react";
 import { useCallback, useRef, useState } from "react";
 import type { ComputerActivity } from "../bridge/activity";
-import { REVOKED_CLOSE_CODE, type ClientMessage, type ServerMessage, type SessionView } from "../protocol";
+import { FORBIDDEN_CLOSE_CODE, REVOKED_CLOSE_CODE, type ClientMessage, type ServerMessage, type SessionView } from "../protocol";
 import { EMPTY_VIEW, reduceEvents } from "../view";
 import type { BrowserFrameView } from "./BrowserCard";
 
@@ -56,7 +56,8 @@ export function usePiSession(
       for (const reply of replies.current.values()) reply.reject(new Error("连接断了，这条没发出去。"));
       replies.current.clear();
       // 这个浏览器被吊销了：马上重新拉一次状态，拿到 401 就换成登录页，不用等轮询。
-      if (event.code === REVOKED_CLOSE_CODE) changed.current();
+      // 被移出空间或空间收窄了（4004）：也马上重拉状态，这条会话从列表里消失，页面换走。
+      if (event.code === REVOKED_CLOSE_CODE || event.code === FORBIDDEN_CLOSE_CODE) changed.current();
     },
     onMessage: (event) => {
       let message: ServerMessage;

@@ -114,6 +114,8 @@ export type ChatRow = {
   | { readonly kind: "notice"; readonly text: string }
   | { readonly kind: "handoff"; readonly text: string }
   | { readonly kind: "report"; readonly card: ReportCard }
+  /** 协调模式的主会话派出去的一件事。`session` 是子会话，工具还没回时是 null。 */
+  | { readonly kind: "child"; readonly session: string | null; readonly title: string }
   | { readonly kind: "error"; readonly text: string }
 );
 
@@ -322,6 +324,11 @@ function toolRow(
     if (!context.projectTags || !name) return null;
     const project = [...context.projects.values()].find((candidate) => candidate.name === name);
     return { id: `tag:${part.id}`, kind: "project-tag", name, projectId: project?.id ?? null };
+  }
+  if (part.name === "delegate") {
+    const session = typeof result?.details.session === "string" ? result.details.session : null;
+    const title = String(args.title ?? result?.details.title ?? "").trim() || "没起名的事";
+    return { id: `child:${part.id}`, kind: "child", session, title };
   }
   if (part.name === "hand_off_to_project") {
     const project = context.projects.get(String(args.project_id ?? ""));
