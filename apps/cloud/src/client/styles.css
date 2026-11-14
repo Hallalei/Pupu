@@ -319,6 +319,17 @@
 }
 
 /*
+ * 描边卡片（ComputerCard、ApprovalCard、BrowserCard）的圆角是 radius-row 加 2，卡里的截图是 radius-row 减 4。
+ * 描边本身用 `inset-ring inset-ring-line`（往里收的 1pt line）。
+ */
+@utility rounded-row-outer {
+  border-radius: calc(var(--radius-row) + 2px);
+}
+@utility rounded-row-inner {
+  border-radius: calc(var(--radius-row) - 4px);
+}
+
+/*
  * SpaceMark：空间原色的圆角方块，里面一个 on-mark 的像素图标，没图标时写名字的第一个字。
  * 两种主题一样；往里收一圈 0.5pt 的边，放在同色窗框上也分得清。像素图标只按整数倍放大：20 里画 16，40 里画 32。
  */
@@ -587,12 +598,21 @@ button:focus-visible {
   color: var(--color-ink);
   text-decoration: underline;
 }
+/* Pupu 回复里的标题一律降成 headline；链接用 ink 加下划线；代码用 code 字、surface-inset 底。 */
+.sd-theme [data-streamdown^="heading-"] {
+  margin-block: 0;
+  font-size: var(--text-headline);
+  line-height: var(--text-headline--line-height);
+  font-weight: var(--text-headline--font-weight);
+}
 .sd-theme code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
 }
 .sd-theme :not(pre) > code {
+  font-size: 0.88em;
+  border-radius: 6px;
   background: var(--color-surface-inset);
+  padding: 1px 5px;
 }
 /* 表格和代码块只要一层：Streamdown 默认是外框套内框，再加语言名和行号。 */
 .sd-theme [data-streamdown="table-wrapper"],

@@ -9,7 +9,7 @@ import { api, usePupuState } from "./api";
 import { Approvals } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, type ChatContext } from "./Chat";
-import { EVERYONE_HINT, PRIVATE_HINT, useChatLines } from "./chat-lines";
+import { PRIVATE_HINT, spaceHint, useChatLines } from "./chat-lines";
 import { Docs } from "./Docs";
 import { StatusStrip } from "./Doing";
 import { CloseIcon, PlusIcon } from "./icons";
@@ -183,9 +183,10 @@ export function App() {
         if (space) go({ kind: "project", id: space.id, child: session });
       },
       onProjectsChanged: () => void refresh(),
-      onActivity: applyActivity
+      onActivity: applyActivity,
+      stateError: error
     }),
-    [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind, inEveryone, project?.session]
+    [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind, inEveryone, project?.session, error]
   );
 
   // App 里跟着系统的浅色深色；只有登录页（品牌层）铺夜空，衬着左边的大图。
@@ -304,14 +305,20 @@ export function App() {
         key={session}
         session={session}
         context={chat}
-        placeholder={lines.isPrivate ? PRIVATE_HINT : EVERYONE_HINT}
+        placeholder={lines.isPrivate ? PRIVATE_HINT : spaceHint(everyone?.name ?? "全员")}
         empty={
-          <div className="flex flex-col gap-2 text-center text-ink">
-            <div className="text-greeting">我是 Pupu</div>
-            {lines.isPrivate && <div className="text-message">这里只有你和我，别人看不到。</div>}
+          <div className="flex flex-col gap-2 text-center">
+            <div className="text-greeting text-ink">我是 Pupu</div>
+            {lines.isPrivate && (
+              <div className="text-message text-ink-muted">
+                这里只有你和我。
+                <br />
+                要一起推进的事，建个空间叫上大家。
+              </div>
+            )}
           </div>
         }
-        starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事"]}
+        starters={["帮我规划一下这周要做的事", "大家最近在忙什么", "建一个空间"]}
       />
     );
   } else if (route.kind === "docs") {
@@ -324,8 +331,8 @@ export function App() {
         key={project.session}
         session={project.session}
         context={chat}
-        placeholder={EVERYONE_HINT}
-        empty={<div className="text-greeting text-ink">{project.name}</div>}
+        placeholder={spaceHint(project.name)}
+        empty={<SpaceEmpty name={project.name} />}
       />
     );
   } else if (project) {
@@ -334,13 +341,8 @@ export function App() {
         key={project.session}
         session={project.session}
         context={chat}
-        placeholder={`在「${project.name}」里说`}
-        empty={
-          <div className="flex max-w-md flex-col gap-2 text-center text-ink">
-            <div className="text-greeting">{project.name}</div>
-            {project.goal && <div className="text-message">{project.goal}</div>}
-          </div>
-        }
+        placeholder={spaceHint(project.name)}
+        empty={<SpaceEmpty name={project.name} />}
       />
     );
   } else {
@@ -403,11 +405,6 @@ export function App() {
             >
               {title}
             </CardHead>
-          )}
-          {error && (
-            <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
-              <div className="bg-surface-sheet shadow-card rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
-            </div>
           )}
           <div className="relative z-10 flex shrink-0 flex-col">
             {showStrip && (
@@ -541,4 +538,14 @@ function showComputerCard(computerId: string): boolean {
   card.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   card.animate([{ outline: "2px solid var(--color-ink)" }, { outline: "2px solid transparent" }], { duration: 1200 });
   return true;
+}
+
+/** 空间还没有消息时（ChatEmpty 的新空间）：Pupu 先说这是哪儿、要做什么。 */
+function SpaceEmpty({ name }: { name: string }) {
+  return (
+    <div className="flex max-w-md flex-col gap-2 text-center">
+      <div className="text-greeting text-ink">我是 Pupu</div>
+      <div className="text-message text-ink-muted">这是「{name}」。说说要做什么，我来拆。</div>
+    </div>
+  );
 }

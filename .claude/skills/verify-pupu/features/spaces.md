@@ -9,7 +9,7 @@
 - `space.look`：主人在空间设置里点颜色或图标，马上换上：`html[data-frame]`、body 底色和 `meta[name=theme-color]` 换成新的窗框色，侧栏、顶栏、sheet 里的标记方块跟着换；`/api/state` 里这个空间的 `color`、`icon` 跟着变。
 - `space.member-view`：不是主人的成员点成员胶囊，只看到成员名单，没有颜色、图标和范围。
 - `space.pupu`：「我的 Pupu」打开自己的私聊。
-- `space.everyone`：空间列表第一个是「全员」（楼图标，`#/projects/everyone`），就是原来的根会话 "1"，历史都在。输入栏「发给组织里所有人和 Pupu」。创建者点顶栏（宽屏卡片头）的楼打开设置：颜色、图标和「只派活」；别人那里楼只是标识，点不开；`/api/state` 的 `everyone.mode` 跟着在 direct 和 coordinator 之间变，别人改返回 forbidden。
+- `space.everyone`：空间列表第一个是「全员」（楼图标，`#/projects/everyone`），就是原来的根会话 "1"，历史都在。输入栏「在「全员」里说」。创建者点顶栏（宽屏卡片头）的楼打开设置：颜色、图标和「只派活」；别人那里楼只是标识，点不开；`/api/state` 的 `everyone.mode` 跟着在 direct 和 coordinator 之间变，别人改返回 forbidden。
 - `space.mode`：主人在邀请框里也有「只派活」开关（项目空间默认开）。
 - `space.task-card`：协调模式主会话里 delegate 显示成任务卡，状态点和「正在做 / 等你批准 / 做完了 · 结果」。
 - `space.child`：宽屏在主卡片右边开一张 400 宽的子会话卡（从右边滑进来，头一行名字和状态，右边关闭），窄屏整页，顶栏左边返回、中间名字和状态；第一条显示「从「空间名」派来」，输入框「接着说这件事」。

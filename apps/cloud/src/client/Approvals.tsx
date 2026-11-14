@@ -94,7 +94,7 @@ export function Approvals({
     <div className="relative z-10 mx-auto flex w-full max-w-column flex-col gap-2 px-4 pt-3">
       <section
         aria-label={`等你批准，${approval.title}`}
-        className="bg-surface-inset flex flex-col gap-3 rounded-row p-4"
+        className="bg-surface rounded-row-outer flex flex-col gap-3 p-4 inset-ring inset-ring-line"
       >
         <div className="flex items-center gap-2">
           <WaitingChip />
@@ -115,6 +115,8 @@ export function Approvals({
           </pre>
         )}
         <p className="m-0 text-subheadline text-ink-muted">{whyText(approval.reason, approval.expiresAt, now)}</p>
+        {/* 没批成：照对话里的出错提示写在卡上，按钮还能再点。 */}
+        {current?.status === "failed" && <p className="m-0 text-subheadline text-danger-ink">{current.error}</p>}
         {how === "phone" && !phonePaired && (
           <p className="m-0 text-subheadline text-ink-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
         )}
@@ -145,16 +147,13 @@ export function Approvals({
               在浏览器里允许
             </Button>
           ) : (
-            <div className="flex h-control items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-ink-muted">
+            <div className="flex h-control items-center justify-center gap-1.5 rounded-full bg-action-off text-body font-semibold text-ink-muted">
               <PhoneIcon />
               去手机上批准
             </div>
           )}
         </div>
       </section>
-      {current?.status === "failed" && (
-        <div className="bg-surface-sheet shadow-card mx-auto rounded-full px-3 py-1 text-caption text-danger-ink">{current.error}</div>
-      )}
     </div>
   );
 }

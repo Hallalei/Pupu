@@ -6,7 +6,8 @@ import { ArrowUpIcon, StopIcon } from "./icons";
 const MAX_HEIGHT = 160;
 
 /**
- * 底部的输入栏：玻璃胶囊，高 44，随行数长到 160。三个 tab 共用。
+ * 会话卡片底部的输入栏（Composer）：surface-inset 实色胶囊，高 control，随行数长到 160，再多在框里滚。
+ * 按钮是 control-sm 的圆，离上、下、右各 4；没字时 action-off 底、ink-faint 图标。
  * 手机上回车换行、点按钮发送；电脑上回车发送，Shift+回车换行。输入法选词时不发送。
  */
 export function Composer({
@@ -56,7 +57,7 @@ export function Composer({
 
   return (
     <form
-      className="bg-surface-inset flex min-h-11 items-end gap-2 rounded-composer p-1 pl-4"
+      className="bg-surface-inset flex min-h-control items-end gap-2 rounded-composer p-1 pl-4"
       onSubmit={(event) => {
         event.preventDefault();
         onSend();
@@ -80,14 +81,14 @@ export function Composer({
             onSend();
           }
         }}
-        className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-[7px] text-body text-ink outline-none placeholder:text-ink-muted"
+        className="max-h-40 min-h-control-sm flex-1 resize-none bg-transparent py-[7px] text-body text-ink outline-none placeholder:text-ink-muted pointer-fine:py-[3px]"
       />
       {onStop ? (
         <Button
           isIconOnly
           aria-label="停止"
           onPress={onStop}
-          className="tap size-9 min-w-9 rounded-full bg-action text-on-action"
+          className="tap size-control-sm min-w-control-sm rounded-full bg-action text-on-action"
         >
           <StopIcon />
         </Button>
@@ -97,7 +98,7 @@ export function Composer({
           type="submit"
           aria-label={sendLabel}
           isDisabled={!canSend}
-          className="tap size-9 min-w-9 rounded-full bg-action text-base text-on-action disabled:bg-action-off disabled:text-ink-faint disabled:opacity-100"
+          className="tap size-control-sm min-w-control-sm rounded-full bg-action text-base text-on-action disabled:bg-action-off disabled:text-ink-faint disabled:opacity-100"
         >
           <ArrowUpIcon />
         </Button>

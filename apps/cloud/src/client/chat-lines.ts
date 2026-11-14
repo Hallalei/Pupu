@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import type { ChatLine, ChatsView } from "../threads";
 
-/** 全员空间输入框里的一行字。 */
-export const EVERYONE_HINT = "发给组织里所有人和 Pupu";
-export const PRIVATE_HINT = "只发给 Pupu";
+/** 输入栏的占位（Composer）：「我的 Pupu」写「给 Pupu 发消息」，空间写「在「X」里说」。 */
+export const PRIVATE_HINT = "给 Pupu 发消息";
+export function spaceHint(name: string): string {
+  return `在「${name}」里说`;
+}
 
 const SEEN_KEY = "pupu:chat-seen";
 

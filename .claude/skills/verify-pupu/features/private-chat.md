@@ -4,7 +4,7 @@
 
 ## Sub-features
 
-- `private.open`：登录后「我的 Pupu」直接是私聊，输入栏「只发给 Pupu」，窗框是 canvas（不是空间，不染色）。`/api/state` 第一次拿到之前只转圈、没有输入栏，免得发到全员。
+- `private.open`：登录后「我的 Pupu」直接是私聊，输入栏「给 Pupu 发消息」，窗框是 canvas（不是空间，不染色）。`/api/state` 第一次拿到之前只转圈、没有输入栏，免得发到全员。
 - `private.isolated`：别人连不上你的私聊，会话 WebSocket 收到 `打不开这条聊天` 后以 1011 关闭。查不到的会话也一样。
 - `private.dot`：私聊有 Pupu 的新回复、人不在「我的 Pupu」时，那一行名字加粗、行尾一个墨色圆点（宽屏侧栏、窄屏切换 sheet），窄屏顶栏的切换按钮右上角也有一个墨色小点。全员的新消息在「全员」那行同样标。
 - `private.handoff`：私聊里转交前 Pupu 先说内容会公开。报告卡回到这条私聊，别人的 `/api/state` 里没有这张卡，项目里不带无关私事。
@@ -23,7 +23,7 @@ Preconditions: 要几个成员，`apps/cloud/.dev.vars` 按 `apps/cloud/README.m
 - 邀请：创建者登录后，`curl -X POST /api/pair -d '{"kind":"phone","name":"验证手机"}'` 拿到一张归创建者的手机凭据，再带 `Authorization: Bearer` 调 `POST /api/members`。这张凭据也用来批准审批。
 - 第三个成员不用开浏览器：`curl -c jar` 走 `/api/auth/google/start`，给跳转地址加 `&email=stranger@example.com`，再回到 callback。之后用 `curl -b jar localhost:<端口>/api/state` 看。
 - 窄屏：`await page.cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: false })`。每次 `ego-browser nodejs` 都要重设。
-- `private.open`：`await page.waitForSelector('loc=css:textarea[placeholder="只发给 Pupu"]')`。测转圈：拦住 `/api/state`（停掉服务或 `Fetch.enable` 挂起），应只有「正在打开」，没有 textarea。
+- `private.open`：`await page.waitForSelector('loc=css:textarea[placeholder="给 Pupu 发消息"]')`。测转圈：拦住 `/api/state`（停掉服务或 `Fetch.enable` 挂起），应只有「正在打开」，没有 textarea。
 - `private.isolated`：在成员页面里 `new WebSocket("ws://" + location.host + "/agents/pupu/me?_pk=" + crypto.randomUUID() + "&session=<别人的私聊>")`。`/api/state` 的 `chats.private.session` 是各人的私聊。
 - `private.dot`：林夏停在某个空间，阿周在全员发一句。结果：林夏那边侧栏（或切换 sheet）「全员」那行加粗带墨色圆点，窄屏切换按钮右上角有点。
 

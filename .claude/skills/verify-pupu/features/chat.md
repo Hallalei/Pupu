@@ -12,7 +12,7 @@
 
 ## How to get to it (user POV)
 
-- 网页：「我的 Pupu」是自己的私聊，输入栏「只发给 Pupu」，见 [private-chat.md](./private-chat.md)；没登录（本机不带凭据）时退回全员那条。全员是空间列表第一个，输入栏「发给组织里所有人和 Pupu」。
+- 网页：「我的 Pupu」是自己的私聊，输入栏「给 Pupu 发消息」，见 [private-chat.md](./private-chat.md)；没登录（本机不带凭据）时退回全员那条。全员是空间列表第一个，输入栏「在「全员」里说」（空间都是「在「X」里说」）。
 - 项目页：「在「项目名」里说」。
 
 ## Driving it with ego-browser
@@ -21,7 +21,7 @@ Preconditions: 网页路径已打开。`chat.reply` 还要 `doctor.mjs` 里 DEEP
 
 - `chat.send`：
   ```js
-  await page.fill('loc=css:textarea[placeholder="发给组织里所有人和 Pupu"]', "你好");
+  await page.fill('loc=css:textarea[placeholder="在「全员」里说"]', "你好");
   await page.click('loc=css:button[aria-label="发送"]');
   ```
   结果：快照里出现这条消息，随后出现回复或 `chat.model-error` 的文字。

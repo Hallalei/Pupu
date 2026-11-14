@@ -1,4 +1,4 @@
-import { Button, Dropdown, Label, Spinner } from "@heroui/react";
+import { Dropdown, Label, Spinner } from "@heroui/react";
 import {
   useEffect,
   useMemo,
@@ -37,6 +37,7 @@ import { Composer } from "./Composer";
 import { desktop, useDesktopComputer } from "./desktop";
 import { begin, IDLE, restoreDraft, settle, type Outbox } from "./outbox";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CloseIcon,
@@ -72,6 +73,8 @@ export type ChatContext = {
   readonly onOpenChild?: (session: string) => void;
   /** 转来的第一条上面写的「从哪来」。默认「从聊天转来」。 */
   readonly handoffFrom?: string;
+  /** 拉状态出错了（多半是连不上）：输入栏上方那一行写它，不弹 toast。 */
+  readonly stateError?: string | null;
 };
 
 type ChatProps = {
@@ -142,11 +145,22 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
     }
   };
 
+  // StatusLine：输入栏上方同一时间只写一行，连接比排队要紧。
+  const statusLine =
+    pi.status === "connecting"
+      ? "正在连接 Pupu…"
+      : pi.status !== "open"
+        ? "连接断开，正在重连…"
+        : context.stateError
+          ? context.stateError
+          : pi.queued > 0
+            ? `还有 ${pi.queued} 条消息排着队，Pupu 说完这轮就处理`
+            : null;
   // 在底部时跟着新内容往下滚；用户往上翻了就不打扰。
   useLayoutEffect(() => {
     const node = scroller.current;
     if (node && stick.current) node.scrollTop = node.scrollHeight;
-  }, [rows.length, pi.live, pi.running]);
+  }, [rows.length, pi.live, pi.running, statusLine]);
 
   async function send(text = draft) {
     const value = text.trim();
@@ -232,7 +246,7 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
                         key={starter}
                         type="button"
                         onClick={() => void send(starter)}
-                        className="bg-surface-inset tap rounded-full px-3.5 py-2 text-subheadline"
+                        className="bg-surface-inset tap rounded-full px-3 py-2 text-subheadline text-ink"
                       >
                         {starter}
                       </button>
@@ -246,6 +260,12 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
                 <Row row={row} context={context} onMenu={openMenu} onToggle={toggle} browser={browser} />
               </div>
             ))}
+            {/* 没发出去：跟在对话最后，写清楚怎么了。字已经放回输入框。 */}
+            {outbox.status === "failed" && (
+              <div className={rows.length > 0 ? "mt-3" : ""}>
+                <ErrorRow text={`这条没发出去：${outbox.error}`} />
+              </div>
+            )}
           </div>
         </div>
         {away && (
@@ -254,7 +274,7 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
               type="button"
               aria-label="回到底部"
               onClick={toBottom}
-              className="bg-surface-inset tap pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
+              className="bg-surface shadow-raised tap pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
             >
               <ChevronDownIcon />
             </button>
@@ -262,13 +282,13 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
         )}
       </div>
 
-      {/* 引用回复时把对话虚化，只留被引用的那条在输入框上面。 */}
+      {/* 引用回复时对话压一层 scrim（不模糊），只留被引用的那条在输入框上面。 */}
       {quote !== null && (
         <button
           type="button"
           aria-label="取消回复"
           onClick={() => setQuote(null)}
-          className="absolute inset-0 z-20 bg-scrim backdrop-blur-md"
+          className="absolute inset-0 z-20 bg-scrim"
         />
       )}
 
@@ -276,31 +296,22 @@ export function Chat({ session, context, empty, placeholder, starters = [] }: Ch
         <div className="mx-auto flex w-full max-w-column flex-col gap-2 px-4 pb-3">
           {quote !== null && (
             <div className="flex items-start gap-2">
-              <div className="bg-surface-inset max-w-[85%] rounded-bubble px-4 py-2.5 text-message">
+              <div className="bg-surface shadow-card min-w-0 flex-1 rounded-bubble px-4 py-2.5 text-message">
                 <div className="line-clamp-4 whitespace-pre-wrap">{quote}</div>
               </div>
-              <Button
-                isIconOnly
-                variant="ghost"
+              <button
+                type="button"
                 aria-label="取消回复"
-                onPress={() => setQuote(null)}
-                className="bg-surface-inset tap size-9 min-w-9 rounded-full"
+                onClick={() => setQuote(null)}
+                className="bg-surface-inset tap grid size-control-sm shrink-0 place-items-center rounded-full text-[18px]"
               >
                 <CloseIcon />
-              </Button>
+              </button>
             </div>
           )}
-          {pi.status !== "open" && (
-            <div className="text-center text-footnote text-ink-muted">
-              {pi.status === "connecting" ? "正在连接 Pupu…" : "连接断开，正在重连…"}
-            </div>
-          )}
-          {outbox.status === "failed" && (
-            <div className="text-center text-footnote text-danger-ink">{outbox.error}</div>
-          )}
-          {pi.queued > 0 && (
-            <div className="text-center text-footnote text-ink-muted">
-              还有 {pi.queued} 条消息排着队，Pupu 说完这轮就处理
+          {statusLine && (
+            <div role="status" className="text-center text-footnote text-ink-muted">
+              {statusLine}
             </div>
           )}
           <Composer
@@ -482,22 +493,30 @@ function Row({
       );
     }
     case "error":
-      return (
-        <div className="bg-surface-inset w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
-          {row.text}
-        </div>
-      );
+      return <ErrorRow text={row.text} />;
   }
+}
+
+/**
+ * 对话里的出错提示（StatusLine）：靠左，内边距和气泡一样，subheadline、danger-ink。
+ * 规范 README 写 surface 底，它的预览用 surface-inset；会话卡本身就是 surface，照预览。
+ */
+function ErrorRow({ text }: { text: string }) {
+  return (
+    <div className="bg-surface-inset w-fit max-w-bubble rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
+      {text}
+    </div>
+  );
 }
 
 function UserMessage({ body, quote, onMenu }: { body: string; quote: string | null; onMenu: MenuOpener }) {
   const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
     <div className="flex flex-col items-end gap-1">
-      {quote && <QuoteStrip quote={quote} className="max-w-[85%]" />}
+      {quote && <QuoteStrip quote={quote} className="max-w-[75%]" />}
       <div
         {...press}
-        className="pressable max-w-[85%] rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap"
+        className="pressable max-w-bubble rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap"
       >
         {body}
       </div>
@@ -505,16 +524,17 @@ function UserMessage({ body, quote, onMenu }: { body: string; quote: string | nu
   );
 }
 
+/** 发出去的引用：surface-inset 底，左边 2pt ink-muted 竖线，footnote、ink-muted，最多两行。 */
 function QuoteStrip({ quote, className = "" }: { quote: string; className?: string }) {
   return (
-    <div className={`bg-surface-inset flex gap-2 rounded-row px-3 py-2 ${className}`}>
-      <span className="w-0.5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+    <div className={`bg-surface-inset flex gap-2 rounded-row px-3 py-1.5 text-ink-muted ${className}`}>
+      <span className="w-0.5 shrink-0 rounded-full bg-ink-muted" aria-hidden="true" />
       <span className="line-clamp-2 text-footnote">{quote}</span>
     </div>
   );
 }
 
-/** 别人发的：靠左，头像在气泡旁边，名字在气泡里。字不直接写在天空上。 */
+/** 别人发的：靠左，28 的头像在气泡左下，名字写在气泡里第一行。 */
 function OtherMessage({
   body,
   quote,
@@ -531,15 +551,15 @@ function OtherMessage({
 }) {
   const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
-    <div className="flex max-w-[85%] items-start gap-2">
-      <MemberAvatar name={sender.name} src={avatar} className="bg-surface-inset size-8 text-footnote" />
+    <div className="flex max-w-bubble items-end gap-2">
+      <MemberAvatar name={sender.name} src={avatar} className="bg-surface-inset size-7 text-caption" />
       <div className="flex min-w-0 flex-col items-start gap-1">
         {quote && <QuoteStrip quote={quote} className="max-w-full" />}
         <div
           {...press}
           className="pressable max-w-full rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap"
         >
-          <div className="text-footnote">{sender.name}</div>
+          <div className="mb-0.5 text-footnote text-ink-muted">{sender.name}</div>
           {body}
         </div>
       </div>
@@ -547,10 +567,11 @@ function OtherMessage({
   );
 }
 
+/** Pupu 的回复不套气泡：没有底色和头像，用 message 直接写在卡片上，占满整列。 */
 function AssistantText({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
   const press = usePressMenu((anchor, point) => onMenu(anchor, text, point));
   return (
-    <div {...press} className="pressable bg-surface-inset w-fit max-w-[85%] rounded-bubble px-4 py-2.5">
+    <div {...press} className="pressable w-full">
       <Streamdown className="sd-theme text-message" controls={false}>
         {text}
       </Streamdown>
@@ -558,15 +579,15 @@ function AssistantText({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
   );
 }
 
-/** Pupu 还没出字：一个只有三个点的气泡。 */
+/** Pupu 还没出字：一个只有三个点的 bubble-user 小气泡，点依次明暗。 */
 function Typing({ retrying }: { retrying: boolean }) {
   return (
     <div
       role="status"
       aria-label={retrying ? "模型忙，正在重试" : "Pupu 在想"}
-      className="bg-surface-inset flex w-fit items-center gap-2 rounded-bubble px-4 py-[13px] text-ink-muted"
+      className="flex w-fit items-center gap-2 rounded-bubble bg-bubble-user px-4 py-3 text-ink-muted"
     >
-      <span className="inline-flex gap-1">
+      <span className="inline-flex gap-[5px]">
         {["0ms", "150ms", "300ms"].map((delay) => (
           <span
             key={delay}
@@ -679,8 +700,8 @@ function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
 }
 
 /**
- * 电脑任务卡：在哪台电脑上、在做什么、状态；带回过截图就显示最近的画面，点「步骤」看每一步。
- * 样子学浏览器卡片和原型里的子会话卡，iOS 的 ComputerCardCell 是同一个样子，两边一起改。
+ * 电脑任务卡（ComputerCard）：在哪台电脑上、状态；带回过截图就显示最近的画面，最新一步，点「步骤」看每一步。
+ * 1pt line 外框、圆角 radius-row 加 2，不填底、不加阴影。iOS 的 ComputerCardCell 是同一个样子，两边一起改。
  * 「接手」是打开远程桌面，只给主人自己在线的电脑，网页上先按通行密钥，电脑 App 里交给浏览器，见 RemoteDesktop.tsx。
  */
 function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: string) => void }) {
@@ -690,9 +711,9 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
     <div
       data-computer-card={task.computerId ?? ""}
       data-state={task.state}
-      className="bg-surface-inset flex w-full max-w-[420px] flex-col overflow-hidden rounded-bubble"
+      className="rounded-row-outer flex w-full max-w-[420px] flex-col overflow-hidden inset-ring inset-ring-line"
     >
-      <div className="flex items-center gap-2 px-3.5 pt-2.5 pb-2">
+      <div className="flex items-center gap-2 px-3.5 pt-[11px] pb-[9px]">
         <ComputerIcon className="shrink-0 text-[17px] pointer-fine:text-[15px]" />
         <span className="min-w-0 flex-1 truncate text-subheadline font-semibold">
           {task.computer ? `在「${task.computer}」上` : "在电脑上"}
@@ -700,35 +721,34 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
         <ComputerStatus task={task} />
       </div>
       {task.screen && (
-        <img
-          src={`data:${task.screen.mimeType};base64,${task.screen.data}`}
-          alt={`「${task.computer ?? "电脑"}」上的画面`}
-          className={`mx-3.5 max-h-56 rounded-tag object-cover object-top shadow-raised ${active ? "" : "opacity-80"}`}
-        />
+        <div className="rounded-row-inner relative mx-3.5 h-35 overflow-hidden bg-surface-inset">
+          <img
+            src={`data:${task.screen.mimeType};base64,${task.screen.data}`}
+            alt={`「${task.computer ?? "电脑"}」上的画面`}
+            className={`size-full object-cover object-top ${active ? "" : "opacity-90"}`}
+          />
+          <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit] inset-ring inset-ring-line" />
+        </div>
       )}
-      <div className="flex items-center gap-2 px-3.5 pt-2 pb-2.5">
+      <div className="flex items-center gap-2 pt-2.5 pr-2.5 pb-3 pl-3.5">
         <span className="min-w-0 flex-1 truncate text-footnote text-ink-muted">{task.latest}</span>
         <button
           type="button"
           aria-expanded={task.expanded}
           onClick={() => onToggle(task.id)}
-          className="tap flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface-inset px-3 text-footnote font-semibold pointer-fine:h-7"
+          className={`${CARD_PILL} gap-1`}
         >
           步骤
           <ChevronDownIcon className={`text-[11px] ${task.expanded ? "rotate-180" : ""}`} />
         </button>
         {remote && remote !== "phone" && task.computerId && (
-          <button
-            type="button"
-            onClick={() => openRemoteDesktop(task.computerId!, remote)}
-            className="tap flex h-8 shrink-0 items-center rounded-full bg-surface-inset px-3 text-footnote font-semibold pointer-fine:h-7"
-          >
+          <button type="button" onClick={() => openRemoteDesktop(task.computerId!, remote)} className={CARD_PILL}>
             接手
           </button>
         )}
       </div>
       {task.expanded && (
-        <ol aria-label="步骤" className="flex flex-col border-t border-line">
+        <ol aria-label="步骤" className="flex flex-col gap-0.5 px-2 pb-2.5">
           {task.steps.map((step) => (
             <StepLine key={step.callId} step={step} onToggle={() => onToggle(`tool:${step.callId}`)} />
           ))}
@@ -738,11 +758,15 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
   );
 }
 
+/** 电脑卡底行的「步骤」「接手」：surface-inset 胶囊，高 32，字 14 加粗；电脑上小一号。 */
+const CARD_PILL =
+  "bg-surface-inset tap flex h-8 shrink-0 items-center rounded-full px-[13px] text-[14px] font-semibold pointer-fine:h-7 pointer-fine:px-3 pointer-fine:text-footnote";
+
 function ComputerStatus({ task }: { task: ComputerTask }) {
   switch (task.state) {
     case "live":
       return (
-        <span className="flex shrink-0 items-center gap-1.5 text-caption text-ink-muted">
+        <span className="flex shrink-0 items-center gap-1.5 text-footnote text-ink-muted">
           <Spinner size="sm" aria-hidden="true" className="size-3.5" />
           {task.status}
         </span>
@@ -754,19 +778,50 @@ function ComputerStatus({ task }: { task: ComputerTask }) {
         </span>
       );
     case "failed":
-      return <span className="shrink-0 text-caption text-danger-ink">{task.status}</span>;
+      return <span className="shrink-0 text-footnote text-danger-ink">{task.status}</span>;
     default:
-      return <span className="shrink-0 text-caption text-ink-muted">{task.status}</span>;
+      return <span className="shrink-0 text-footnote text-ink-muted">{task.status}</span>;
   }
 }
 
-/** 卡片里的一步：一行，有输出的点开看输出。 */
+/** 一步后面那一行小字。做完了和正在做靠左边的勾和转圈说明，不再写字。 */
+const STEP_NOTES: Record<StepStatus, string | null> = {
+  running: null,
+  done: null,
+  waiting: "等你批准",
+  failed: "失败",
+  denied: "已拒绝",
+  expired: "没人批，作废了",
+  unfinished: "没做完"
+};
+
+/** 每一步左边的记号：做完的 online 勾，正在做的转圈，等批的 warning 点，失败的 danger-ink 叉。 */
+function StepMark({ status }: { status: StepStatus }) {
+  return (
+    <span aria-hidden="true" className="flex h-(--text-subheadline--line-height) w-4 shrink-0 items-center justify-center">
+      {status === "done" ? (
+        <CheckIcon className="text-[14px] text-online pointer-fine:text-[12px]" />
+      ) : status === "running" ? (
+        <Spinner size="sm" className="size-3.5" />
+      ) : status === "failed" ? (
+        <CloseIcon className="text-[12px] text-danger-ink pointer-fine:text-[11px]" />
+      ) : (
+        <span className={`size-2 rounded-full ${status === "waiting" ? "bg-warning" : "bg-offline"}`} />
+      )}
+    </span>
+  );
+}
+
+/** 卡片里的一步（StepLine）：记号、subheadline 的一句话，下一行 caption；有输出的点开看输出。 */
 function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
+  const note = STEP_NOTES[step.status];
   const header = (
     <>
-      <span className="shrink-0 text-[15px] text-ink-muted pointer-fine:text-[13px]">{STEP_ICONS[step.icon]}</span>
-      <span className="min-w-0 flex-1 text-left text-footnote break-words">{stepText(step)}</span>
-      <StepStatusMark status={step.status} failures={0} />
+      <StepMark status={step.status} />
+      <span className="flex min-w-0 flex-1 flex-col text-left">
+        <span className="text-subheadline break-words">{stepText(step)}</span>
+        {note && <span className={`text-caption ${step.status === "failed" ? "text-danger-ink" : "text-ink-muted"}`}>{note}</span>}
+      </span>
     </>
   );
   return (
@@ -776,20 +831,20 @@ function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
           type="button"
           aria-expanded={step.expanded}
           onClick={onToggle}
-          className="flex min-h-9 w-full items-center gap-2 px-3.5 py-2 hover:bg-ink/4"
+          className="flex w-full items-start gap-2.5 rounded-tag px-1.5 py-1 pointer-fine:hover:bg-surface-inset"
         >
           {header}
         </button>
       ) : (
-        <div className="flex min-h-9 items-center gap-2 px-3.5 py-2">{header}</div>
+        <div className="flex items-start gap-2.5 px-1.5 py-1">{header}</div>
       )}
       {step.expanded && step.output && (
-        <pre className="mx-3.5 mb-2.5 max-h-58 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
+        <pre className="mx-1.5 mt-0.5 mb-1 max-h-58 overflow-auto rounded-tag bg-surface-inset px-3 py-2 font-mono text-code break-all whitespace-pre-wrap">
           {step.output}
         </pre>
       )}
       {step.expanded && step.outputPath && (
-        <div className="mx-3.5 mb-2.5 text-caption break-all text-ink-muted">
+        <div className="mx-1.5 mb-1 text-caption break-all text-ink-muted">
           完整输出在 <span className="font-mono">{step.outputPath}</span>
         </div>
       )}
