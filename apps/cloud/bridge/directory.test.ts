@@ -75,18 +75,104 @@ describe("名额", () => {
 });
 
 describe("邀请", () => {
-  test("已经有自己 Pupu 的账号不搬家", () => {
-    const store = new DirectoryStore(sqlStorage());
-    const mine = store.claim("a@example.com", 5, NOW);
-    store.claim("b@example.com", 5, NOW);
-    assert.equal(store.assign("b@example.com", mine?.pupu ?? "", 5, NOW), "taken");
-  });
-
-  test("被邀请的人登录时进邀请他的 Pupu，不算创建者", () => {
+  test("被邀请的人登录时进邀请他的 Pupu，不算创建者；没有自己的也不替他开", () => {
     const store = new DirectoryStore(sqlStorage());
     const mine = store.claim("a@example.com", 5, NOW);
     store.assign("b@example.com", mine?.pupu ?? "", 5, NOW);
-    assert.deepEqual(store.claim("b@example.com", 5, NOW), { pupu: mine?.pupu, founder: false });
+    assert.deepEqual(store.home("b@example.com"), { pupu: mine?.pupu, founder: false });
+    assert.deepEqual(store.memberships("b@example.com"), [{ pupu: mine?.pupu, founder: false }]);
+  });
+});
+
+describe("一个账号在好几个 Pupu 里", () => {
+  test("已经有自己 Pupu 的人也能被邀请进别人的，自己的排第一、登录默认进自己的", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 5, NOW);
+    const b = store.claim("b@example.com", 5, NOW);
+    assert.equal(store.assign("b@example.com", a?.pupu ?? "", 5, NOW + 1), "ok");
+    assert.deepEqual(store.memberships("b@example.com"), [
+      { pupu: b?.pupu, founder: true },
+      { pupu: a?.pupu, founder: false }
+    ]);
+    assert.deepEqual(store.home("b@example.com"), { pupu: b?.pupu, founder: true });
+    assert.equal(store.assign("b@example.com", a?.pupu ?? "", 5, NOW + 2), "ok", "再邀请一次不出错");
+    assert.equal(store.memberships("b@example.com").length, 2);
+  });
+
+  test("名额按人算：已经占着名额的人进第二个 Pupu 不再多占", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 2, NOW);
+    const b = store.claim("b@example.com", 2, NOW);
+    assert.equal(store.invites(2).left, 0);
+    assert.equal(store.assign("b@example.com", a?.pupu ?? "", 2, NOW), "ok");
+    assert.equal(store.assign("a@example.com", b?.pupu ?? "", 2, NOW), "ok");
+    assert.equal(store.assign("c@example.com", a?.pupu ?? "", 2, NOW), "full", "新人才占名额");
+  });
+
+  test("被移出一个只断那一条：自己的和别的 Pupu 照旧", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 5, NOW);
+    const c = store.claim("c@example.com", 5, NOW);
+    const b = store.claim("b@example.com", 5, NOW);
+    store.assign("b@example.com", a?.pupu ?? "", 5, NOW + 1);
+    store.assign("b@example.com", c?.pupu ?? "", 5, NOW + 2);
+    store.release("b@example.com", a?.pupu ?? "");
+    assert.deepEqual(store.memberships("b@example.com"), [
+      { pupu: b?.pupu, founder: true },
+      { pupu: c?.pupu, founder: false }
+    ]);
+    store.release("b@example.com", b?.pupu ?? "");
+    assert.equal(store.membership("b@example.com", b?.pupu ?? "")?.founder, true, "自己开的移不走");
+  });
+
+  test("只被邀请过的人移出后没有 Pupu 了，名额空出来；再邀请回来又进去", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 2, NOW);
+    store.assign("b@example.com", a?.pupu ?? "", 2, NOW);
+    assert.equal(store.invites(2).left, 0);
+    store.release("b@example.com", a?.pupu ?? "");
+    assert.equal(store.home("b@example.com"), null);
+    assert.equal(store.invites(2).left, 1);
+    assert.equal(store.assign("b@example.com", a?.pupu ?? "", 2, NOW + 5), "ok");
+  });
+
+  test("被邀请的人以后用邀请码开自己的：之前在的 Pupu 不动，已经占着名额就不多占", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 3, NOW);
+    store.assign("b@example.com", a?.pupu ?? "", 3, NOW);
+    const code = store.createInvite(3, NOW) ?? "";
+    assert.equal(store.invites(3).left, 0);
+    const own = store.openOwn("b@example.com", code, 3, NOW + 1);
+    assert.ok(typeof own === "object" && own.founder);
+    assert.deepEqual(
+      store.memberships("b@example.com").map((each) => each.founder),
+      [true, false]
+    );
+    assert.equal(store.invites(3).left, 1, "码用掉了，他本来就占着一个，名额回来一个");
+    assert.equal(store.openOwn("b@example.com", code, 3, NOW + 2), "exists");
+  });
+
+  test("开自己的填错按账号限次数，过一小时再给", () => {
+    const store = new DirectoryStore(sqlStorage());
+    const a = store.claim("a@example.com", 3, NOW);
+    store.assign("b@example.com", a?.pupu ?? "", 3, NOW);
+    const code = store.createInvite(3, NOW) ?? "";
+    for (let i = 0; i < INVITE_ATTEMPTS; i++) assert.equal(store.openOwn("b@example.com", "AAAA-AAAA", 3, NOW), "wrong");
+    assert.equal(store.openOwn("b@example.com", code, 3, NOW), "limited");
+    const own = store.openOwn("b@example.com", code, 3, NOW + 61 * 60 * 1000);
+    assert.ok(typeof own === "object" && own.founder);
+  });
+
+  test("老表里的账号启动时抄进新表，抄几遍都一样；老表只记第一个家", () => {
+    const sql = sqlStorage();
+    sql.exec(`CREATE TABLE directory_accounts (email TEXT PRIMARY KEY, pupu TEXT NOT NULL, founder INTEGER NOT NULL, created_at INTEGER NOT NULL)`);
+    sql.exec("INSERT INTO directory_accounts VALUES ('old@example.com', 'p1', 1, 1)");
+    new DirectoryStore(sql);
+    const store = new DirectoryStore(sql);
+    assert.deepEqual(store.memberships("old@example.com"), [{ pupu: "p1", founder: true }]);
+    store.assign("old@example.com", "p2", 5, NOW);
+    const [row] = sql.exec("SELECT pupu FROM directory_accounts WHERE email = 'old@example.com'").toArray();
+    assert.equal(row?.pupu, "p1");
   });
 });
 

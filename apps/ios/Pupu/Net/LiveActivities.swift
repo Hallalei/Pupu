@@ -155,7 +155,8 @@ final class LiveActivities {
 /// 没批上就发一条本地通知说一声，和通知上的按钮一样。
 enum LiveActivityActions {
     static func decide(_ approvalId: String, allow: Bool) async {
-        await Push.shared.handle(approval: approvalId, action: allow ? Push.allowAction : Push.denyAction)
+        // 实时活动只跟着现在连着的 Pupu，按现在的凭据批。
+        await Push.shared.handle(approval: approvalId, action: allow ? Push.allowAction : Push.denyAction, org: nil)
         // 通知上的那条也收掉。云端知道是这台手机批的，不会再给它推「已处理」。
         Push.shared.clearDelivered(approval: approvalId)
     }

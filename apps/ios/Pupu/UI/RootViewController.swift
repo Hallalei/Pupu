@@ -36,5 +36,15 @@ final class RootViewController: UIViewController {
         next.view.pin(to: view)
         next.didMove(toParent: self)
         shown = (identity, next)
+        // 被移出一个 Pupu、换到了还在的另一个：连接页不出现，提示在这里说一次。
+        if identity != nil, let notice = Connection.shared.notice {
+            Connection.shared.notice = nil
+            let alert = UIAlertController(title: nil, message: notice, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "好", style: .default))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, self.presentedViewController == nil else { return }
+                self.present(alert, animated: true)
+            }
+        }
     }
 }

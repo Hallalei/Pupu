@@ -81,8 +81,11 @@ node $S/cdp.mjs eval "window.pupuPairing.pair({code:'$CODE',adopt:false})"
 U=<iPhone 的 UDID，从 xcrun simctl list devices available 选>
 xcrun simctl boot $U
 xcodebuild -project apps/ios/Pupu.xcodeproj -scheme Pupu -sdk iphonesimulator \
-  -destination "id=$U" -derivedDataPath /tmp/pupu-verify/ios-dd CODE_SIGNING_ALLOWED=NO build
+  -destination "id=$U" -derivedDataPath /tmp/pupu-verify/ios-dd \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= build
 ```
+
+用本机临时签名（`CODE_SIGN_IDENTITY=-`），别用 `CODE_SIGNING_ALLOWED=NO`：不签名的包没有钥匙串权限，写入回 -34018，凭据只留在内存里，切组织、重启这类要存凭据的路径会假失败。
 
 构建要几分钟，放后台跑。用 iOS Simulator 工具的 `launch` 装上 `/tmp/pupu-verify/ios-dd/Build/Products/Debug-iphonesimulator/Pupu.app`，再用配对链接连上：
 
@@ -97,7 +100,7 @@ App 弹「连接到 localhost?」，截图找到「连接」再点，点按带 `
 
 ## 证据
 
-每项证明放进 `$E`，用功能编号命名。证据目录已被 git 排除，清理时保留。
+每项证明放进 `$E`，用功能编号命名。模拟器截图用 `xcrun simctl io $U screenshot <绝对路径>`，相对路径不会写到当前目录。证据目录已被 git 排除，清理时保留。
 
 - 走用户路径，不用内部 setter 或测试接口造结果。`/api/pairing-codes` 只用来拿码，配对动作本身走 App。
 - 同时留下动作和结果：操作前后的截图或快照，再加 `curl -s localhost:5199/api/state` 的第二视角。
