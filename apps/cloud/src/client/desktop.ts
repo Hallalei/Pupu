@@ -11,7 +11,10 @@ export type DesktopComputer = {
   readonly computerId: string | null;
   readonly name: string;
   readonly status: "offline" | "idle" | "busy" | "screen" | "waiting";
+  /** 状态词：在线、在做事、在用屏幕、等你批准、没连上、授权被吊销。 */
   readonly title: string;
+  /** 状态词的补充，接在「 · 」后面：屏幕已授权、正在连接…、正在被远程控制。老的 App 不报。 */
+  readonly detail?: string | null;
   readonly lines: readonly string[];
   readonly screenGrant: boolean;
   readonly jobs: number;

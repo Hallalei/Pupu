@@ -31,6 +31,8 @@ export function Group({
   note,
   error,
   inset = "text",
+  radiogroup = false,
+  readOnly = false,
   children
 }: {
   title?: string;
@@ -39,14 +41,23 @@ export function Group({
   note?: ReactNode;
   error?: string | null;
   inset?: Inset;
+  /** 一组单选：组本身是 radiogroup，名字给它。 */
+  radiogroup?: boolean;
+  /** 只能看：整组点不了（不是创建者看模型页）。 */
+  readOnly?: boolean;
   children: ReactNode;
 }) {
   const rows = Children.toArray(children);
   if (rows.length === 0) return null;
   return (
-    <section aria-label={title ? undefined : label} className={`flex shrink-0 flex-col ${title ? "not-first:mt-1.5" : ""}`}>
+    <section aria-label={title || radiogroup ? undefined : label} className={`flex shrink-0 flex-col ${title ? "not-first:mt-1.5" : ""}`}>
       {title && <h3 className="m-0 mb-1 px-1 text-footnote text-ink-muted">{title}</h3>}
-      <div className="flex flex-col overflow-hidden rounded-row bg-surface-inset">
+      <div
+        role={radiogroup ? "radiogroup" : undefined}
+        aria-label={radiogroup ? label : undefined}
+        aria-readonly={radiogroup && readOnly ? true : undefined}
+        className={`flex flex-col overflow-hidden rounded-row bg-surface-inset ${readOnly ? "pointer-events-none" : ""}`}
+      >
         {rows.map((row, index) => (
           <Fragment key={isValidElement(row) && row.key !== null ? row.key : index}>
             {index > 0 && <div aria-hidden="true" className={`h-px shrink-0 bg-line ${SEPARATOR[inset]}`} />}

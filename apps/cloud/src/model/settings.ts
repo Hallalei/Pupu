@@ -104,7 +104,7 @@ export function parseChoice(value: unknown, current: ModelChoice): ParsedChoice 
         return { ok: false, error: "地址不对，要像 https://api.example.com/v1 这样。" };
       }
       if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalHost(url.hostname))) {
-        return { ok: false, error: "地址要用 https。内网的模型请改用「经电脑转发」。" };
+        return { ok: false, error: "地址要用 https。内网的模型请设在电脑上，再在这里选那台电脑。" };
       }
       if (url.username || url.password) return { ok: false, error: "地址里不要带账号密码，key 填在下面。" };
       const model = String(input.model ?? "").trim();

@@ -1,7 +1,9 @@
-import { Button, Label, Switch } from "@heroui/react";
+import { Label, Switch } from "@heroui/react";
 import { useState } from "react";
 import { desktop, type ChromeProfile, type DesktopComputer, type DesktopSwitch, type PrivacyPane } from "./desktop";
+import { ComputerIcon } from "./icons";
 import { LocalModelForm } from "./ModelSettings";
+import { Group, PILL_ACTION, PILL_ROW } from "./settings-ui";
 
 const SWITCHES: readonly (readonly [DesktopSwitch, string, string])[] = [
   ["allowCommands", "允许跑命令和写文件", "关掉后，批准了也不做。"],
@@ -13,93 +15,105 @@ const PERMISSIONS: readonly (readonly [PrivacyPane, string])[] = [
   ["accessibility", "辅助功能"]
 ];
 
+/** 圆点：在线 online；在做事、在用屏幕 ink，和事情「正在做」一样；等你批准 warning；没连上、授权被吊销 offline。 */
+const DOT: Record<DesktopComputer["status"], string> = {
+  idle: "bg-online",
+  busy: "bg-ink",
+  screen: "bg-ink",
+  waiting: "bg-warning",
+  offline: "bg-offline"
+};
+
+/** 这一页的行：高 44，左右 16，字 body；不能点的字用 ink-muted。 */
+const ROW =
+  "flex min-h-11 w-full items-center px-4 py-2.5 text-left text-body text-ink enabled:pointer-fine:hover:bg-line disabled:text-ink-muted";
+
+type Where = "status" | "switches" | "permissions";
+
 /**
- * 设置里「这台电脑」那一页，只在电脑 App 的窗口里有：这台电脑的状态和本机开关，跟菜单栏图标里的一样。
- * 开关存在这台电脑上，云端改不了；这里改的就是托盘里那两个勾。
+ * 设置里「这台电脑」那一页（规范 ThisComputer），只在电脑 App 的窗口里有：状态、本机开关、系统授权、浏览器、这台电脑上的模型。
+ * 和菜单栏图标是同一份数据；开关存在这台电脑上，云端改不了。权限分级、「远程控制前」和吊销在「电脑」页，不在这里。
  */
 export function ThisComputer({ computer }: { computer: DesktopComputer }) {
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<Where, string>>>({});
   const app = desktop();
   if (!app) return null;
 
-  async function run(work: () => Promise<void>) {
-    setError(null);
-    try {
-      await work();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
+  // 失败写在出事的那一组下面，不弹窗。
+  function run(where: Where, work: () => Promise<void>) {
+    setErrors((all) => ({ ...all, [where]: undefined }));
+    work().catch((cause: unknown) =>
+      setErrors((all) => ({ ...all, [where]: cause instanceof Error ? cause.message : String(cause) }))
+    );
   }
 
-  const group = "flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface";
-  const action =
-    "flex min-h-control w-full items-center px-4 py-2.5 text-left text-body enabled:hover:bg-ink/4 disabled:text-ink-muted";
+  const status = [computer.title, computer.detail].filter(Boolean).join(" · ");
   const missing = PERMISSIONS.some(([pane]) => !computer.permissions[pane]);
 
   return (
     <>
-      <div className={group}>
-        <div className="flex flex-col gap-2 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <span
-              className={`size-2 shrink-0 rounded-full ${computer.status === "offline" ? "bg-offline" : "bg-online"}`}
-              aria-hidden="true"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-body">{computer.name}</div>
-              <div className="truncate text-subheadline text-ink-muted">{computer.title}</div>
-            </div>
+      <Group label="这台电脑的状态" error={errors.status}>
+        <div key="status" className="flex items-start gap-3 px-4 py-3">
+          <ComputerIcon className="mt-2 shrink-0 text-[24px]" />
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-headline">{computer.name}</span>
+            <span className="flex min-w-0 items-center gap-1 text-subheadline text-ink-muted">
+              <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${DOT[computer.status]}`} />
+              <span className="truncate">{status}</span>
+            </span>
+            {computer.lines.length > 0 && (
+              <ul className="m-0 mt-1 flex list-none flex-col p-0 font-mono text-code text-ink-muted">
+                {computer.lines.slice(0, 6).map((line) => (
+                  <li key={line} className="truncate">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {computer.lines.length > 0 && (
-            <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-caption text-ink-muted">
-              {computer.lines.slice(0, 6).map((line) => (
-                <li key={line} className="truncate font-mono">
-                  {line}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
-        {!computer.paired ? (
-          <div className="flex flex-col items-start gap-2 px-4 py-3">
-            <p className="m-0 text-subheadline text-ink-muted">这台电脑的授权被吊销了，Pupu 现在用不了它。</p>
-            <Button size="sm" variant="secondary" onPress={() => void run(() => app.repair())}>
-              重新授权
-            </Button>
-          </div>
-        ) : (
-          <>
-            <button
-              type="button"
-              disabled={!computer.screenGrant && computer.status !== "screen"}
-              onClick={() => void run(() => app.takeback())}
-              className={action}
-            >
-              收回屏幕控制
-            </button>
-            <button
-              type="button"
-              disabled={computer.jobs === 0}
-              onClick={() => void run(() => app.stopJobs())}
-              className={action}
-            >
-              {computer.jobs > 0 ? `停止命令（${computer.jobs} 条）` : "停止命令"}
-            </button>
-          </>
-        )}
-      </div>
-      <div className={group}>
+        {computer.paired
+          ? [
+              <button
+                key="takeback"
+                type="button"
+                disabled={!computer.screenGrant && computer.status !== "screen"}
+                onClick={() => run("status", () => app.takeback())}
+                className={ROW}
+              >
+                收回屏幕
+              </button>,
+              <button
+                key="stop"
+                type="button"
+                disabled={computer.jobs === 0}
+                onClick={() => run("status", () => app.stopJobs())}
+                className={ROW}
+              >
+                {computer.jobs > 0 ? `停止命令（${computer.jobs} 条）` : "停止命令"}
+              </button>
+            ]
+          : (
+              <div key="revoked" className="flex flex-col items-start gap-2 px-4 py-3">
+                <p className="m-0 text-body">Pupu 现在用不了这台电脑。</p>
+                <button type="button" onClick={() => run("status", () => app.repair())} className={PILL_ACTION}>
+                  重新配对
+                </button>
+              </div>
+            )}
+      </Group>
+      <Group label="本机开关" error={errors.switches}>
         {SWITCHES.map(([name, label, hint]) => (
           <Switch
             key={name}
             isSelected={computer[name]}
-            onChange={(value) => void run(() => app.setSwitch(name, value))}
-            className="px-4 py-2.5"
+            onChange={(value) => run("switches", () => app.setSwitch(name, value))}
+            className="flex w-full px-4 py-2.5"
           >
             <Switch.Content className="flex w-full items-center gap-3">
-              <span className="min-w-0 flex-1">
-                <Label className="block text-body font-normal">{label}</Label>
-                <span className="block text-subheadline text-ink-muted">{hint}</span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <Label className="text-body font-normal">{label}</Label>
+                <span className="text-subheadline text-ink-muted">{hint}</span>
               </span>
               <Switch.Control className="shrink-0">
                 <Switch.Thumb />
@@ -107,100 +121,87 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             </Switch.Content>
           </Switch>
         ))}
-      </div>
-      <section className="flex flex-col gap-1.5">
-        <h3 className="m-0 px-4 text-footnote text-ink-muted">系统授权</h3>
-        <div className={group}>
-          {PERMISSIONS.map(([pane, label]) => (
-            <div key={pane} className="flex min-h-control items-center gap-3 px-4 py-2.5 text-body">
-              <span className="flex-1">{label}</span>
-              {computer.permissions[pane] ? (
-                <span className="text-ink-muted">已允许</span>
-              ) : (
-                <button
-                  type="button"
-                  className="shrink-0 font-semibold hover:opacity-75"
-                  onClick={() => void run(() => app.openPrivacySettings(pane))}
-                >
-                  去打开
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        {missing && (
-          <p className="m-0 px-4 text-footnote font-normal text-ink-muted">
-            在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。
-          </p>
-        )}
-      </section>
-      {app.importChrome && app.chromeProfiles && computer.paired && <ChromeImportRow group={group} />}
+      </Group>
+      <Group
+        title="系统授权"
+        note={missing ? "在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。" : undefined}
+        error={errors.permissions}
+      >
+        {PERMISSIONS.map(([pane, label]) => (
+          <div key={pane} className="flex min-h-11 items-center gap-3 px-4 py-1.5">
+            <span className="min-w-0 flex-1 text-body">{label}</span>
+            {computer.permissions[pane] ? (
+              <span className="shrink-0 text-subheadline text-ink-muted">已允许</span>
+            ) : (
+              <button type="button" onClick={() => run("permissions", () => app.openPrivacySettings(pane))} className={PILL_ROW}>
+                去打开
+              </button>
+            )}
+          </div>
+        ))}
+      </Group>
+      {app.importChrome && app.chromeProfiles && computer.paired && <ChromeImport />}
       {computer.paired && <LocalModelForm />}
-      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
     </>
   );
 }
 
 /**
- * Pupu 浏览器的登录状态从这台电脑的 Chrome 导进来：挑一个 Chrome 用户资料，macOS 会问能不能用钥匙串，人自己点允许。
- * 导进来的只在这台电脑上。
+ * Pupu 浏览器的登录状态从这台电脑的 Chrome 导进来：只有一个用户资料就直接导，有几个就列出来让人挑。
+ * macOS 会问能不能用钥匙串，人自己点允许。导进来的只在这台电脑上。
  */
-function ChromeImportRow({ group }: { group: string }) {
+function ChromeImport() {
   const app = desktop();
   const [profiles, setProfiles] = useState<readonly ChromeProfile[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   if (!app?.importChrome || !app.chromeProfiles) return null;
   const { importChrome, chromeProfiles } = app;
 
   async function start(profile: string) {
     setBusy(true);
-    setNote(null);
+    setResult(null);
+    setError(null);
     try {
-      const result = await importChrome(profile);
-      setNote(result.ok ? `导进了 ${result.imported} 个登录状态${result.skipped ? `，跳过 ${result.skipped} 个过期或解不开的` : ""}。` : result.error);
-      if (result.ok) setProfiles(null);
+      const done = await importChrome(profile);
+      if (done.ok) {
+        setResult(`导进了 ${done.imported} 个登录状态${done.skipped ? `，跳过 ${done.skipped} 个过期或解不开的` : ""}。`);
+        setProfiles(null);
+      } else setError(done.error);
     } catch (cause) {
-      setNote(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
   }
 
   async function pick() {
-    setNote(null);
+    setResult(null);
+    setError(null);
     const found = await chromeProfiles();
-    if (found.length === 0) setNote("这台电脑上没找到 Chrome。");
+    if (found.length === 0) setError("这台电脑上没找到 Chrome。");
     else if (found.length === 1) await start(found[0]!.dir);
     else setProfiles(found);
   }
 
   return (
-    <section className="flex flex-col gap-1.5" data-chrome-import>
-      <h3 className="m-0 px-4 text-footnote text-ink-muted">浏览器</h3>
-      <div className={group}>
-        <div className="flex min-h-control items-center gap-3 px-4 py-2.5 text-body">
-          <span className="flex-1">Pupu 浏览器的登录状态</span>
-          <button
-            type="button"
-            disabled={busy}
-            className="shrink-0 font-semibold hover:opacity-75 disabled:opacity-50"
-            onClick={() => void pick()}
-          >
-            {busy ? "正在导入…" : "从 Chrome 导入"}
-          </button>
-        </div>
-        {profiles && (
-          <div className="flex flex-wrap gap-2 px-4 py-2.5">
-            {profiles.map((profile) => (
-              <Button key={profile.dir} size="sm" variant="secondary" isDisabled={busy} onPress={() => void start(profile.dir)}>
-                {profile.name}
-              </Button>
-            ))}
-          </div>
-        )}
+    <Group title="浏览器" note={error ? undefined : (result ?? "只存在这台电脑上，不上传。")} error={error}>
+      <div key="import" className="flex min-h-11 items-center gap-3 px-4 py-1.5">
+        <span className="min-w-0 flex-1 text-body">Pupu 浏览器的登录状态</span>
+        <button type="button" disabled={busy} onClick={() => void pick()} className={PILL_ROW}>
+          {busy ? "正在导入…" : "从 Chrome 导入"}
+        </button>
       </div>
-      <p className="m-0 px-4 text-footnote font-normal text-ink-muted">{note ?? "只存在这台电脑上，不上传。"}</p>
-    </section>
+      {profiles && (
+        <div key="profiles" role="group" aria-label="Chrome 的用户资料" className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+          {profiles.map((profile) => (
+            <button key={profile.dir} type="button" disabled={busy} onClick={() => void start(profile.dir)} className={PILL_ROW}>
+              {profile.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </Group>
   );
 }

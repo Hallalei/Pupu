@@ -1,18 +1,27 @@
-import { Button, Label, Switch } from "@heroui/react";
-import { useEffect, useState } from "react";
+import { Label, Spinner, Switch } from "@heroui/react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ComputerView } from "../bridge/protocol";
 import type { ModelView } from "../model/settings";
 import { api } from "./api";
 import { desktop, type LocalModelView } from "./desktop";
-import { CheckIcon } from "./icons";
+import { Dot, Group, PILL_ACTION, computerLabel } from "./settings-ui";
 
 /** 地址、模型名、key、上下文、能不能看图。云端存 key 和电脑上存模型共用。 */
 type Fields = { baseUrl: string; model: string; apiKey: string; contextWindow: string; vision: boolean };
 
 const EMPTY: Fields = { baseUrl: "", model: "", apiKey: "", contextWindow: "32000", vision: false };
 
-const INPUT = "min-w-0 rounded-tag bg-surface-inset px-3 py-1.5 text-subheadline";
+/** 选项组下面那句：换模型就是把大家的内容改发到别处，谁来看都写着。 */
+const SENT_TO = "所有人的消息，包括私聊，都发给这个模型。";
 
+/** 「清除」：透明底、ink-muted，和「移出」一样轻，在「保存」左边。 */
+const CLEAR =
+  "tap inline-flex h-control min-w-18 shrink-0 items-center justify-center rounded-full px-4 text-body font-semibold text-ink-muted pointer-fine:hover:bg-surface-inset disabled:opacity-50";
+
+/**
+ * 表单的输入框直接放在弹窗上（不套进组）：surface-inset 底、radius-field、不描边，框之间 8。
+ * 「上下文」一行：「上下文」后面跟 104 宽的数字框，「能看图」和开关靠右。
+ */
 function ModelFields({
   fields,
   onChange,
@@ -27,13 +36,13 @@ function ModelFields({
 }) {
   const set = (patch: Partial<Fields>) => onChange({ ...fields, ...patch });
   return (
-    <div className="flex flex-col gap-2">
+    <>
       <input
         aria-label="地址"
         placeholder={baseUrlHint}
         value={fields.baseUrl}
         onChange={(event) => set({ baseUrl: event.target.value })}
-        className={INPUT}
+        className="field w-full"
         autoComplete="off"
         spellCheck={false}
       />
@@ -42,7 +51,7 @@ function ModelFields({
         placeholder="模型名"
         value={fields.model}
         onChange={(event) => set({ model: event.target.value })}
-        className={INPUT}
+        className="field w-full"
         autoComplete="off"
         spellCheck={false}
       />
@@ -52,26 +61,53 @@ function ModelFields({
         placeholder={keyKept ? "key 已存，留空不改" : "key"}
         value={fields.apiKey}
         onChange={(event) => set({ apiKey: event.target.value })}
-        className={INPUT}
+        className="field w-full"
         autoComplete="off"
       />
-      <div className="flex items-center gap-3">
-        <label className="flex min-w-0 flex-1 items-center gap-2 text-subheadline">
-          <span className="shrink-0 text-ink-muted">上下文</span>
-          <input
-            aria-label="上下文长度"
-            inputMode="numeric"
-            value={fields.contextWindow}
-            onChange={(event) => set({ contextWindow: event.target.value.replace(/[^\d]/g, "") })}
-            className={`${INPUT} w-24`}
-          />
-        </label>
-        <label className="flex shrink-0 items-center gap-1.5 text-subheadline">
-          <input type="checkbox" checked={fields.vision} onChange={(event) => set({ vision: event.target.checked })} />
-          能看图
-        </label>
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-body text-ink-muted">上下文</span>
+        <input
+          aria-label="上下文长度"
+          inputMode="numeric"
+          value={fields.contextWindow}
+          onChange={(event) => set({ contextWindow: event.target.value.replace(/[^\d]/g, "") })}
+          className="field w-26"
+        />
+        <span className="flex-1" />
+        <Switch isSelected={fields.vision} onChange={(vision) => set({ vision })}>
+          <Switch.Content className="flex items-center gap-2">
+            <Label className="text-body font-normal">能看图</Label>
+            <Switch.Control className="shrink-0">
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch.Content>
+        </Switch>
       </div>
-    </div>
+    </>
+  );
+}
+
+/** 「保存」：先试再存，试的时候按钮里转圈（最多 45 秒），不另设「测试」。 */
+function SaveButton({ sending }: { sending: boolean }) {
+  return (
+    <button
+      type="submit"
+      aria-disabled={sending || undefined}
+      className={`${PILL_ACTION} min-w-18 ${sending ? "pointer-events-none" : ""}`}
+    >
+      {sending && <Spinner size="sm" color="current" aria-label="正在试" className="size-4" />}
+      保存
+    </button>
+  );
+}
+
+/** 表单右下的按钮一行，和上面的框隔 12；出错写在它下面。 */
+function FormEnd({ children, error }: { children: ReactNode; error: string | null }) {
+  return (
+    <>
+      <div className="mt-1 flex justify-end gap-2">{children}</div>
+      {error && <p className="m-0 px-1 text-subheadline text-danger-ink">{error}</p>}
+    </>
   );
 }
 
@@ -91,9 +127,12 @@ function sourceOf(view: ModelView): Source {
   return view.source === "computer" ? `computer:${view.computerId}` : view.source;
 }
 
+type Option = { readonly source: Source; readonly label: string; readonly detail: ReactNode };
+
 /**
- * 这个 Pupu 用哪个模型。大家都看得到用的是哪种，只有创建者能改。
- * 列出来的电脑是报过本地模型的那几台，加上现在选着的那台（它可能离线了）。
+ * 设置里「模型」那一页（规范 ModelSettings）：这个 Pupu 用哪个模型。大家都看得到用的是哪个，只有创建者能换。
+ * 列出来的电脑是在线、报了模型的那几台，加上正在用的那台（它可能离线了、或者没设模型）。
+ * 点「Pupu 自带」或一台电脑马上就换；点「自己的 key」只展开表单，「保存」先试再存。
  */
 export function ModelSection({
   model,
@@ -105,6 +144,7 @@ export function ModelSection({
   onSaved: () => Promise<void>;
 }) {
   const current = model.current;
+  const mayEdit = model.mayEdit;
   const [picked, setPicked] = useState<Source>(sourceOf(current));
   const [fields, setFields] = useState<Fields>(
     current.source === "key"
@@ -135,6 +175,7 @@ export function ModelSection({
   }
 
   function pick(source: Source) {
+    if (!mayEdit || sending) return;
     setPicked(source);
     setError(null);
     if (source === "pupu" && current.source !== "pupu") void save({ source: "pupu" });
@@ -146,84 +187,111 @@ export function ModelSection({
     }
   }
 
-  const options: { source: Source; label: string; detail: string | null; disabled: boolean }[] = [
-    { source: "pupu", label: "Pupu 自带", detail: null, disabled: false },
-    ...relays.map((computer) => ({
-      source: `computer:${computer.id}` as Source,
-      label: computer.model ? `${computer.name} · ${computer.model.name}` : computer.name,
-      detail: computer.online ? (computer.model ? null : "这台电脑上没设模型") : "离线",
-      disabled: !computer.model
-    })),
+  const options: Option[] = [
+    { source: "pupu", label: "Pupu 自带", detail: null },
+    ...relays.map(
+      (computer): Option => ({
+        source: `computer:${computer.id}`,
+        // 离线的报不上模型名，只写电脑名，下面写离线多久了。
+        label: computer.online && computer.model ? `${computer.name} · ${computer.model.name}` : computer.name,
+        detail: !computer.online ? (
+          <>
+            <Dot online={false} />
+            {computerLabel(computer)}
+          </>
+        ) : computer.model ? null : (
+          "这台电脑上没设模型"
+        )
+      })
+    ),
     {
       source: "key",
       label: current.source === "key" ? `自己的 key · ${current.model}` : "自己的 key",
-      detail: current.source === "key" ? current.host : null,
-      disabled: false
+      detail: current.source === "key" ? current.host : null
     }
   ];
 
+  const formOpen = mayEdit && picked === "key";
+  const fallbackOpen = mayEdit && current.source === "computer" && picked === currentSource;
+
   return (
-    <section className="flex flex-col gap-1.5">
-      <div className="flex flex-col gap-2 rounded-row bg-surface px-3 py-3">
-        <div role="radiogroup" aria-label="用哪个模型" className="flex flex-col">
-          {options.map((option) => {
-            const selected = picked === option.source;
-            return (
-              <button
-                key={option.source}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                disabled={!model.mayEdit || sending || (option.disabled && !selected)}
-                onClick={() => pick(option.source)}
-                className="flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-ink/6 disabled:cursor-default"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-subheadline font-medium">{option.label}</span>
-                  {option.detail && <span className="block truncate text-caption text-ink-muted">{option.detail}</span>}
-                </span>
-                {selected && <CheckIcon className="shrink-0 text-[14px]" />}
-              </button>
-            );
-          })}
-        </div>
-        {model.mayEdit && current.source === "computer" && picked === sourceOf(current) && (
+    <>
+      <Group
+        radiogroup
+        label="用哪个模型"
+        readOnly={!mayEdit}
+        inset="radio"
+        note={mayEdit ? SENT_TO : `${SENT_TO}只有创建者能换。`}
+        error={formOpen || fallbackOpen ? null : error}
+      >
+        {options.map((option) => {
+          const selected = picked === option.source;
+          return (
+            <label
+              key={option.source}
+              className={`flex min-h-11 items-center gap-3 px-4 py-2.5 ${mayEdit && !sending ? "cursor-pointer pointer-fine:hover:bg-line" : ""}`}
+            >
+              {/* 不是创建者：选中的照常画，没选的圈 30% 透明；用 aria-disabled 不用 disabled，免得整行变灰。 */}
+              <input
+                type="radio"
+                name="model-source"
+                value={option.source}
+                checked={selected}
+                onChange={() => pick(option.source)}
+                disabled={mayEdit && sending}
+                aria-disabled={mayEdit ? undefined : true}
+                tabIndex={mayEdit ? undefined : -1}
+                className={`m-0 size-5 shrink-0 pointer-fine:size-4 ${!mayEdit && !selected ? "opacity-30" : ""}`}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-body">{option.label}</span>
+                {option.detail && (
+                  <span className="flex min-w-0 items-center gap-1.5 text-subheadline text-ink-muted">{option.detail}</span>
+                )}
+              </span>
+            </label>
+          );
+        })}
+      </Group>
+      {fallbackOpen && current.source === "computer" && (
+        <Group label="电脑离线时" error={error}>
           <Switch
+            key="fallback"
             isSelected={current.fallback}
             isDisabled={sending}
             onChange={(fallback) => void save({ ...current, fallback })}
+            className="flex min-h-11 w-full items-center px-4 py-2.5"
           >
-            <Switch.Content className="flex w-full items-center gap-3 px-2">
-              <Label className="min-w-0 flex-1 text-subheadline">电脑离线时用 Pupu 自带的</Label>
+            <Switch.Content className="flex w-full items-center gap-3">
+              <Label className="min-w-0 flex-1 text-body font-normal">电脑离线时用 Pupu 自带的</Label>
               <Switch.Control className="shrink-0">
                 <Switch.Thumb />
               </Switch.Control>
             </Switch.Content>
           </Switch>
-        )}
-        {model.mayEdit && picked === "key" && (
-          <form
-            className="flex flex-col gap-2 border-t border-line pt-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save({ source: "key", ...payload(fields) });
-            }}
-          >
-            <ModelFields
-              fields={fields}
-              onChange={setFields}
-              keyKept={current.source === "key"}
-              baseUrlHint={current.source === "key" ? `https://${current.host}/…` : "https://api.example.com/v1"}
-            />
-            <Button size="sm" type="submit" className="self-end" isPending={sending}>
-              试一下并保存
-            </Button>
-          </form>
-        )}
-        {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
-      </div>
-      {!model.mayEdit && <p className="m-0 px-4 text-footnote font-normal text-ink-muted">只有创建者能换。</p>}
-    </section>
+        </Group>
+      )}
+      {formOpen && (
+        <form
+          aria-label="自己的 key"
+          className="flex shrink-0 flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!sending) void save({ source: "key", ...payload(fields) });
+          }}
+        >
+          <ModelFields
+            fields={fields}
+            onChange={setFields}
+            keyKept={current.source === "key"}
+            baseUrlHint={current.source === "key" ? `https://${current.host}/…` : "https://api.example.com/v1"}
+          />
+          <FormEnd error={error}>
+            <SaveButton sending={sending} />
+          </FormEnd>
+        </form>
+      )}
+    </>
   );
 }
 
@@ -236,7 +304,7 @@ export function modelSummary(current: ModelView, computers: readonly ComputerVie
 }
 
 /**
- * 只在电脑 App 里：这台电脑上的模型。地址和 key 交给 App 加密存在本机，不经过云端。
+ * 只在电脑 App 里：「这台电脑」那一页最下面，这台电脑上的模型。地址和 key 交给 App 加密存在本机，不经过云端。
  * 老的 App 没有这个接口，不显示。
  */
 export function LocalModelForm() {
@@ -287,33 +355,32 @@ export function LocalModelForm() {
   }
 
   return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="m-0 px-4 text-footnote text-ink-muted">这台电脑上的模型</h3>
+    <section className="flex shrink-0 flex-col gap-2 not-first:mt-1.5">
+      <h3 className="m-0 px-1 text-footnote text-ink-muted">这台电脑上的模型</h3>
       <form
-        className="flex flex-col gap-2 rounded-row bg-surface px-4 py-3"
+        aria-label="这台电脑上的模型"
+        className="flex flex-col gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          void save(payload(fields));
+          if (!sending) void save(payload(fields));
         }}
       >
-      <ModelFields
-        fields={fields}
-        onChange={setFields}
-        keyKept={saved?.hasKey === true}
-        baseUrlHint="http://localhost:11434/v1"
-      />
-      <div className="flex justify-end gap-2">
-        {saved && (
-          <Button size="sm" variant="tertiary" isDisabled={sending} onPress={() => void save(null)}>
-            清除
-          </Button>
-        )}
-        <Button size="sm" type="submit" isPending={sending}>
-          试一下并保存
-        </Button>
-      </div>
-      {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
+        <ModelFields
+          fields={fields}
+          onChange={setFields}
+          keyKept={saved?.hasKey === true}
+          baseUrlHint="http://localhost:11434/v1"
+        />
+        <FormEnd error={error}>
+          {saved && (
+            <button type="button" disabled={sending} onClick={() => void save(null)} className={CLEAR}>
+              清除
+            </button>
+          )}
+          <SaveButton sending={sending} />
+        </FormEnd>
       </form>
+      <p className="m-0 px-1 text-footnote text-ink-muted">存好以后，创建者能让整个 Pupu 用它。</p>
     </section>
   );
 }
