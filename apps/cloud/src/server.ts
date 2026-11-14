@@ -1880,7 +1880,7 @@ export class Pupu extends DurableObject<Env> {
         body: input.body,
         authorId: viewer,
         fromSession: null,
-        operation: `upload:${input.operation}`
+        operation: `upload:${viewer ?? "local"}:${input.operation}`
       },
       Date.now()
     );

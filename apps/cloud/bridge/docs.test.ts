@@ -237,3 +237,15 @@ describe("资料：人在界面上看和传（/api/docs）", () => {
     assert.equal(pupu.docs.read(viewerScope("m2", spaces), pupu.ids.l3), undefined);
   });
 });
+
+test("两条会话的工具调用 id 一样，各存各的", async () => {
+  const pupu = await org();
+  const list = createDocTools({ docs: pupu.docs, threadOf: (s) => pupu.threads.of(s), spaces: () => pupu.projects.listProjects(), now: () => NOW, changed: () => {} });
+  const write = list.find((tool) => tool.name === "doc_write") as unknown as {
+    execute(args: unknown, api: unknown): Promise<{ details?: Record<string, unknown> }>;
+  };
+  const a = await write.execute({ title: "甲", summary: "", body: "1" }, { conversationId: "10", callId: "c1" });
+  const b = await write.execute({ title: "乙", summary: "", body: "2" }, { conversationId: MAIN_SESSION, callId: "c1" });
+  assert.notEqual(a.details!.id, b.details!.id);
+  assert.equal(pupu.docs.current(String(b.details!.id))!.title, "乙");
+});

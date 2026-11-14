@@ -150,7 +150,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
           body: args.body,
           authorId: thread.kind === "private" ? thread.memberId : null,
           fromSession: session,
-          operation: `doc_write:${api.callId}`
+          operation: `doc_write:${session}:${api.callId}`
         },
         actions.now()
       );
@@ -187,7 +187,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
           authorId: doc.authorId,
           fromSession: session,
           copiedFrom: doc.id,
-          operation: `doc_promote:${api.callId}`
+          operation: `doc_promote:${session}:${api.callId}`
         },
         actions.now()
       );
