@@ -89,12 +89,12 @@ private struct ActionMark: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(Color.onIsland.opacity(0.14))
+            Circle().fill(Color.onIsland.opacity(0.16))
             if state.mode == .approval {
                 Circle().fill(Color.islandWarning).frame(width: 10, height: 10)
             } else {
                 Image(systemName: state.symbol)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.onIsland)
             }
         }
@@ -121,7 +121,6 @@ private struct Headline: View {
                 .lineLimit(2)
             footnote
                 .font(.footnote)
-                .foregroundStyle(Color.onIsland.opacity(0.7))
                 .lineLimit(2)
         }
         .foregroundStyle(Color.onIsland)
@@ -185,7 +184,7 @@ private struct ApprovalButtons: View {
 }
 
 /// 实时活动上的胶囊按钮。系统的玻璃按钮在这里画不出底，浅色模式下字还会变黑，黑底上就看不见了，
-/// 所以自己画：次要的是半透明白底白字，主要的是白底黑字（设计规范「墨色主操作」在黑底上反过来）。
+/// 所以自己画（照规范预览）：次要的是 16% 白底白字，主要的是白底黑字（设计规范「墨色主操作」在黑底上反过来）。
 private struct IslandButtonStyle: ButtonStyle {
     let prominent: Bool
 
@@ -193,10 +192,10 @@ private struct IslandButtonStyle: ButtonStyle {
         configuration.label
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(prominent ? Color.island : Color.onIsland)
-            .padding(.vertical, 9)
-            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
             .background(
-                Capsule().fill(prominent ? Color.onIsland : Color.onIsland.opacity(0.18))
+                Capsule().fill(prominent ? Color.onIsland : Color.onIsland.opacity(0.16))
             )
             .opacity(configuration.isPressed ? 0.6 : 1)
     }

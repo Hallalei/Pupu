@@ -233,6 +233,8 @@ private func sheetPage(in view: UIView, keyboardDismiss: Bool = false) -> UIStac
 /// 每个空间下面挂着正在做和等你批准的子会话；最底下是自己，点开设置。
 final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
+    /// 现在在 Artifacts。
+    private let docs: Bool
     private let pupuUnread: Bool
     private let everyoneUnread: Bool
     private let openPupu: () -> Void
@@ -244,9 +246,10 @@ final class SpaceSwitcherViewController: UIViewController {
     private var content: UIStackView!
     private var token: StoreToken?
 
-    /// current：现在在的空间，在「我的 Pupu」时是 nil。
-    init(current: String?, pupuUnread: Bool, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void, openSettings: @escaping () -> Void) {
+    /// current：现在在的空间，在「我的 Pupu」和 Artifacts 时是 nil；docs：现在在 Artifacts。
+    init(current: String?, docs: Bool = false, pupuUnread: Bool, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.current = current
+        self.docs = docs
         self.pupuUnread = pupuUnread
         self.everyoneUnread = everyoneUnread
         self.openPupu = openPupu
@@ -288,14 +291,14 @@ final class SpaceSwitcherViewController: UIViewController {
             leading: avatar,
             title: "我的 Pupu",
             style: .headline,
-            trailing: (pupuUnread ? [unreadDot()] : []) + [currentMark(current == nil)]
+            trailing: (pupuUnread ? [unreadDot()] : []) + [currentMark(current == nil && !docs)]
         ) { [weak self] in self?.finish { $0.openPupu() } }
-        if current == nil { pupuRow.accessibilityValue = "当前" } else if pupuUnread { pupuRow.accessibilityValue = "有新消息" }
+        if current == nil && !docs { pupuRow.accessibilityValue = "当前" } else if pupuUnread { pupuRow.accessibilityValue = "有新消息" }
         let docsIcon = UIImageView(image: UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)))
         docsIcon.tintColor = Theme.inkMuted
         docsIcon.contentMode = .center
         docsIcon.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        let docsRow = SheetRow(leading: docsIcon, title: "Artifacts", trailing: [currentMark(false)]) { [weak self] in
+        let docsRow = SheetRow(leading: docsIcon, title: "Artifacts", trailing: [currentMark(docs)]) { [weak self] in
             self?.finish { $0.openDocs() }
         }
         content.addArrangedSubview(SheetGroup([pupuRow, docsRow], separatorInset: 62))
@@ -599,16 +602,13 @@ final class SpaceSettingsViewController: UIViewController, UITextFieldDelegate {
 
     /// 只派活：默认关，开了 Pupu 只把事派出去。
     private func modeGroup(_ project: Project, detail: String) -> UIView {
-        let toggle = UISwitch()
+        let toggle = SwitchView()
         toggle.isOn = project.delegateOnly
-        toggle.onTintColor = Theme.action
-        toggle.thumbTintColor = toggle.isOn ? Theme.onAction : nil
         toggle.isEnabled = !busy
         toggle.accessibilityLabel = "只派活"
         toggle.accessibilityHint = detail
         toggle.addAction(UIAction { [weak self, weak toggle] _ in
             guard let toggle else { return }
-            toggle.thumbTintColor = toggle.isOn ? Theme.onAction : nil
             self?.change(["kind": "mode", "mode": toggle.isOn ? "coordinator" : "direct"])
         }, for: .valueChanged)
         let row = SheetRow(leading: nil, title: "只派活", detail: detail, trailing: [toggle], height: 64, action: nil)

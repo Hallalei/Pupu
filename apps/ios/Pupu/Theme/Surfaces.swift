@@ -79,14 +79,17 @@ class OutlineView: UIView {
 final class CardView: UIView {
     let contentView = UIView()
     private let ring = CAShapeLayer()
+    /// 上角：会话卡 `card-top` 26；登录页贴底的卡片是 `radius-sheet-top` 32（规范 SignIn）。
+    private let topRadius: CGFloat
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(topRadius: CGFloat = Theme.Radius.cardTop) {
+        self.topRadius = topRadius
+        super.init(frame: .zero)
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOffset = CGSize(width: 0, height: 8)
         layer.shadowRadius = 15
         contentView.backgroundColor = Theme.surface
-        contentView.cornerConfiguration = .uniformEdges(topRadius: .fixed(Theme.Radius.cardTop), bottomRadius: .fixed(Theme.Radius.card))
+        contentView.cornerConfiguration = .uniformEdges(topRadius: .fixed(topRadius), bottomRadius: .fixed(Theme.Radius.card))
         contentView.clipsToBounds = true
         contentView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentView)
@@ -105,7 +108,7 @@ final class CardView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let path = Self.path(in: bounds).cgPath
+        let path = Self.path(in: bounds, top: topRadius).cgPath
         layer.shadowPath = path
         ring.frame = bounds
         ring.path = path
@@ -115,9 +118,8 @@ final class CardView: UIView {
         ring.mask = mask
     }
 
-    /// 卡片的外形：上角 cardTop，下角 card。两个圆角矩形合成一条轮廓（直接拼两段会在中间多画两道横线）。
-    static func path(in rect: CGRect) -> UIBezierPath {
-        let top = Theme.Radius.cardTop
+    /// 卡片的外形：上角 `top`，下角 card。两个圆角矩形合成一条轮廓（直接拼两段会在中间多画两道横线）。
+    static func path(in rect: CGRect, top: CGFloat = Theme.Radius.cardTop) -> UIBezierPath {
         let bottom = Theme.Radius.card
         guard rect.height > top + bottom, rect.width > bottom * 2 else { return UIBezierPath(rect: rect) }
         let upper = UIBezierPath(roundedRect: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - bottom), byRoundingCorners: [.topLeft, .topRight], cornerRadii: CGSize(width: top, height: top)).cgPath
@@ -293,8 +295,8 @@ extension UIButton {
         return button
     }
 
-    /// 圆形图标按钮（`control-sm` 36，触控区由调用方补到 44）：底色和图标色由调用方给。
-    static func round(image: String, background: UIColor = Theme.surfaceInset, foreground: UIColor = Theme.ink, label: String) -> UIButton {
+    /// 圆形图标按钮（默认 `control-sm` 36，触控区由调用方补到 44）：底色和图标色由调用方给。
+    static func round(image: String, background: UIColor = Theme.surfaceInset, foreground: UIColor = Theme.ink, side: CGFloat = Theme.Size.controlSmall, label: String) -> UIButton {
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: image, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
         config.cornerStyle = .capsule
@@ -307,10 +309,54 @@ extension UIButton {
         button.accessibilityLabel = label
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: Theme.Size.controlSmall),
-            button.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall)
+            button.widthAnchor.constraint(equalToConstant: side),
+            button.heightAnchor.constraint(equalToConstant: side)
         ])
         return button
+    }
+}
+
+extension UIBarButtonItem {
+    /// sheet 顶上的返回和关闭（规范 SettingsSheet「二级页」）：34 的实色圆，`surface-inset` 底，系统不再套一层玻璃。
+    static func sheetButton(image: String, label: String, action: @escaping () -> Void) -> UIBarButtonItem {
+        let button = UIButton.round(image: image, side: 34, label: label)
+        button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+        let item = UIBarButtonItem(customView: button)
+        item.hidesSharedBackground = true
+        return item
+    }
+}
+
+/// 设置、Artifacts 这类整页 sheet 的导航（规范 SettingsSheet「外观」）：底是 `surface-sheet`，导航栏透明，标题用 `title`；
+/// 推进去的每一页左边是自己的返回圆。换了自己的返回，侧滑返回要导航控制器自己放行。
+final class SheetNavigationController: UINavigationController, UIGestureRecognizerDelegate {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = Theme.surfaceSheet
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.titleTextAttributes = [.font: Theme.font(.title), .foregroundColor: Theme.ink]
+        navigationBar.standardAppearance = appearance
+        navigationBar.scrollEdgeAppearance = appearance
+        navigationBar.compactAppearance = appearance
+        navigationBar.prefersLargeTitles = false
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    override func pushViewController(_ viewController: UIViewController, animated: Bool) {
+        if !viewControllers.isEmpty {
+            viewController.navigationItem.hidesBackButton = true
+            viewController.navigationItem.leftBarButtonItem = .sheetButton(image: "chevron.left", label: "返回") { [weak self, weak viewController] in
+                guard let self, let viewController, self.topViewController === viewController else { return }
+                self.popViewController(animated: true)
+            }
+        }
+        viewController.navigationItem.largeTitleDisplayMode = .never
+        super.pushViewController(viewController, animated: animated)
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
     }
 }
 
@@ -350,5 +396,30 @@ final class FieldView: UITextField {
 
     override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
         textRect(forBounds: bounds)
+    }
+}
+
+/// 开关（规范 README「开关」）：开着 `action` 底、`on-action` 圆钮；关着交给系统。
+final class SwitchView: UISwitch {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        onTintColor = Theme.action
+        addAction(UIAction { [weak self] _ in self?.paintThumb() }, for: .valueChanged)
+        paintThumb()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isOn: Bool {
+        didSet { paintThumb() }
+    }
+
+    override func setOn(_ on: Bool, animated: Bool) {
+        super.setOn(on, animated: animated)
+        paintThumb()
+    }
+
+    private func paintThumb() {
+        thumbTintColor = isOn ? Theme.onAction : nil
     }
 }

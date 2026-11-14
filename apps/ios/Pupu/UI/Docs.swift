@@ -1,167 +1,520 @@
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
-/// Artifacts：资料、skill 和页面，组织层和看得到的空间里的，按地方分组。点开读正文，页面放进隔开的 WKWebView；
-/// 右上角上传文字或一页 HTML。照网页的 Docs.tsx。
-final class DocsViewController: UITableViewController {
+/// Artifacts（规范 Docs）：资料、skill 和页面，组织层和看得到的空间里的。是主界面里的一个地方，画在会话卡片上（窗框 `canvas`），
+/// 从切换 sheet 的「Artifacts」一行进。卡片里自己带一个不显示导航栏的导航：列表和正文页左右推，正文页左上角画返回，侧滑也能回。
+/// 照网页的 Docs.tsx。
+final class DocsNavigationController: UINavigationController, UIGestureRecognizerDelegate {
+    convenience init(identity: Identity) {
+        self.init(rootViewController: DocsViewController(identity: identity))
+        setNavigationBarHidden(true, animated: false)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
+    }
+
+    /// 从切换 sheet 再点一次 Artifacts：回到列表，重新拉一遍。
+    func reload() {
+        popToRootViewController(animated: false)
+        (viewControllers.first as? DocsViewController)?.load()
+    }
+}
+
+/// 返回和删除：`control-sm` 36 的圆，`surface-inset` 底（规范 Docs「正文页」）。
+private func roundButton(_ image: String, ink: UIColor = Theme.ink, label: String, action: @escaping () -> Void) -> UIButton {
+    let button = UIButton.round(image: image, foreground: ink, label: label)
+    button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+    return button
+}
+
+/// 列表（规范 Docs「列表」）：右上角「上传」，下面每个地方一组，组织在前；没有资料的地方不出组。
+/// 第一次打开先画骨架；打不开在列表的位置写原因。
+final class DocsViewController: UIViewController, UICollectionViewDelegate {
+    nonisolated private enum Section: Hashable, Sendable {
+        case top
+        case place(String?)
+        case state
+    }
+
+    nonisolated private enum Row: Hashable, Sendable {
+        case upload
+        case doc(DocMeta)
+        case skeleton
+        case empty
+        case failure(String)
+    }
+
     private let identity: Identity
-    private var view_: DocsView?
-    private var groups: [(place: DocsView.Place, docs: [DocMeta])] = []
-    private let empty = UILabel(text: "还没有 Artifacts", style: .body, color: Theme.inkMuted)
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    private var docs: DocsView?
+    private var failure: String?
+    private var collection: UICollectionView!
+    private var source: UICollectionViewDiffableDataSource<Section, Row>!
 
     init(identity: Identity) {
         self.identity = identity
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Artifacts"
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "doc")
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: "上传", image: UIImage(systemName: "plus"),
-            primaryAction: UIAction { [weak self] _ in self?.upload() }
-        )
-        navigationItem.rightBarButtonItem?.isEnabled = false
-        empty.textAlignment = .center
-        spinner.startAnimating()
-        tableView.backgroundView = spinner
-        refreshControl = UIRefreshControl(frame: .zero, primaryAction: UIAction { [weak self] _ in self?.load() })
+        view.backgroundColor = Theme.surface
+        collection = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
+        collection.backgroundColor = .clear
+        collection.delegate = self
+        collection.contentInset.bottom = Theme.Space.s6
+        collection.refreshControl = UIRefreshControl(frame: .zero, primaryAction: UIAction { [weak self] _ in self?.load() })
+        view.addSubview(collection)
+        collection.pin(to: view)
+
+        let upload = UICollectionView.CellRegistration<UICollectionViewListCell, Row> { [weak self] cell, _, _ in
+            cell.contentConfiguration = nil
+            cell.backgroundConfiguration = .clear()
+            let button = UIButton.secondary(title: "上传", image: "plus")
+            button.configuration?.imagePadding = 6
+            button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+            button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s4, bottom: 0, trailing: Theme.Space.s4)
+            button.addAction(UIAction { _ in self?.upload() }, for: .primaryActionTriggered)
+            button.isEnabled = self?.docs != nil
+            button.translatesAutoresizingMaskIntoConstraints = false
+            cell.contentView.subviews.forEach { $0.removeFromSuperview() }
+            cell.contentView.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: cell.contentView.topAnchor),
+                button.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
+                button.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
+                button.heightAnchor.constraint(equalToConstant: Theme.Size.control)
+            ])
+        }
+        let doc = UICollectionView.CellRegistration<DocRowCell, Row> { cell, _, row in
+            guard case .doc(let meta) = row else { return }
+            cell.show(meta)
+        }
+        let skeleton = UICollectionView.CellRegistration<UICollectionViewListCell, Row> { cell, _, _ in
+            cell.contentConfiguration = nil
+            cell.backgroundConfiguration = .clear()
+            cell.contentView.subviews.forEach { $0.removeFromSuperview() }
+            let view = DocsSkeletonView()
+            cell.contentView.addSubview(view)
+            view.pin(to: cell.contentView)
+        }
+        let message = UICollectionView.CellRegistration<UICollectionViewListCell, Row> { cell, _, row in
+            cell.backgroundConfiguration = .clear()
+            var content = UIListContentConfiguration.cell()
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
+            switch row {
+            case .failure(let text):
+                content.text = text
+                content.textProperties.font = Theme.font(.subheadline)
+                content.textProperties.color = Theme.dangerInk
+            default:
+                // 规范 Docs「空状态」：居中「还没有 Artifacts」（`message`，`ink`），下面一行 `subheadline`、`ink-muted`。
+                content.text = "还没有 Artifacts"
+                content.textProperties.font = Theme.font(.message)
+                content.textProperties.color = Theme.ink
+                content.textProperties.alignment = .center
+                content.secondaryText = "组织和你看得到的空间里的资料、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。"
+                content.secondaryTextProperties.font = Theme.font(.subheadline)
+                content.secondaryTextProperties.color = Theme.inkMuted
+                content.secondaryTextProperties.alignment = .center
+                content.textToSecondaryTextVerticalPadding = Theme.Space.s2
+                content.directionalLayoutMargins.top = 48
+            }
+            content.textProperties.numberOfLines = 0
+            cell.contentConfiguration = content
+        }
+        let header = UICollectionView.SupplementaryRegistration<DocsHeaderView>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, path in
+            guard case .place(let id) = self?.source.sectionIdentifier(for: path.section),
+                  let place = self?.docs?.places.first(where: { $0.id == id }) else { return }
+            view.show(place)
+        }
+        source = UICollectionViewDiffableDataSource(collectionView: collection) { view, path, row in
+            switch row {
+            case .upload: view.dequeueConfiguredReusableCell(using: upload, for: path, item: row)
+            case .doc: view.dequeueConfiguredReusableCell(using: doc, for: path, item: row)
+            case .skeleton: view.dequeueConfiguredReusableCell(using: skeleton, for: path, item: row)
+            case .empty, .failure: view.dequeueConfiguredReusableCell(using: message, for: path, item: row)
+            }
+        }
+        source.supplementaryViewProvider = { view, _, path in
+            view.dequeueConfiguredReusableSupplementary(using: header, for: path)
+        }
+        render()
         load()
+    }
+
+    /// 规范 Docs「列表」：卡片里左右 16；组之间 20，组标题和组隔 4。
+    private func makeLayout() -> UICollectionViewLayout {
+        UICollectionViewCompositionalLayout { [weak self] index, environment in
+            let section = self?.source?.sectionIdentifier(for: index)
+            let grouped: Bool = if case .place = section { true } else { false }
+            var config = UICollectionLayoutListConfiguration(appearance: grouped ? .insetGrouped : .plain)
+            config.backgroundColor = .clear
+            config.showsSeparators = grouped
+            config.separatorConfiguration.color = Theme.line
+            config.headerMode = grouped ? .supplementary : .none
+            config.headerTopPadding = 0
+            let layout = NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
+            layout.contentInsets = NSDirectionalEdgeInsets(
+                top: index == 0 ? Theme.Space.s1 : Theme.Space.s5,
+                leading: Theme.Space.s4,
+                bottom: 0,
+                trailing: Theme.Space.s4
+            )
+            layout.contentInsetsReference = .none
+            return layout
+        }
     }
 
     func load() {
         Task { [weak self, identity] in
             do {
                 let next = try await API(endpoint: identity.endpoint).docs()
-                self?.show(next)
+                self?.docs = next
+                self?.failure = nil
             } catch {
-                self?.refreshControl?.endRefreshing()
-                self?.empty.text = error.localizedDescription
-                self?.tableView.backgroundView = self?.empty
+                self?.failure = error.localizedDescription
             }
+            self?.collection.refreshControl?.endRefreshing()
+            self?.render()
         }
     }
 
-    private func show(_ next: DocsView) {
-        view_ = next
-        groups = next.places
-            .map { place in (place, next.docs.filter { $0.spaceId == place.id }) }
-            .filter { !$0.1.isEmpty }
-        refreshControl?.endRefreshing()
-        empty.text = "还没有 Artifacts"
-        tableView.backgroundView = groups.isEmpty ? empty : nil
-        navigationItem.rightBarButtonItem?.isEnabled = true
-        tableView.reloadData()
+    private func render() {
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Row>()
+        snapshot.appendSections([.top])
+        snapshot.appendItems([.upload], toSection: .top)
+        if let docs {
+            let groups = docs.places
+                .map { place in (place, docs.docs.filter { $0.spaceId == place.id }) }
+                .filter { !$0.1.isEmpty }
+            if groups.isEmpty {
+                snapshot.appendSections([.state])
+                snapshot.appendItems([.empty], toSection: .state)
+            }
+            for (place, rows) in groups {
+                snapshot.appendSections([.place(place.id)])
+                snapshot.appendItems(rows.map(Row.doc), toSection: .place(place.id))
+            }
+        } else {
+            snapshot.appendSections([.state])
+            snapshot.appendItems([failure.map(Row.failure) ?? .skeleton], toSection: .state)
+        }
+        // 「上传」拿到地方列表才能点：重配一次那一格。
+        snapshot.reconfigureItems([.upload])
+        source.apply(snapshot, animatingDifferences: false)
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { groups.count }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        groups[section].docs.count
+    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        if case .doc = source.itemIdentifier(for: indexPath) { return true }
+        return false
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        groups[section].place.name
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        guard case .doc(let meta) = source.itemIdentifier(for: indexPath) else { return }
+        open(meta)
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let doc = groups[indexPath.section].docs[indexPath.row]
-        let cell = tableView.dequeueReusableCell(withIdentifier: "doc", for: indexPath)
-        var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: doc.isSkill ? "wand.and.stars" : doc.isPage ? "chevron.left.forwardslash.chevron.right" : "doc.text")
-        content.imageProperties.tintColor = Theme.inkMuted
-        content.text = doc.title
-        content.textProperties.font = Theme.font(.body, weight: .medium)
-        content.textProperties.numberOfLines = 1
-        content.secondaryText = doc.summary.isEmpty ? nil : doc.summary
-        content.secondaryTextProperties.font = Theme.font(.subheadline)
-        content.secondaryTextProperties.color = Theme.inkMuted
-        content.secondaryTextProperties.numberOfLines = 1
-        cell.contentConfiguration = content
-        cell.accessoryType = .disclosureIndicator
-        cell.accessibilityLabel = doc.isSkill ? "\(doc.title)，skill" : doc.isPage ? "\(doc.title)，页面" : doc.title
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        let doc = groups[indexPath.section].docs[indexPath.row]
+    private func open(_ meta: DocMeta) {
         navigationController?.pushViewController(
-            DocPageViewController(identity: identity, id: doc.id, title: doc.title) { [weak self] in
-                self?.navigationController?.popToViewController(self!, animated: true)
-                self?.load()
+            DocPageViewController(identity: identity, id: meta.id) { [weak self] in
+                guard let self else { return }
+                self.navigationController?.popToViewController(self, animated: true)
+                self.load()
             },
             animated: true
         )
     }
 
     private func upload() {
-        guard let places = view_?.places else { return }
+        guard let places = docs?.places else { return }
         let form = UploadDocViewController(identity: identity, places: places) { [weak self] meta in
-            guard let self else { return }
-            self.load()
-            self.navigationController?.pushViewController(
-                DocPageViewController(identity: self.identity, id: meta.id, title: meta.title) { [weak self] in
-                    guard let self else { return }
-                    self.navigationController?.popToViewController(self, animated: true)
-                    self.load()
-                },
-                animated: true
-            )
+            self?.load()
+            self?.open(meta)
         }
-        present(UINavigationController(rootViewController: form), animated: true)
+        let navigation = SheetNavigationController(rootViewController: form)
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = Theme.Radius.sheetTop
+        }
+        present(navigation, animated: true)
     }
 }
 
-/// 读一份资料。上传的人和空间主人右上角有删除，点了就删，不再问。
+/// 一组的标题（规范 Docs「组标题」）：空间是 SpaceMark 20 加名字，组织层是 `building.2` 线条图标（20，`ink-muted`）；
+/// 名字 `footnote`、`ink-muted`，和图标隔 8，左边让出 4。
+private final class DocsHeaderView: UICollectionReusableView {
+    private let mark = SpaceMarkView()
+    private let building = UIImageView(image: UIImage(systemName: "building.2", withConfiguration: UIImage.SymbolConfiguration(pointSize: 14)))
+    private let name = UILabel(style: .footnote, color: Theme.inkMuted)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        building.tintColor = Theme.inkMuted
+        building.contentMode = .center
+        building.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            building.widthAnchor.constraint(equalToConstant: Theme.Size.mark),
+            building.heightAnchor.constraint(equalToConstant: Theme.Size.mark)
+        ])
+        name.lineBreakMode = .byTruncatingTail
+        let row = UIStackView(arrangedSubviews: [mark, building, name])
+        row.spacing = Theme.Space.s2
+        row.alignment = .center
+        addSubview(row)
+        row.pin(to: self, insets: UIEdgeInsets(top: 0, left: Theme.Space.s1, bottom: Theme.Space.s1, right: Theme.Space.s1))
+        isAccessibilityElement = true
+        accessibilityTraits = .header
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ place: DocsView.Place) {
+        let org = place.id == nil
+        mark.isHidden = org
+        building.isHidden = !org
+        if !org { mark.show(color: place.color, icon: place.icon, name: place.name) }
+        name.text = place.name
+        accessibilityLabel = place.name
+    }
+}
+
+/// 一行资料（规范 Docs「行」）：`doc.text` 18（`ink-muted`，页面是 `<>`），标题 `body` 500 一行截断，skill 在标题后跟「skill」小胶囊；
+/// 有说明时第二行 `subheadline`、`ink-muted`。行高 52 起，上下 10、左右 16，图标和字隔 12，分隔线从字的左边画。
+private final class DocRowCell: UICollectionViewListCell {
+    private let icon = UIImageView()
+    private let title = UILabel(style: .body)
+    private let skill = PaddedLabel(text: "skill")
+    private let summary = UILabel(style: .subheadline, color: Theme.inkMuted)
+    private let text = UIStackView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        icon.tintColor = Theme.inkMuted
+        icon.contentMode = .center
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        title.font = Theme.font(.body, weight: .medium)
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        summary.lineBreakMode = .byTruncatingTail
+        let line = UIStackView(arrangedSubviews: [title, skill, UIView()])
+        line.spacing = Theme.Space.s2
+        line.alignment = .center
+        text.addArrangedSubview(line)
+        text.addArrangedSubview(summary)
+        text.axis = .vertical
+        text.spacing = Theme.Space.s0_5
+        let row = UIStackView(arrangedSubviews: [icon, text])
+        row.spacing = Theme.Space.s3
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(row)
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: Theme.Space.s2_5),
+            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -Theme.Space.s2_5),
+            row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Theme.Space.s4),
+            row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Theme.Space.s4),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            separatorLayoutGuide.leadingAnchor.constraint(equalTo: text.leadingAnchor)
+        ])
+        configurationUpdateHandler = { cell, state in
+            var background = UIBackgroundConfiguration.listCell()
+            background.backgroundColor = state.isHighlighted || state.isSelected ? Theme.line : Theme.surfaceInset
+            cell.backgroundConfiguration = background
+        }
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ meta: DocMeta) {
+        icon.image = UIImage(
+            systemName: meta.isPage ? "chevron.left.forwardslash.chevron.right" : "doc.text",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: meta.isPage ? 13 : 16)
+        )
+        title.text = meta.title
+        skill.isHidden = !meta.isSkill
+        summary.text = meta.summary
+        summary.isHidden = meta.summary.isEmpty
+        accessibilityLabel = meta.isSkill ? "\(meta.title)，skill" : meta.isPage ? "\(meta.title)，页面" : meta.title
+        accessibilityValue = meta.summary.isEmpty ? nil : meta.summary
+    }
+}
+
+/// 「skill」小胶囊：`caption`，`surface` 底，`ink-muted`，左右 8。
+private final class PaddedLabel: UILabel {
+    convenience init(text: String) {
+        self.init(frame: .zero)
+        self.text = text
+        font = Theme.font(.caption)
+        textColor = Theme.inkMuted
+        backgroundColor = Theme.surface
+        clipsToBounds = true
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + Theme.Space.s2 * 2, height: size.height + Theme.Space.s0_5 * 2)
+    }
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.insetBy(dx: Theme.Space.s2, dy: 0))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.height / 2
+    }
+}
+
+/// 第一次打开的骨架：一条组标题、一组三行，`line` 色块，不放转圈。
+private final class DocsSkeletonView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityLabel = "正在打开"
+        let heading = bar(width: 64, height: 14, color: Theme.surfaceInset)
+        let group = SurfaceView(.inset, radius: Theme.Radius.row)
+        let rows = UIStackView()
+        rows.axis = .vertical
+        for (index, width) in [0.4, 0.55, 0.3].enumerated() {
+            let line = UIView()
+            line.backgroundColor = Theme.line
+            line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            if index > 0 { rows.addArrangedSubview(line) }
+            let square = bar(width: 18, height: 18, color: Theme.line, radius: 5)
+            let top = UIView()
+            let bottom = UIView()
+            [top, bottom].forEach {
+                $0.backgroundColor = Theme.line
+                $0.layer.cornerRadius = $0 === top ? 6 : 5
+            }
+            let text = UIView()
+            [top, bottom].forEach {
+                $0.translatesAutoresizingMaskIntoConstraints = false
+                text.addSubview($0)
+            }
+            NSLayoutConstraint.activate([
+                top.topAnchor.constraint(equalTo: text.topAnchor),
+                top.leadingAnchor.constraint(equalTo: text.leadingAnchor),
+                top.heightAnchor.constraint(equalToConstant: 12),
+                top.widthAnchor.constraint(equalTo: text.widthAnchor, multiplier: width),
+                bottom.topAnchor.constraint(equalTo: top.bottomAnchor, constant: Theme.Space.s2),
+                bottom.leadingAnchor.constraint(equalTo: text.leadingAnchor),
+                bottom.bottomAnchor.constraint(equalTo: text.bottomAnchor),
+                bottom.heightAnchor.constraint(equalToConstant: 10),
+                bottom.widthAnchor.constraint(equalTo: text.widthAnchor, multiplier: width + 0.2)
+            ])
+            let row = UIStackView(arrangedSubviews: [square, text])
+            row.spacing = Theme.Space.s3
+            row.alignment = .center
+            row.isLayoutMarginsRelativeArrangement = true
+            row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s4, bottom: 0, trailing: Theme.Space.s4)
+            row.heightAnchor.constraint(equalToConstant: 52).isActive = true
+            rows.addArrangedSubview(row)
+        }
+        group.addSubview(rows)
+        rows.pin(to: group)
+        let column = UIStackView(arrangedSubviews: [heading, group])
+        column.axis = .vertical
+        column.spacing = Theme.Space.s1
+        column.alignment = .leading
+        group.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        addSubview(column)
+        column.pin(to: self, insets: UIEdgeInsets(top: Theme.Space.s4, left: 0, bottom: 0, right: 0))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func bar(width: CGFloat, height: CGFloat, color: UIColor, radius: CGFloat? = nil) -> UIView {
+        let view = UIView()
+        view.backgroundColor = color
+        view.layer.cornerRadius = radius ?? height / 2
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.widthAnchor.constraint(equalToConstant: width),
+            view.heightAnchor.constraint(equalToConstant: height)
+        ])
+        return view
+    }
+}
+
+/// 正文页（规范 Docs「正文页」）：左上返回，上传的人和空间主人右边有删除，点了就删；下面隔 12 是标题（`title`）、
+/// 说明（`subheadline`、`ink-muted`）、正文，彼此隔 8。正文是 Markdown，直接写在卡片上。
+/// 页面（一页 HTML）占满卡片，标题（`headline`）写在返回键旁边。
 final class DocPageViewController: UIViewController {
     private let identity: Identity
     private let id: String
     private let onDeleted: () -> Void
+    private let scroll = UIScrollView()
     private let stack = UIStackView()
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let bar = UIStackView()
+    private let pageTitle = UILabel(style: .headline)
+    private let failure = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
+    private var delete: UIButton?
 
-    init(identity: Identity, id: String, title: String, onDeleted: @escaping () -> Void) {
+    init(identity: Identity, id: String, onDeleted: @escaping () -> Void) {
         self.identity = identity
         self.id = id
         self.onDeleted = onDeleted
         super.init(nibName: nil, bundle: nil)
-        // 标题在正文顶上大字写着，导航栏不再重复；返回按钮的提示用它。
-        navigationItem.backButtonTitle = title
-        navigationItem.largeTitleDisplayMode = .never
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.surfaceSheet
-        let scroll = UIScrollView()
+        view.backgroundColor = Theme.surface
+        let back = roundButton("chevron.left", label: "回到 Artifacts") { [weak self] in
+            self?.navigationController?.popViewController(animated: true)
+        }
+        pageTitle.isHidden = true
+        pageTitle.lineBreakMode = .byTruncatingTail
+        pageTitle.accessibilityTraits = .header
+        bar.addArrangedSubview(back)
+        bar.addArrangedSubview(pageTitle)
+        bar.addArrangedSubview(UIView())
+        bar.spacing = Theme.Space.s3
+        bar.alignment = .center
+        failure.isHidden = true
+
         scroll.alwaysBounceVertical = true
         view.addSubview(scroll)
         scroll.pin(to: view)
-        stack.axis = .vertical
-        stack.spacing = Theme.Space.s3
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(stack)
+        let column = UIStackView(arrangedSubviews: [bar, failure, stack])
+        column.axis = .vertical
+        column.spacing = Theme.Space.s3
+        column.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(column)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s4),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
-            stack.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: Theme.Space.s5),
-            stack.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -Theme.Space.s5)
+            column.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s1),
+            column.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
+            column.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
+            column.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -Theme.Space.s4)
         ])
-        spinner.startAnimating()
-        stack.addArrangedSubview(spinner)
+        stack.axis = .vertical
+        stack.spacing = Theme.Space.s2
+        stack.addArrangedSubview(PageSkeletonView())
         Task { [weak self, identity, id] in
             do {
                 let doc = try await API(endpoint: identity.endpoint).doc(id)
                 self?.show(doc)
             } catch {
-                self?.showError(error.localizedDescription)
+                self?.showMissing()
             }
         }
     }
@@ -169,12 +522,9 @@ final class DocPageViewController: UIViewController {
     private func show(_ doc: DocView) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if doc.mayDelete == true {
-            let delete = UIBarButtonItem(
-                title: "删除", image: UIImage(systemName: "trash"),
-                primaryAction: UIAction { [weak self] _ in self?.delete() }
-            )
-            delete.tintColor = Theme.dangerInk
-            navigationItem.rightBarButtonItem = delete
+            let delete = roundButton("trash", ink: Theme.dangerInk, label: "删除") { [weak self] in self?.remove() }
+            bar.addArrangedSubview(delete)
+            self.delete = delete
         }
         if doc.kind == "page" {
             showPage(doc)
@@ -186,70 +536,121 @@ final class DocPageViewController: UIViewController {
         if !doc.summary.isEmpty {
             stack.addArrangedSubview(UILabel(text: doc.summary, style: .subheadline, color: Theme.inkMuted, lines: 0))
         }
-        stack.setCustomSpacing(Theme.Space.s4, after: stack.arrangedSubviews.last!)
+        let body = UIStackView()
+        body.axis = .vertical
+        body.spacing = Theme.Space.s3
         for segment in Markdown.segments(doc.body) {
             switch segment {
             case .text(let attributed):
                 let label = LinkLabel()
                 label.attributedText = attributed
                 label.onLink = { url in UIApplication.shared.open(url) }
-                stack.addArrangedSubview(label)
+                body.addArrangedSubview(label)
             case .code(let code):
                 let block = CodeScrollView()
                 block.text = code
-                stack.addArrangedSubview(block)
+                body.addArrangedSubview(block)
             }
         }
+        stack.addArrangedSubview(body)
     }
 
-    /// 页面盖满这一屏，标题放导航栏。
+    /// 页面占满卡片：白底的沙箱，`radius-row` 圆角，外面一圈 1pt `line`。
     private func showPage(_ doc: DocView) {
-        title = doc.title
+        pageTitle.text = doc.title
+        pageTitle.isHidden = false
+        scroll.alwaysBounceVertical = false
+        scroll.isScrollEnabled = false
         let page = PageView(html: doc.body)
+        page.layer.cornerRadius = Theme.Radius.row
+        page.layer.cornerCurve = .continuous
+        page.layer.borderWidth = 1
+        page.layer.borderColor = Theme.line.resolvedColor(with: traitCollection).cgColor
+        page.clipsToBounds = true
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: Self, _: UITraitCollection) in
+            page.layer.borderColor = Theme.line.resolvedColor(with: self.traitCollection).cgColor
+        }
         view.addSubview(page)
         page.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            page.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            page.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            page.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            page.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+            page.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: Theme.Space.s3),
+            page.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -Theme.Space.s4),
+            page.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.Space.s4),
+            page.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Theme.Space.s4)
         ])
     }
 
-    private func showError(_ message: String) {
+    private func showMissing() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        stack.addArrangedSubview(UILabel(text: message, style: .body, color: Theme.dangerInk, lines: 0))
+        stack.addArrangedSubview(UILabel(text: "没有这份资料", style: .message, lines: 0))
     }
 
-    private func delete() {
-        navigationItem.rightBarButtonItem?.isEnabled = false
+    private func remove() {
+        guard let delete, delete.isEnabled else { return }
+        delete.isEnabled = false
+        delete.configuration?.showsActivityIndicator = true
+        failure.isHidden = true
         Task { [weak self, identity, id] in
             do {
                 try await API(endpoint: identity.endpoint).deleteDoc(id)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 self?.onDeleted()
             } catch {
-                self?.navigationItem.rightBarButtonItem?.isEnabled = true
-                let alert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "好", style: .default))
-                self?.present(alert, animated: true)
+                delete.isEnabled = true
+                delete.configuration?.showsActivityIndicator = false
+                self?.failure.text = error.localizedDescription
+                self?.failure.isHidden = false
             }
         }
     }
 }
 
-/// 上传文字资料：标题、一句说明、正文，放在哪，是不是做事的方法（skill）。
-final class UploadDocViewController: UIViewController {
+/// 正文页的骨架：标题、说明和三行正文的 `surface-inset` 色条。
+private final class PageSkeletonView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityLabel = "正在打开"
+        let column = UIStackView()
+        column.axis = .vertical
+        column.spacing = Theme.Space.s3
+        column.alignment = .leading
+        for (width, height) in [(0.4, 20.0), (0.25, 14.0), (0.92, 16.0), (0.85, 16.0), (0.6, 16.0)] {
+            let bar = UIView()
+            bar.backgroundColor = Theme.surfaceInset
+            bar.layer.cornerRadius = height / 2
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            column.addArrangedSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.heightAnchor.constraint(equalToConstant: height),
+                bar.widthAnchor.constraint(equalTo: column.widthAnchor, multiplier: width)
+            ])
+        }
+        addSubview(column)
+        column.pin(to: self)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+/// 上传（规范 Docs「上传」）：标题、一句说明、正文，「选文件」和「放在哪」，是不是做事的方法（skill），最下面「取消」「上传」并排等宽。
+/// 规范画的是居中弹窗；手机上要打字，放进整页 sheet，里面的排法照弹窗。正文认出是一整页 HTML 就存成页面，skill 开关换成一句话。
+final class UploadDocViewController: UIViewController, UIDocumentPickerDelegate {
     private let identity: Identity
     private let places: [DocsView.Place]
     private let onDone: (DocMeta) -> Void
-    private let titleField = UITextField()
-    private let summaryField = UITextField()
+    private let titleField = FieldView()
+    private let summaryField = FieldView()
     private let body = UITextView()
-    private let bodyHint = UILabel(text: "贴进正文，或者一整页 HTML", style: .body, color: .placeholderText)
-    private let placeButton = UIButton(type: .system)
-    private let skill = UISwitch()
+    private let bodyHint = UILabel(text: "贴进正文，或者一整页 HTML", style: .body, color: Theme.inkMuted)
+    private let placeButton = UIButton(configuration: .filled())
+    private let skill = SwitchView()
+    private let skillRow = UIStackView()
+    private let pageNote = UILabel(text: "是一页 HTML，存成页面", style: .subheadline, color: Theme.inkMuted)
+    private let failure = UILabel(style: .subheadline, color: Theme.dangerInk, lines: 0)
+    private let save = UIButton.action(title: "上传")
     private var place: String?
+    private var busy = false
     /// 同一次上传点两下、网络重试，云端按它去重。
     private let operation = UUID().uuidString
 
@@ -266,61 +667,84 @@ final class UploadDocViewController: UIViewController {
         super.viewDidLoad()
         title = "上传"
         view.backgroundColor = Theme.surfaceSheet
-        navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "上传", primaryAction: UIAction { [weak self] _ in self?.save() })
-        navigationItem.rightBarButtonItem?.style = .done
 
         for (field, placeholder) in [(titleField, "标题"), (summaryField, "一句说明（选填）")] {
             field.placeholder = placeholder
-            field.font = Theme.font(.body)
             field.accessibilityLabel = placeholder
             field.addAction(UIAction { [weak self] _ in self?.validate() }, for: .editingChanged)
         }
+        titleField.returnKeyType = .next
+        summaryField.returnKeyType = .next
+
+        // 正文：和输入框一样的 `surface-inset` 底、`radius-field`，8 行高。
         body.font = Theme.font(.body)
-        body.backgroundColor = .clear
+        body.textColor = Theme.ink
+        body.backgroundColor = Theme.surfaceInset
+        body.layer.cornerRadius = Theme.Radius.field
+        body.layer.cornerCurve = .continuous
         body.accessibilityLabel = "正文"
-        body.textContainerInset = .zero
+        body.textContainerInset = UIEdgeInsets(top: Theme.Space.s2_5, left: Theme.Space.s3, bottom: Theme.Space.s2_5, right: Theme.Space.s3)
         body.textContainer.lineFragmentPadding = 0
         body.delegate = self
+        body.heightAnchor.constraint(equalToConstant: 8 * (Theme.font(.body).lineHeight) + Theme.Space.s2_5 * 2).isActive = true
         bodyHint.isAccessibilityElement = false
         bodyHint.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(bodyHint)
         NSLayoutConstraint.activate([
-            bodyHint.topAnchor.constraint(equalTo: body.topAnchor),
-            bodyHint.leadingAnchor.constraint(equalTo: body.leadingAnchor)
+            bodyHint.topAnchor.constraint(equalTo: body.topAnchor, constant: Theme.Space.s2_5),
+            bodyHint.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: Theme.Space.s3)
         ])
 
-        var config = UIButton.Configuration.plain()
-        config.baseForegroundColor = Theme.ink
-        config.contentInsets = .zero
-        placeButton.configuration = config
+        // 「选文件」「放在哪」：`surface-inset` 胶囊，高 32，`subheadline`。
+        let pick = pill(title: "选文件")
+        pick.addAction(UIAction { [weak self] _ in self?.pickFile() }, for: .primaryActionTriggered)
+        placeButton.configuration = pillConfiguration(title: places.first?.name ?? "组织")
+        placeButton.configuration?.image = UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        placeButton.configuration?.imagePlacement = .trailing
+        placeButton.configuration?.imagePadding = 6
+        placeButton.configuration?.imageColorTransformer = UIConfigurationColorTransformer { _ in Theme.inkMuted }
+        placeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         placeButton.showsMenuAsPrimaryAction = true
         placeButton.changesSelectionAsPrimaryAction = true
-        placeButton.menu = UIMenu(children: places.map { item in
+        placeButton.menu = UIMenu(options: .singleSelection, children: places.map { item in
             UIAction(title: item.name, state: item.id == nil ? .on : .off) { [weak self] _ in self?.place = item.id }
         })
         placeButton.accessibilityLabel = "放在哪"
+        let files = UIStackView(arrangedSubviews: [pick, UIView(), placeButton])
+        files.alignment = .center
 
-        let fields = card([titleField, summaryField].map { row($0) })
-        let bodyCard = card([row(body, height: 180)])
-        let placeRow = row(UIStackView(arrangedSubviews: [UILabel(text: "放在哪", style: .body), UIView(), placeButton]))
-        let skillRow = row(UIStackView(arrangedSubviews: [UILabel(text: "是做事的方法（skill）", style: .body), UIView(), skill]))
-        skill.addAction(UIAction { [weak self] _ in
-            self?.summaryField.placeholder = self?.skill.isOn == true ? "什么时候用它" : "一句说明（选填）"
-        }, for: .valueChanged)
-        let options = card([placeRow, skillRow])
+        let skillLabel = UILabel(text: "是做事的方法（skill）", style: .body, lines: 0)
+        skill.addAction(UIAction { [weak self] _ in self?.updateKind() }, for: .valueChanged)
+        skillRow.addArrangedSubview(skillLabel)
+        skillRow.addArrangedSubview(skill)
+        skillRow.alignment = .center
+        skillRow.spacing = Theme.Space.s3
+        skillRow.isLayoutMarginsRelativeArrangement = true
+        skillRow.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
+        pageNote.isHidden = true
+        failure.isHidden = true
 
-        let stack = UIStackView(arrangedSubviews: [fields, bodyCard, options])
+        let cancel = UIButton.secondary(title: "取消")
+        cancel.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+        save.addAction(UIAction { [weak self] _ in self?.upload() }, for: .primaryActionTriggered)
+        let buttons = UIStackView(arrangedSubviews: [cancel, save])
+        buttons.spacing = Theme.Space.s2
+        buttons.distribution = .fillEqually
+        buttons.heightAnchor.constraint(equalToConstant: Theme.Size.control).isActive = true
+
+        let stack = UIStackView(arrangedSubviews: [titleField, summaryField, body, files, skillRow, pageNote, failure, buttons])
         stack.axis = .vertical
-        stack.spacing = Theme.Space.s4
+        stack.spacing = Theme.Space.s3
+        stack.setCustomSpacing(Theme.Space.s4, after: failure)
         let scroll = UIScrollView()
         scroll.keyboardDismissMode = .interactive
+        scroll.alwaysBounceVertical = true
         view.addSubview(scroll)
         scroll.pin(to: view)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s4),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Theme.Space.s3),
             stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Theme.Space.s6),
             stack.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: Theme.Space.s4),
             stack.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -Theme.Space.s4)
@@ -333,47 +757,73 @@ final class UploadDocViewController: UIViewController {
         titleField.becomeFirstResponder()
     }
 
-    private func card(_ rows: [UIView]) -> UIView {
-        let stack = UIStackView(arrangedSubviews: rows)
-        stack.axis = .vertical
-        let card = UIView()
-        card.backgroundColor = Theme.surfaceInset
-        card.layer.cornerRadius = Theme.Radius.row
-        card.layer.cornerCurve = .continuous
-        card.addSubview(stack)
-        stack.pin(to: card)
-        for (index, row) in rows.enumerated() where index > 0 {
-            let line = UIView()
-            line.backgroundColor = Theme.line
-            line.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(line)
-            NSLayoutConstraint.activate([
-                line.topAnchor.constraint(equalTo: row.topAnchor),
-                line.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: Theme.Space.s4),
-                line.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-                line.heightAnchor.constraint(equalToConstant: 1)
-            ])
+    private func pillConfiguration(title: String) -> UIButton.Configuration {
+        var config = UIButton.Configuration.filled()
+        config.title = title
+        config.cornerStyle = .capsule
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s3, bottom: 0, trailing: Theme.Space.s3)
+        config.paint(fill: Theme.surfaceInset, ink: Theme.ink, style: .subheadline)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = Theme.font(.subheadline)
+            attributes.foregroundColor = Theme.ink
+            return attributes
         }
-        return card
+        return config
     }
 
-    private func row(_ content: UIView, height: CGFloat = 52) -> UIView {
-        let row = UIView()
-        row.addSubview(content)
-        content.pin(to: row, insets: UIEdgeInsets(top: height > 52 ? Theme.Space.s3 : 0, left: Theme.Space.s4, bottom: height > 52 ? Theme.Space.s3 : 0, right: Theme.Space.s4))
-        row.heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
-        if let stack = content as? UIStackView { stack.alignment = .center }
-        return row
+    private func pill(title: String) -> UIButton {
+        let button = UIButton(configuration: pillConfiguration(title: title))
+        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        return button
+    }
+
+    /// 一整页 HTML 存成页面：skill 开关换成一句话，说明的占位跟着换。
+    private func updateKind() {
+        let page = PageView.looksLikePage(body.text)
+        skillRow.isHidden = page
+        pageNote.isHidden = !page
+        summaryField.placeholder = skill.isOn && !page ? "什么时候用它" : "一句说明（选填）"
     }
 
     private func validate() {
         let ready = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !body.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        navigationItem.rightBarButtonItem?.isEnabled = ready
+        save.isEnabled = ready && !busy
     }
 
-    private func save() {
-        navigationItem.rightBarButtonItem?.isEnabled = false
+    /// 「选文件」：只收 .md、.markdown、.txt、.html，读进正文；标题空着时填文件名（去掉扩展名）。
+    private func pickFile() {
+        let types = ["md", "markdown", "txt", "html", "htm"].compactMap { UTType(filenameExtension: $0) } + [.plainText, .html]
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        picker.delegate = self
+        picker.allowsMultipleSelection = false
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let url = urls.first else { return }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            failure.text = "这个文件读不出来，要是 UTF-8 的文字。"
+            failure.isHidden = false
+            return
+        }
+        body.text = text
+        bodyHint.isHidden = !text.isEmpty
+        if (titleField.text ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
+            titleField.text = url.deletingPathExtension().lastPathComponent
+        }
+        failure.isHidden = true
+        updateKind()
+        validate()
+    }
+
+    private func upload() {
+        guard !busy else { return }
+        busy = true
+        save.configuration?.showsActivityIndicator = true
+        validate()
+        failure.isHidden = true
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let summary = (summaryField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let text = body.text ?? ""
@@ -385,10 +835,11 @@ final class UploadDocViewController: UIViewController {
                 )
                 self?.dismiss(animated: true) { self?.onDone(meta) }
             } catch {
+                self?.busy = false
+                self?.save.configuration?.showsActivityIndicator = false
+                self?.failure.text = error.localizedDescription
+                self?.failure.isHidden = false
                 self?.validate()
-                let alert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "好", style: .default))
-                self?.present(alert, animated: true)
             }
         }
     }
@@ -397,6 +848,7 @@ final class UploadDocViewController: UIViewController {
 extension UploadDocViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         bodyHint.isHidden = !textView.text.isEmpty
+        updateKind()
         validate()
     }
 }

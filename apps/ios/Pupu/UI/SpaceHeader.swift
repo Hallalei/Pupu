@@ -73,10 +73,12 @@ final class BarButton: UIControl {
     }
 }
 
-/// 顶栏中间：空间标记方块加名字（`headline`）；「我的 Pupu」是 Pupu 的头像（26）加名字。合成一个元素读。
+/// 顶栏中间：空间标记方块加名字（`headline`）；「我的 Pupu」是 Pupu 的头像（26）加名字；
+/// Artifacts 是 `doc.text`（16，`ink-muted`，放在标记那么大的格子里）加名字。合成一个元素读。
 final class PlaceTitleView: UIView {
     private let mark = SpaceMarkView()
     private let avatar = UIImageView()
+    private let docs = UIImageView(image: UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16)))
     private let name = UILabel(style: .headline)
 
     override init(frame: CGRect) {
@@ -88,9 +90,17 @@ final class PlaceTitleView: UIView {
             avatar.widthAnchor.constraint(equalToConstant: 26),
             avatar.heightAnchor.constraint(equalToConstant: 26)
         ])
+        docs.tintColor = Theme.inkMuted
+        docs.contentMode = .center
+        docs.isHidden = true
+        docs.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            docs.widthAnchor.constraint(equalToConstant: Theme.Size.mark),
+            docs.heightAnchor.constraint(equalToConstant: Theme.Size.mark)
+        ])
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let row = UIStackView(arrangedSubviews: [mark, avatar, name])
+        let row = UIStackView(arrangedSubviews: [mark, avatar, docs, name])
         row.spacing = Theme.Space.s2
         row.alignment = .center
         addSubview(row)
@@ -105,6 +115,7 @@ final class PlaceTitleView: UIView {
         mark.show(project)
         mark.isHidden = false
         avatar.isHidden = true
+        docs.isHidden = true
         name.text = project.name
         accessibilityLabel = project.name
     }
@@ -114,8 +125,17 @@ final class PlaceTitleView: UIView {
         avatar.image = Avatars.round(pupu.image, letter: "P", size: 26, pixelArt: pupu.pixelArt)
         avatar.isHidden = false
         mark.isHidden = true
+        docs.isHidden = true
         name.text = "我的 Pupu"
         accessibilityLabel = "我的 Pupu"
+    }
+
+    func showDocs() {
+        docs.isHidden = false
+        mark.isHidden = true
+        avatar.isHidden = true
+        name.text = "Artifacts"
+        accessibilityLabel = "Artifacts"
     }
 }
 

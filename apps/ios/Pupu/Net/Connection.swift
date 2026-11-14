@@ -126,7 +126,7 @@ final class Connection {
             activate(next, notice: "你已经不在刚才那个 Pupu 里了。")
             return
         }
-        forget(notice: "这台手机的凭据失效了，可能是在别的设备上被吊销了。重新配对一次。")
+        forget(notice: "这台手机的授权失效了，重新配对一次就好。")
     }
 
     // MARK: 一个账号在好几个 Pupu 里

@@ -1,7 +1,8 @@
 import UIKit
 
-/// 「我」：右上角点进来的那一页，照 Hark 的设置页做。第一页上面是我是谁，下面两组入口，点进去是二级页：
-/// 账户（连接器）、电脑和它的权限分级、成员、邀请码、通知、设备和配对码、关于（连的是哪个 Pupu）。
+/// 设置（规范 SettingsSheet）：从切换 sheet 最底下自己的头像进。首页是自己、换一个 Pupu、这个 Pupu（电脑、设备、成员、模型），
+/// 最下面「这台手机」放只有手机才有的通知和关于（规范没画，记在规范对照里）。自己那一行进「账户」：头像、Google 账户、邀请码和连上的服务。
+/// 点进去是二级页：电脑和它的权限分级、成员、邀请码、通知、设备和配对码、关于（连的是哪个 Pupu）。
 /// 一页一个 `Page`，共用这一个类：列表、格子、点了做什么都在这里。
 final class SettingsViewController: UICollectionViewController {
     nonisolated enum Page: Hashable, Sendable {
@@ -44,16 +45,16 @@ final class SettingsViewController: UICollectionViewController {
 
     nonisolated private enum Section: Hashable, Sendable {
         case profile
+        /// 账户页最上面：头像、Google 账户、邀请码。
+        case me
         case orgs
         case pages(Int)
         case connected
         case services
-        case computers
-        case remoteDesktop
-        case remoteConfirm
-        case policy(computerId: String)
-        case abilities
-        case revokeComputer
+        /// 一台电脑那一块（规范 ComputerRow）：头、两行档位、吊销。
+        case panel(String)
+        /// 电脑页上离线的电脑，一台一行。
+        case offline
         case notifications
         case members
         case invites
@@ -64,97 +65,120 @@ final class SettingsViewController: UICollectionViewController {
     }
 
     nonisolated private enum Item: Hashable, Sendable {
-        /// avatar 是自己的头像地址；member 是 false 时（不是成员）点不进去换头像。
-        case profile(title: String, detail: String, avatar: String?, member: Bool)
+        /// 自己：名字和头像地址，点进「账户」。
+        case profile(title: String, avatar: String?)
         /// Pupu 自己的头像，创建者才有这一行。值是换过的地址，只用来在换了之后重画。
         case pupuAvatar(String?)
+        /// 账户页的「头像」：右边是现在的头像，点进去换。
+        case myAvatar(name: String, avatar: String?)
+        /// 只看的一行：左边名字，右边值。
+        case value(title: String, value: String)
+        /// 在用的模型。手机上只看，不带箭头、点不进去（规范 ModelSettings）。
+        case model(String)
         /// 这个账号在的一个 Pupu。`status` 是切过去时右边的字（正在切换、等已有的手机允许）。
         case org(OrgList.Org, status: String?)
         case openOwn
         case link(Page, summary: String?)
         case account(Connectors.Account, owner: String?)
         case service(Connectors.Service, busy: Bool)
-        case computer(Computer)
-        case noComputer
-        case remoteDesktop(Computer)
+        case computerHead(Computer)
+        case policy(Computer)
         case remoteConfirm(Computer)
-        case policy(computerId: String, policy: Computer.Policy, selected: Bool)
         case revokeComputer(Computer)
+        case offlineComputer(Computer)
         case notifications(Push.Status, busy: Bool)
         case member(Member, removable: Bool)
         case invite
         case inviteCode(InviteList.Invite)
         case newInvite(left: Int, busy: Bool)
         case device(Device)
-        case noDevice
-        case newCode(note: String, busy: Bool)
+        /// 「生成配对码」那一行。`failed` 时下面那句是出错的原因，换 `danger-ink`。
+        case newCode(title: String, note: String, failed: Bool, busy: Bool)
         case code(PairingCode)
-        case bridgeCommand(String)
         case server(String)
-        case version(String)
         case disconnect
+        /// 组下面的说明（`footnote`、`ink-muted`），没有行底。
         case note(String)
+
+        /// 画在 `HostCell` 里、自己排的几种。
+        var hosted: Bool {
+            switch self {
+            case .computerHead, .policy, .remoteConfirm, .code: true
+            default: false
+            }
+        }
     }
 
     private let page: Page
     private var source: UICollectionViewDiffableDataSource<Section, Item>!
     private var token: StoreToken?
-    /// 刚复制的那段文字，对应的那一行写「已复制」。
-    private var copied: String?
     private var pairing: PairingCode?
     /// 生成配对码时已经连上的设备和电脑。之后多出来的那台，就是用这个码连上的。
     private var known: Set<String> = []
     private var joined: String?
     private var creating = false
+    private var pairError: String?
+    /// 点了「收起」：码在用掉或过期之前仍然有效，照样等它连上。
+    private var pairCollapsed = false
+    /// 电脑页右上角的「配对」点开了。
+    private var pairOpen = false
+    /// 点码复制的时候：倒计时那里写两秒「已复制。」。
+    private var copiedAt: Date?
+    private var ticker: Timer?
     private var testing = false
     /// 正在连的那个服务。授权页开着的时候留着登录会话。
     private var connecting: String?
     private var signIn: SignIn?
     private var pushToken: NSObjectProtocol?
     private var avatarToken: NSObjectProtocol?
-    /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，第一页也就不放这一行。
+    /// 邀请码列表。拿到 403（不是第一个 Pupu 的创建者）一直是 nil，账户页也就不放这一行。
     private var invites: InviteList?
     private var creatingInvite = false
     /// 这个账号在的 Pupu。只有一个、也开不了自己的时候，第一页不放这一组。
     private var orgs: OrgList?
     /// 正在切过去的那个，和右边写什么。
     private var switching: (org: String, status: String)?
+    private lazy var pairButton = makePairButton()
 
     init(page: Page = .root) {
         self.page = page
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .none
-        super.init(collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+        super.init(collectionViewLayout: UICollectionViewFlowLayout())
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = page.title ?? Store.shared.computer(id: computerId ?? "")?.name
+        title = page == .root ? "设置" : page.title ?? Store.shared.computer(id: computerId ?? "")?.name
         if page == .root {
-            navigationController?.navigationBar.prefersLargeTitles = true
-            navigationItem.largeTitleDisplayMode = .never
-            navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
+            navigationItem.rightBarButtonItem = .sheetButton(image: "xmark", label: "关闭") { [weak self] in
                 self?.dismiss(animated: true)
-            })
-        } else {
-            navigationItem.largeTitleDisplayMode = .always
+            }
         }
+        collectionView.backgroundColor = Theme.surfaceSheet
+        collectionView.contentInset.bottom = Theme.Space.s6
+        collectionView.setCollectionViewLayout(makeLayout(), animated: false)
 
         let cell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configure(cell, item: item)
         }
+        let host = UICollectionView.CellRegistration<HostCell, Item> { [weak self] cell, _, item in
+            self?.configure(host: cell, item: item)
+        }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
             elementKind: UICollectionView.elementKindSectionHeader
         ) { [weak self] view, _, path in
+            // 规范 SettingsSheet：组标题 `footnote`、`ink-muted`，左边让出 4，离自己的组 4。
             var content = UIListContentConfiguration.header()
             content.text = self?.source.sectionIdentifier(for: path.section).flatMap { self?.title(of: $0) }
+            content.textProperties.font = Theme.font(.footnote)
+            content.textProperties.color = Theme.inkMuted
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s1, bottom: Theme.Space.s1, trailing: Theme.Space.s1)
             view.contentConfiguration = content
         }
         source = UICollectionViewDiffableDataSource(collectionView: collectionView) { view, path, item in
-            view.dequeueConfiguredReusableCell(using: cell, for: path, item: item)
+            if item.hosted { return view.dequeueConfiguredReusableCell(using: host, for: path, item: item) }
+            return view.dequeueConfiguredReusableCell(using: cell, for: path, item: item)
         }
         source.supplementaryViewProvider = { view, _, path in
             view.dequeueConfiguredReusableSupplementary(using: header, for: path)
@@ -168,15 +192,21 @@ final class SettingsViewController: UICollectionViewController {
             MainActor.assumeIsolated { self?.reconfigureAvatars() }
         }
         if page == .root || page == .notifications { Push.shared.register() }
-        if page == .root || page == .invites { loadInvites() }
+        if page == .accounts || page == .invites { loadInvites() }
         if page == .root { loadOrgs() }
         render()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 从邀请码页回来时，第一页那一行的「还能生成几个」跟着变。
-        if page == .root, invites != nil { loadInvites() }
+        // 从邀请码页回来时，账户页那一行的「还能生成几个」跟着变。
+        if page == .accounts, invites != nil { loadInvites() }
+        if pairing != nil { startTicking() }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stopTicking()
     }
 
     private var computerId: String? {
@@ -184,16 +214,34 @@ final class SettingsViewController: UICollectionViewController {
         return nil
     }
 
+    /// 看得见的组标题。设置首页和账户页的组只有读屏念的名字（和网页一样），不画标题。
     private func title(of section: Section) -> String? {
         switch section {
         case .connected: "已连接"
-        case .policy: "什么时候先问你"
-        case .computers: Store.shared.computers.isEmpty ? nil : "管理设备"
-        case .abilities: "这台电脑能做的"
+        case .offline: "离线的电脑"
         case .devices: "手机、浏览器和电脑 App"
         case .pair: "连接新设备"
         case .connection: "连接的 Pupu"
         default: nil
+        }
+    }
+
+    /// 规范 SettingsSheet「外观」：组之间 14；有标题的组，标题离上一组 20；组下面的说明紧跟着组（说明自己离组 8）。
+    private func makeLayout() -> UICollectionViewLayout {
+        UICollectionViewCompositionalLayout { [weak self] index, environment in
+            let section = self?.source?.sectionIdentifier(for: index)
+            let titled = section.flatMap { self?.title(of: $0) } != nil
+            var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+            config.backgroundColor = Theme.surfaceSheet
+            config.separatorConfiguration.color = Theme.line
+            config.headerMode = titled ? .supplementary : .none
+            config.headerTopPadding = 0
+            config.footerMode = .none
+            if section == .note { config.showsSeparators = false }
+            let layout = NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
+            layout.contentInsets.top = index == 0 ? Theme.Space.s2 : section == .note ? 0 : titled ? Theme.Space.s5 : 14
+            layout.contentInsets.bottom = 0
+            return layout
         }
     }
 
@@ -220,16 +268,8 @@ final class SettingsViewController: UICollectionViewController {
     private func renderRoot(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         let store = Store.shared
         let me = store.members.first(where: \.current)
-        let host = Connection.shared.endpoint?.base.host() ?? ""
         snapshot.appendSections([.profile])
-        snapshot.appendItems([
-            .profile(
-                title: me?.email ?? UIDevice.current.name,
-                detail: [me?.label, host].compactMap { $0 }.joined(separator: " · "),
-                avatar: me?.avatar,
-                member: me != nil
-            )
-        ], toSection: .profile)
+        snapshot.appendItems([.profile(title: me?.displayName ?? UIDevice.current.name, avatar: me?.avatar)], toSection: .profile)
         // 一个账号在好几个 Pupu 里：点一下切过去（docs/协作方案.md 第 1 节）。
         if let orgs, orgs.orgs.count > 1 || orgs.canOpenOwn {
             snapshot.appendSections([.orgs])
@@ -239,21 +279,21 @@ final class SettingsViewController: UICollectionViewController {
         }
         snapshot.appendSections([.pages(0), .pages(1)])
 
-        let connectors = store.connectors
-        let accounts = connectors.accounts.isEmpty ? (connectors.enabled ? "未连接" : "未开启") : "\(connectors.accounts.count) 个"
         let online = store.computers.filter(\.online).count
-        let computers = store.computers.isEmpty ? "没有" : "\(store.computers.count) 台 · \(online) 台在线"
-        // 电脑从主界面挪进了设置，排在第一行。
-        var first: [Item] = [.link(.computers, summary: computers), .link(.accounts, summary: accounts)]
-        // 创建者能换 Pupu 的头像。没开 Google 登录（没有成员）时，云端把没主人的设备都当创建者，见 members.ts 的 actorOf。
-        if me?.isCreator == true || store.members.isEmpty { first.insert(.pupuAvatar(store.pupuAvatar), at: 0) }
+        let computers = store.computers.isEmpty ? "还没有" : "\(store.computers.count) 台 · \(online) 台在线"
+        var pupu: [Item] = [
+            .link(.computers, summary: computers),
+            .link(.devices, summary: store.devices.isEmpty ? nil : "\(store.devices.count) 台")
+        ]
         // 没开 Google 登录、还没有创建者时没有成员，不显示这一行。
-        if !store.members.isEmpty { first.append(.link(.members, summary: "\(store.members.count) 人")) }
-        if let invites { first.append(.link(.invites, summary: "还能生成 \(invites.left) 个")) }
-        snapshot.appendItems(first, toSection: .pages(0))
+        if !store.members.isEmpty { pupu.append(.link(.members, summary: "\(store.members.count) 人")) }
+        if let model = store.model { pupu.append(.model(model.summary(computers: store.computers))) }
+        // 创建者能换 Pupu 的头像。没开 Google 登录（没有成员）时，云端把没主人的设备都当创建者，见 members.ts 的 actorOf。
+        if me?.isCreator == true || store.members.isEmpty { pupu.append(.pupuAvatar(store.pupuAvatar)) }
+        snapshot.appendItems(pupu, toSection: .pages(0))
+        // 只有手机才有的两行，规范没画：单放一组在最下面。
         snapshot.appendItems([
             .link(.notifications, summary: Push.shared.status.summary),
-            .link(.devices, summary: store.devices.isEmpty ? nil : "\(store.devices.count) 台"),
             .link(.about, summary: nil)
         ], toSection: .pages(1))
     }
@@ -261,7 +301,18 @@ final class SettingsViewController: UICollectionViewController {
     private func renderAccounts(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         let store = Store.shared
         let connectors = store.connectors
-        let me = store.members.first(where: \.current)?.id
+        let member = store.members.first(where: \.current)
+        let me = member?.id
+        var mine: [Item] = []
+        if let member {
+            mine.append(.myAvatar(name: member.displayName, avatar: member.avatar))
+            mine.append(.value(title: "Google 账户", value: member.email))
+        }
+        if let invites { mine.append(.link(.invites, summary: "还能生成 \(invites.left) 个")) }
+        if !mine.isEmpty {
+            snapshot.appendSections([.me])
+            snapshot.appendItems(mine, toSection: .me)
+        }
         if !connectors.accounts.isEmpty {
             snapshot.appendSections([.connected])
             snapshot.appendItems(connectors.accounts.map {
@@ -269,24 +320,33 @@ final class SettingsViewController: UICollectionViewController {
                 .account($0, owner: $0.memberId == me ? nil : $0.ownerEmail)
             }, toSection: .connected)
         }
-        snapshot.appendSections([.services, .note])
         if connectors.enabled {
+            snapshot.appendSections([.services, .note])
             snapshot.appendItems(connectors.services.map { .service($0, busy: connecting == $0.id) }, toSection: .services)
             snapshot.appendItems([
                 .note("Pupu 读邮件、看日程直接用；发信、建日程、改 issue 这类写操作，会先推到连这个账号的人的手机上批准。凭据存在这个 Pupu 自己的 open-connector 里。")
             ], toSection: .note)
         } else {
+            snapshot.appendSections([.note])
             snapshot.appendItems([
                 .note("这个 Pupu 还没配连接器。配好 open-connector 之后，这里就能连 Gmail、Google 日历、云端硬盘和 GitHub。")
             ], toSection: .note)
         }
     }
 
+    /// 电脑页（规范 ComputerRow）：在线的每台一块；离线的一台一行，点进去是同样的一块。右上角「配对」在最上面展开「连接新设备」，
+    /// 一台电脑都没有时这一组一直开着。
     private func renderComputers(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
-        let store = Store.shared
-        snapshot.appendSections([.computers])
-        snapshot.appendItems(store.computers.isEmpty ? [.noComputer] : store.computers.map { .computer($0.settled) }, toSection: .computers)
-        renderPair(&snapshot)
+        let computers = Store.shared.computers
+        navigationItem.rightBarButtonItem = computers.isEmpty ? nil : pairButton
+        pairButton.customView?.accessibilityValue = pairOpen ? "已展开" : "已收起"
+        if pairOpen || computers.isEmpty { renderPair(&snapshot) }
+        for computer in computers where computer.online { renderPanel(computer.settled, &snapshot) }
+        let offline = computers.filter { !$0.online }
+        if !offline.isEmpty {
+            snapshot.appendSections([.offline])
+            snapshot.appendItems(offline.map { .offlineComputer($0.settled) }, toSection: .offline)
+        }
     }
 
     private func renderComputer(_ id: String, _ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
@@ -296,25 +356,16 @@ final class SettingsViewController: UICollectionViewController {
             return
         }
         title = computer.name
-        // 只有主人自己的手机能开，云端也这么判。
-        let me = Store.shared.members.first(where: \.current)
-        if computer.ownerId == nil || computer.ownerId == me?.id {
-            snapshot.appendSections([.remoteDesktop])
-            snapshot.appendItems([.remoteDesktop(computer.settled)], toSection: .remoteDesktop)
-            snapshot.appendSections([.remoteConfirm])
-            snapshot.appendItems([.remoteConfirm(computer.settled)], toSection: .remoteConfirm)
-        }
-        snapshot.appendSections([.policy(computerId: id), .abilities])
-        snapshot.appendItems(Computer.Policy.allCases.map {
-            .policy(computerId: id, policy: $0, selected: computer.currentPolicy == $0)
-        }, toSection: .policy(computerId: id))
-        snapshot.appendItems([
-            .note("跑命令，读写主目录里的文件，看屏幕、点鼠标、打字。第一次操作屏幕前，要在那台电脑的系统设置里给 Pupu 电脑 App 开屏幕录制和辅助功能。")
-        ], toSection: .abilities)
-        if mayRevoke(owner: computer.ownerId) {
-            snapshot.appendSections([.revokeComputer])
-            snapshot.appendItems([.revokeComputer(computer.settled)], toSection: .revokeComputer)
-        }
+        renderPanel(computer.settled, &snapshot)
+    }
+
+    /// 一台电脑那一块：头（主人自己的接「远程控制」），「Pupu 用它之前问我」，主人自己的「远程控制前」，能吊销的接「吊销」。
+    private func renderPanel(_ computer: Computer, _ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
+        snapshot.appendSections([.panel(computer.id)])
+        var items: [Item] = [.computerHead(computer), .policy(computer)]
+        if isMine(computer) { items.append(.remoteConfirm(computer)) }
+        if mayRevoke(owner: computer.ownerId) { items.append(.revokeComputer(computer)) }
+        snapshot.appendItems(items, toSection: .panel(computer.id))
     }
 
     private func renderMembers(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
@@ -329,11 +380,12 @@ final class SettingsViewController: UICollectionViewController {
     }
 
     private func renderInvites(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
-        snapshot.appendSections([.invites, .note])
         guard let invites else {
+            snapshot.appendSections([.note])
             snapshot.appendItems([.note("加载中…")], toSection: .note)
             return
         }
+        snapshot.appendSections([.invites, .note])
         snapshot.appendItems(invites.invites.map(Item.inviteCode) + [.newInvite(left: invites.left, busy: creatingInvite)], toSection: .invites)
         snapshot.appendItems([
             .note("一个码给一个人开他自己的 Pupu，用一次就失效。没用掉的码也占名额，用不上就作废。")
@@ -342,26 +394,32 @@ final class SettingsViewController: UICollectionViewController {
 
     private func renderDevices(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
         let store = Store.shared
-        snapshot.appendSections([.devices])
-        snapshot.appendItems(store.devices.isEmpty ? [.noDevice] : store.devices.map(Item.device), toSection: .devices)
+        if store.devices.isEmpty {
+            snapshot.appendSections([.note])
+            snapshot.appendItems([.note("还没有配对的手机、浏览器或电脑 App。")], toSection: .note)
+        } else {
+            snapshot.appendSections([.devices])
+            snapshot.appendItems(store.devices.map(Item.device), toSection: .devices)
+        }
         renderPair(&snapshot)
     }
 
-    /// 生成配对码：设备页和电脑页都有，新手机、浏览器和电脑都用它连上。
+    /// 连接新设备（规范 Devices）：没生成时一整行是按钮；生成了是二维码、码和倒计时；用这个码的设备连上了、过期了或者点了「收起」，
+    /// 换回一行按钮，下面写发生了什么。设备页和电脑页都有。
     private func renderPair(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
-        let base = Connection.shared.endpoint?.base.absoluteString ?? ""
         noticeJoined(Store.shared)
         snapshot.appendSections([.pair])
-        if let pairing, pairing.expiresAt > Date.now.timeIntervalSince1970 * 1000 {
-            snapshot.appendItems([
-                .code(pairing),
-                .bridgeCommand("npm run bridge -- pair --url \(base) --code \(pairing.code)")
-            ], toSection: .pair)
-        } else {
-            let note = joined.map { "「\($0)」连上了。" }
-                ?? (pairing == nil ? "新手机、浏览器和电脑都用配对码连上。码 10 分钟内有效，用一次就作废。" : "配对码过期了，再生成一个。")
-            snapshot.appendItems([.newCode(note: note, busy: creating)], toSection: .pair)
+        let left = secondsLeft
+        if let pairing, left > 0, !pairCollapsed {
+            snapshot.appendItems([.code(pairing)], toSection: .pair)
+            return
         }
+        let expired = pairing != nil && left == 0
+        let title = creating ? "正在生成…" : joined != nil || expired ? "再生成一个配对码" : "生成配对码"
+        let note = pairError
+            ?? joined.map { "「\($0)」连上了。" }
+            ?? (expired ? "配对码已过期。" : "新手机、浏览器和电脑都用配对码连上。码 10 分钟内有效，用一次就作废。")
+        snapshot.appendItems([.newCode(title: title, note: note, failed: pairError != nil, busy: creating)], toSection: .pair)
     }
 
     private func renderAbout(_ snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
@@ -370,7 +428,7 @@ final class SettingsViewController: UICollectionViewController {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         snapshot.appendSections([.connection, .note])
         snapshot.appendItems([.server(base), .disconnect], toSection: .connection)
-        snapshot.appendItems([.version("Pupu \(version)（\(build)）")], toSection: .note)
+        snapshot.appendItems([.note("Pupu \(version)（\(build)）")], toSection: .note)
     }
 
     /// 生成码之后多出来一台设备或电脑，就是用这个码连上的：收起码，说一声。
@@ -380,145 +438,202 @@ final class SettingsViewController: UICollectionViewController {
         guard let added = connected.first(where: { !known.contains($0.0) }) else { return }
         joined = added.1
         pairing = nil
+        stopTicking()
     }
 
     // MARK: - 格子
 
-    private func configure(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.subtitleCell()
+    /// 行底：`surface-inset`，按下换 `line`（和网页的 hover 一样）；组下面的说明没有行底。
+    private func paint(_ cell: UICollectionViewListCell, plain: Bool) {
+        cell.configurationUpdateHandler = { cell, state in
+            var background = UIBackgroundConfiguration.listCell()
+            background.backgroundColor = plain ? .clear : state.isHighlighted || state.isSelected ? Theme.line : Theme.surfaceInset
+            cell.backgroundConfiguration = background
+        }
+    }
+
+    /// 一行的字：`body`、`ink`；第二行 `subheadline`、`ink-muted`，能折行。行至少 52 高。
+    private func rowContent(_ base: UIListContentConfiguration = .subtitleCell()) -> UIListContentConfiguration {
+        var content = base
         content.textProperties.font = Theme.font(.body)
         content.textProperties.color = Theme.ink
         content.secondaryTextProperties.font = Theme.font(.subheadline)
         content.secondaryTextProperties.color = Theme.inkMuted
         content.secondaryTextProperties.numberOfLines = 0
+        content.textToSecondaryTextVerticalPadding = Theme.Space.s0_5
         content.imageProperties.tintColor = Theme.ink
+        content.imageToTextPadding = Theme.Space.s3
+        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 15, leading: Theme.Space.s4, bottom: 15, trailing: Theme.Space.s4)
+        return content
+    }
+
+    /// 两行字的行：上下 `space-2.5` 10。
+    private func twoLines(_ content: inout UIListContentConfiguration) {
+        content.directionalLayoutMargins.top = Theme.Space.s2_5
+        content.directionalLayoutMargins.bottom = Theme.Space.s2_5
+    }
+
+    /// 「这个 Pupu」这一组左边的线条图标：20 见方。
+    private func icon(_ content: inout UIListContentConfiguration, _ symbol: String) {
+        content.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17))
+        content.imageProperties.maximumSize = CGSize(width: 20, height: 20)
+        content.imageProperties.reservedLayoutSize = CGSize(width: 20, height: 20)
+    }
+
+    private var chevron: UICellAccessory {
+        .disclosureIndicator(options: .init(tintColor: Theme.inkFaint))
+    }
+
+    private func summary(_ text: String) -> UICellAccessory {
+        .label(text: text, options: .init(tintColor: Theme.inkMuted, font: Theme.font(.subheadline)))
+    }
+
+    /// 行尾的文字按钮（「吊销」「移除」「断开」「作废」）：`subheadline`，`danger-ink`。
+    private func textButton(_ title: String, label: String? = nil, action: @escaping () -> Void) -> UICellAccessory {
+        var config = UIButton.Configuration.plain()
+        config.title = title
+        config.contentInsets = NSDirectionalEdgeInsets(top: Theme.Space.s2, leading: Theme.Space.s1, bottom: Theme.Space.s2, trailing: 0)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = Theme.font(.subheadline)
+            attributes.foregroundColor = Theme.dangerInk
+            return attributes
+        }
+        let button = UIButton(configuration: config, primaryAction: UIAction { _ in action() })
+        button.accessibilityLabel = label
+        return .customView(configuration: .init(customView: button, placement: .trailing(), reservedLayoutWidth: .actual))
+    }
+
+    /// 名字后面跟一段 `ink-muted` 的字，比如「iPhone · 这台手机」。
+    private func name(_ name: String, suffix: String?) -> NSAttributedString {
+        let text = NSMutableAttributedString(string: name, attributes: [.font: Theme.font(.body), .foregroundColor: Theme.ink])
+        if let suffix {
+            text.append(NSAttributedString(string: " · \(suffix)", attributes: [.font: Theme.font(.body), .foregroundColor: Theme.inkMuted]))
+        }
+        return text
+    }
+
+    private func configure(_ cell: UICollectionViewListCell, item: Item) {
+        var content = rowContent()
         cell.accessories = []
-        cell.backgroundConfiguration = cell.defaultBackgroundConfiguration()
         cell.accessibilityTraits = []
+        var plain = false
         switch item {
-        case .profile(let title, let detail, let avatar, let member):
+        case .profile(let title, let avatar):
+            // 规范 SettingsSheet：头像 42、名字 `headline`，下面「账户、连上的服务」，这一行 64 高。
             content.text = title
-            content.textProperties.font = Theme.font(.title)
-            content.secondaryText = detail
+            content.textProperties.font = Theme.font(.headline)
+            content.secondaryText = "账户、连上的服务"
+            content.secondaryTextProperties.numberOfLines = 1
             content.image = Avatars.round(
                 Avatars.shared.image(avatar),
                 letter: Avatars.letter(title),
-                size: Theme.Size.control,
-                pixelArt: Avatars.isPixelArt(avatar)
+                size: 42,
+                pixelArt: Avatars.isPixelArt(avatar),
+                fill: Theme.surface
             )
-            if member { cell.accessories = [.disclosureIndicator()] }
-            content.imageProperties.maximumSize = CGSize(width: Theme.Size.control, height: Theme.Size.control)
-            content.imageToTextPadding = Theme.Space.s3
-            content.directionalLayoutMargins = NSDirectionalEdgeInsets(
-                top: Theme.Space.s3, leading: Theme.Space.s4, bottom: Theme.Space.s3, trailing: Theme.Space.s4
-            )
+            content.imageProperties.maximumSize = CGSize(width: 42, height: 42)
+            content.directionalLayoutMargins.top = 11
+            content.directionalLayoutMargins.bottom = 11
+            cell.accessories = [chevron]
         case .pupuAvatar:
-            content = UIListContentConfiguration.cell()
-            content.textProperties.font = Theme.font(.body)
-            content.textProperties.color = Theme.ink
+            content = rowContent(.cell())
             content.text = "Pupu 的头像"
             let pupu = Avatars.shared.pupu()
-            content.image = Avatars.round(pupu.image, letter: "P", size: 28, pixelArt: pupu.pixelArt)
-            content.imageProperties.maximumSize = CGSize(width: 28, height: 28)
-            cell.accessories = [.disclosureIndicator()]
+            content.image = Avatars.round(pupu.image, letter: "P", size: 20, pixelArt: pupu.pixelArt)
+            content.imageProperties.maximumSize = CGSize(width: 20, height: 20)
+            content.imageProperties.reservedLayoutSize = CGSize(width: 20, height: 20)
+            cell.accessories = [chevron]
+        case .myAvatar(let name, let avatar):
+            content = rowContent(.cell())
+            content.text = "头像"
+            let image = UIImageView(image: Avatars.round(
+                Avatars.shared.image(avatar),
+                letter: Avatars.letter(name),
+                size: 28,
+                pixelArt: Avatars.isPixelArt(avatar),
+                fill: Theme.surface
+            ))
+            image.accessibilityLabel = "现在的头像"
+            cell.accessories = [.customView(configuration: .init(customView: image, placement: .trailing(), reservedLayoutWidth: .actual)), chevron]
+        case .value(let title, let value):
+            content = rowContent(.valueCell())
+            content.text = title
+            content.secondaryText = value
+            content.secondaryTextProperties.numberOfLines = 1
+            content.prefersSideBySideTextAndSecondaryText = true
+        case .model(let summary):
+            content = rowContent(.valueCell())
+            content.text = "模型"
+            content.secondaryText = summary
+            content.secondaryTextProperties.numberOfLines = 1
+            content.prefersSideBySideTextAndSecondaryText = true
+            icon(&content, "sparkles")
         case .org(let org, let status):
-            content = UIListContentConfiguration.cell()
-            content.textProperties.font = Theme.font(.body)
-            content.textProperties.color = Theme.ink
+            // 规范 SettingsSheet：那个 Pupu 的头像 28（像素猫，不用名字的字），右边「N 人」，当前的打勾。
+            content = rowContent(.cell())
             content.text = org.name
-            content.image = Avatars.round(nil, letter: Avatars.letter(org.creator ?? org.name), size: 28, pixelArt: false)
+            let cat = org.current ? Avatars.shared.pupu() : orgAvatar(org)
+            content.image = Avatars.round(cat.image, letter: "P", size: 28, pixelArt: cat.pixelArt)
             content.imageProperties.maximumSize = CGSize(width: 28, height: 28)
-            cell.accessories = [.label(text: status ?? "\(org.members) 人", options: .init(tintColor: Theme.inkMuted, font: Theme.font(.body)))]
+            cell.accessories = [summary(status ?? "\(org.members) 人")]
             if org.current {
                 cell.accessories.append(.checkmark(options: .init(tintColor: Theme.ink)))
                 cell.accessibilityTraits = [.selected]
             }
         case .openOwn:
-            content = UIListContentConfiguration.cell()
-            content.textProperties.font = Theme.font(.body)
-            content.textProperties.color = Theme.ink
+            content = rowContent(.cell())
             content.text = "开自己的 Pupu"
-            content.image = UIImage(systemName: "plus")
-            content.imageProperties.tintColor = Theme.ink
-        case .link(let target, let summary):
-            content = UIListContentConfiguration.cell()
-            content.textProperties.font = Theme.font(.body)
-            content.textProperties.color = Theme.ink
+            content.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16))
+            content.imageProperties.reservedLayoutSize = CGSize(width: 28, height: 28)
+        case .link(let target, let text):
+            content = rowContent(.cell())
             content.text = target.title
-            content.image = UIImage(systemName: target.symbol)
-            content.imageProperties.tintColor = Theme.ink
-            if let summary {
-                cell.accessories.append(.label(text: summary, options: .init(tintColor: Theme.inkMuted, font: Theme.font(.body))))
-            }
-            cell.accessories.append(.disclosureIndicator())
+            // 只有设置首页的入口左边画图标；账户页的「邀请码」不画，和「头像」「Google 账户」对齐。
+            if page == .root { icon(&content, target.symbol) }
+            if let text { cell.accessories.append(summary(text)) }
+            cell.accessories.append(chevron)
         case .account(let account, let owner):
             content.text = account.name
             content.secondaryText = [account.account, owner.map { "\($0) 连的" }].compactMap { $0 }.joined(separator: " · ")
             content.image = UIImage(systemName: symbol(of: account.service))
+            twoLines(&content)
             if account.removable {
-                let remove = UIButton(configuration: .plain(), primaryAction: UIAction(image: UIImage(systemName: "trash")) { [weak self] _ in
-                    self?.confirmRemove(account)
-                })
-                remove.configuration?.baseForegroundColor = Theme.inkMuted
-                remove.accessibilityLabel = "断开\(account.name)"
-                cell.accessories = [.customView(configuration: .init(customView: remove, placement: .trailing()))]
+                cell.accessories = [textButton("断开", label: "断开\(account.name)") { [weak self] in self?.confirmRemove(account) }]
             }
         case .service(let service, let busy):
             content.text = service.name
             content.secondaryText = service.detail
             content.image = UIImage(systemName: service.symbol)
+            twoLines(&content)
+            // 行里的小胶囊（网页 PILL_ROW）：`surface` 底、往里收 1pt `line`，高 32，`subheadline` 600。
             var config = UIButton.Configuration.filled()
             config.title = busy ? "正在连…" : "连接"
             config.cornerStyle = .capsule
-            config.baseBackgroundColor = Theme.surfaceInset
-            config.baseForegroundColor = Theme.ink
-            config.buttonSize = .small
+            config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: Theme.Space.s3, bottom: 0, trailing: Theme.Space.s3)
+            config.background.strokeColor = Theme.line
+            config.background.strokeWidth = 1
+            config.paint(fill: Theme.surface, ink: Theme.ink, style: .subheadline)
             let connect = UIButton(configuration: config, primaryAction: UIAction { [weak self] _ in
                 self?.connect(service)
             })
+            connect.configurationUpdateHandler = { button in
+                button.configuration?.paint(fill: Theme.surface, ink: button.isEnabled ? Theme.ink : Theme.inkMuted, pressed: button.isHighlighted, style: .subheadline)
+            }
+            connect.heightAnchor.constraint(equalToConstant: 32).isActive = true
             connect.isEnabled = connecting == nil
-            cell.accessories = [.customView(configuration: .init(customView: connect, placement: .trailing()))]
-        case .computer(let computer):
+            cell.accessories = [.customView(configuration: .init(customView: connect, placement: .trailing(), reservedLayoutWidth: .actual))]
+        case .offlineComputer(let computer):
             content.text = computer.name
-            content.secondaryText = [computer.label, email(of: computer.ownerId)]
-                .compactMap { $0 }.joined(separator: " · ")
-            content.image = UIImage(systemName: "circle.fill")
-            content.imageProperties.tintColor = computer.online ? Theme.online : Theme.offline
-            content.imageProperties.maximumSize = CGSize(width: 8, height: 8)
-            // 学 Grok Bot 的「电脑」页：每台电脑右边直接是分级的下拉，不用点进去。
-            cell.accessories = [
-                .customView(configuration: .init(customView: policyMenu(for: computer), placement: .trailing())),
-                .disclosureIndicator()
-            ]
-        case .noComputer:
-            content.text = "还没有授权的电脑"
-            content.secondaryText = "在下面生成配对码，在电脑上配对之后，这里会显示它在不在线。"
-        case .remoteDesktop(let computer):
-            // 墨色的主操作：整行就是按钮。不用 Pupu 正在用这台电脑。
-            content = UIListContentConfiguration.cell()
-            content.text = computer.online ? "远程控制" : "离线，连上才能远程控制"
-            content.textProperties.font = Theme.font(.body, weight: .semibold)
-            content.textProperties.color = Theme.onAction
-            content.textProperties.alignment = .center
-            content.image = computer.online ? UIImage(systemName: "cursorarrow") : nil
-            content.imageProperties.tintColor = Theme.onAction
-            var background = UIBackgroundConfiguration.listCell()
-            background.backgroundColor = computer.online ? Theme.action : Theme.action.withAlphaComponent(0.35)
-            background.cornerRadius = Theme.Size.control / 2
-            cell.backgroundConfiguration = background
-            cell.accessibilityTraits = computer.online ? .button : [.button, .notEnabled]
-        case .remoteConfirm(let computer):
-            content.text = "远程控制前"
-            cell.accessories = [.customView(configuration: .init(customView: remoteConfirmMenu(for: computer), placement: .trailing()))]
-        case .policy(let computerId, let policy, let selected):
-            content.text = policy.title
-            let allowed = Store.shared.computer(id: computerId).map { mayChangePolicy($0, to: policy) } ?? false
-            content.textProperties.color = allowed ? Theme.ink : Theme.inkMuted
-            cell.accessories = selected ? [.checkmark()] : []
-        case .revokeComputer(let computer):
-            content = UIListContentConfiguration.cell()
-            content.text = "吊销「\(computer.name)」"
+            content.secondaryAttributedText = statusText(computer.label, online: false)
+            icon(&content, "desktopcomputer")
+            twoLines(&content)
+            cell.accessories = [chevron]
+        case .revokeComputer:
+            content = rowContent(.cell())
+            content.text = "吊销"
             content.textProperties.color = Theme.dangerInk
+            cell.accessibilityTraits = .button
         case .notifications(let status, let busy):
             switch status {
             case .on:
@@ -535,8 +650,11 @@ final class SettingsViewController: UICollectionViewController {
                 content.secondaryText = "点一下去系统设置里打开。关着的话，只有打开 App 才看得到要批准的事。"
             }
             content.textProperties.font = Theme.font(.body, weight: .semibold)
+            twoLines(&content)
+            content.directionalLayoutMargins.top = Theme.Space.s3
+            content.directionalLayoutMargins.bottom = Theme.Space.s3
         case .member(let member, let removable):
-            content.text = member.current ? "\(member.email) · 你" : member.email
+            content.attributedText = name(member.email, suffix: member.current ? "你" : nil)
             content.secondaryText = member.label
             // 规范 Avatar：成员列表 32；行是 surface-inset 底，首字的圆垫 surface。
             content.image = Avatars.round(
@@ -547,95 +665,136 @@ final class SettingsViewController: UICollectionViewController {
                 fill: Theme.surface
             )
             content.imageProperties.maximumSize = CGSize(width: 32, height: 32)
-            content.imageToTextPadding = Theme.Space.s3
+            twoLines(&content)
             if removable {
-                let remove = UIButton(configuration: .plain(), primaryAction: UIAction(title: "移除") { [weak self] _ in
-                    self?.confirmRemove(member)
-                })
-                remove.configuration?.baseForegroundColor = Theme.dangerInk
-                cell.accessories = [.customView(configuration: .init(customView: remove, placement: .trailing()))]
+                cell.accessories = [textButton("移除", label: "移除 \(member.email)") { [weak self] in self?.confirmRemove(member) }]
             }
         case .invite:
             content.text = "邀请成员"
             content.textProperties.font = Theme.font(.body, weight: .semibold)
             content.secondaryText = "填他的 Google 邮箱。他用这个账号登录就能一起用 Pupu；他的第一台手机要一台已经连上的手机点「允许」。"
+            content.directionalLayoutMargins.top = Theme.Space.s3
+            content.directionalLayoutMargins.bottom = Theme.Space.s3
         case .inviteCode(let invite):
             content.text = invite.code
             content.textProperties.font = UIFontMetrics(forTextStyle: .body)
                 .scaledFont(for: .monospacedSystemFont(ofSize: 17, weight: .semibold))
+            twoLines(&content)
             if let usedBy = invite.usedBy {
                 content.secondaryText = usedBy
             } else {
                 content.secondaryText = "点一下发给对方"
-                let revoke = UIButton(configuration: .plain(), primaryAction: UIAction(title: "作废") { [weak self] _ in
-                    self?.revokeInvite(invite.code)
-                })
-                revoke.configuration?.baseForegroundColor = Theme.dangerInk
-                cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+                cell.accessories = [textButton("作废", label: "作废 \(invite.code)") { [weak self] in self?.revokeInvite(invite.code) }]
             }
         case .newInvite(let left, let busy):
             content.text = busy ? "正在生成…" : "生成邀请码"
             content.textProperties.font = Theme.font(.body, weight: .semibold)
             content.textProperties.color = left > 0 ? Theme.ink : Theme.inkMuted
             content.secondaryText = left > 0 ? "还能生成 \(left) 个" : "名额用完了"
+            content.directionalLayoutMargins.top = Theme.Space.s3
+            content.directionalLayoutMargins.bottom = Theme.Space.s3
         case .device(let device):
-            content.text = device.current ? "\(device.name) · 这台手机" : device.name
+            // 规范 Devices：第一行名字，眼前这台跟「 · 这台手机」；第二行种类、谁的、上次用的时间。
+            content.attributedText = name(device.name, suffix: device.current ? "这台手机" : nil)
             content.secondaryText = device.label
-            let revoke = UIButton(configuration: .plain(), primaryAction: UIAction(title: "吊销") { [weak self] _ in
-                self?.confirmRevoke(device)
-            })
-            revoke.configuration?.baseForegroundColor = Theme.dangerInk
+            twoLines(&content)
             if mayRevoke(owner: device.memberId) {
-                cell.accessories = [.customView(configuration: .init(customView: revoke, placement: .trailing()))]
+                cell.accessories = [textButton("吊销", label: "吊销「\(device.name)」") { [weak self] in self?.confirmRevoke(device) }]
             }
-        case .noDevice:
-            content.text = "还没有配对的手机或浏览器"
-        case .newCode(let note, let busy):
-            content.text = busy ? "正在生成…" : "生成配对码"
+        case .newCode(let title, let note, let failed, let busy):
+            // 规范 Devices：内边距上下 12，字 `body` 600；下面一句 `subheadline`，出错时 `danger-ink`。
+            content.text = title
             content.textProperties.font = Theme.font(.body, weight: .semibold)
+            content.textProperties.color = busy ? Theme.inkMuted : Theme.ink
             content.secondaryText = note
-        case .code(let pairing):
-            content.text = pairing.code
-            content.textProperties.font = UIFontMetrics(forTextStyle: .title2)
-                .scaledFont(for: .monospacedSystemFont(ofSize: 28, weight: .semibold))
-            let until = Date(timeIntervalSince1970: pairing.expiresAt / 1000).formatted(date: .omitted, time: .shortened)
-            let base = Connection.shared.endpoint?.base.absoluteString ?? ""
-            content.secondaryText = (copied == pairing.code ? "已复制。" : "点一下复制。")
-                + "\(until) 前有效，用一次就作废。手机在 Pupu App 的连接页填；浏览器打开 \(base) 填。"
-        case .bridgeCommand(let command):
-            content.text = command
-            content.textProperties.font = Theme.font(.code)
-            content.textProperties.numberOfLines = 0
-            content.secondaryText = (copied == command ? "已复制。" : "点一下复制。")
-                + "电脑上在 apps/cloud 目录里跑，配好再跑 npm run bridge -- install。"
+            content.secondaryTextProperties.color = failed ? Theme.dangerInk : Theme.inkMuted
+            content.directionalLayoutMargins.top = Theme.Space.s3
+            content.directionalLayoutMargins.bottom = Theme.Space.s3
+            cell.accessibilityTraits = .button
         case .server(let base):
             content.text = base
             content.secondaryText = "这台手机的设备凭据存在钥匙串里"
-        case .version(let text):
-            content.text = nil
-            content.secondaryText = text
+            twoLines(&content)
         case .disconnect:
-            content = UIListContentConfiguration.cell()
-            content.text = "换一个 Pupu"
+            content = rowContent(.cell())
+            content.text = "退出这个 Pupu"
             content.textProperties.color = Theme.dangerInk
+            cell.accessibilityTraits = .button
         case .note(let text):
-            content.text = nil
-            content.secondaryText = text
+            // 组下面的说明：`footnote`、`ink-muted`，左边让出 4，离组 8。
+            plain = true
+            content = UIListContentConfiguration.cell()
+            content.text = text
+            content.textProperties.font = Theme.font(.footnote)
+            content.textProperties.color = Theme.inkMuted
+            content.textProperties.numberOfLines = 0
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: Theme.Space.s2, leading: Theme.Space.s1, bottom: 0, trailing: Theme.Space.s1)
+        case .computerHead, .policy, .remoteConfirm, .code:
+            break
         }
         cell.contentConfiguration = content
+        paint(cell, plain: plain)
+    }
+
+    /// 自己排的几行：电脑那一块的头、两行档位、生成好的配对码。
+    private func configure(host cell: HostCell, item: Item) {
+        cell.accessories = []
+        paint(cell, plain: false)
+        switch item {
+        case .computerHead(let computer):
+            let view = cell.hosted { ComputerHeadView() }
+            let owner = computer.ownerId.flatMap { id in Store.shared.members.first { $0.id == id }?.displayName }
+            let status = [computer.label, owner.map { "\($0)的" }].compactMap { $0 }.joined(separator: " · ")
+            view.show(
+                name: computer.name,
+                status: status,
+                online: computer.online,
+                remote: isMine(computer) ? computer.online ? .online : .offline : .none
+            )
+            view.onRemote = { [weak self] in
+                guard let self, let endpoint = Connection.shared.endpoint,
+                      let fresh = Store.shared.computer(id: computer.id), fresh.online else { return }
+                RemoteDesktopViewController.open(fresh, endpoint: endpoint, from: self)
+            }
+        case .policy(let computer):
+            let view = cell.hosted { MenuRowView() }
+            view.show(
+                title: "Pupu 用它之前问我",
+                value: computer.currentPolicy.title,
+                menu: policyMenu(for: computer),
+                label: "「\(computer.name)」上什么时候先问你"
+            )
+        case .remoteConfirm(let computer):
+            let view = cell.hosted { MenuRowView() }
+            view.show(
+                title: "远程控制前",
+                value: computer.currentRemoteConfirm.title,
+                menu: remoteConfirmMenu(for: computer),
+                label: "远程控制「\(computer.name)」前要不要确认"
+            )
+        case .code(let pairing):
+            let view = cell.hosted { PairCodeView() }
+            view.show(code: pairing.code, link: pairLink(pairing), seconds: secondsLeft, copied: copiedAt.map { Date.now.timeIntervalSince($0) < 2 } ?? false)
+            view.onCopy = { [weak self] in self?.copyCode(pairing) }
+            view.onCollapse = { [weak self] in
+                self?.pairCollapsed = true
+                self?.render()
+            }
+        default:
+            break
+        }
     }
 
     private func symbol(of service: String) -> String {
         Store.shared.connectors.services.first { $0.id == service }?.symbol ?? "link"
     }
 
-    /// 头像：名字的第一个字母放在一个圆里。
     /// 拿到了头像图，有头像的格子重画一遍。
     private func reconfigureAvatars() {
         var snapshot = source.snapshot()
         let items = snapshot.itemIdentifiers.filter {
             switch $0 {
-            case .profile, .member, .pupuAvatar: true
+            case .profile, .member, .pupuAvatar, .myAvatar, .org: true
             default: false
             }
         }
@@ -648,10 +807,10 @@ final class SettingsViewController: UICollectionViewController {
 
     override func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch source.itemIdentifier(for: indexPath) {
-        case .profile(_, _, _, let member): member
-        case .link, .pupuAvatar, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
+        case .profile, .myAvatar, .link, .pupuAvatar, .offlineComputer, .revokeComputer, .notifications, .invite, .disconnect: true
         case .inviteCode(let invite): invite.usedBy == nil
         case .newInvite(let left, let busy): left > 0 && !busy
+        case .newCode(_, _, _, let busy): !busy
         case .org(let org, _): !org.current && switching == nil
         case .openOwn: switching == nil
         default: false
@@ -662,6 +821,8 @@ final class SettingsViewController: UICollectionViewController {
         collectionView.deselectItem(at: indexPath, animated: true)
         switch source.itemIdentifier(for: indexPath) {
         case .profile:
+            navigationController?.pushViewController(SettingsViewController(page: .accounts), animated: true)
+        case .myAvatar:
             navigationController?.pushViewController(AvatarPickerViewController(), animated: true)
         case .pupuAvatar:
             navigationController?.pushViewController(AvatarPickerViewController(target: .pupu), animated: true)
@@ -672,14 +833,8 @@ final class SettingsViewController: UICollectionViewController {
             askOpenOwn()
         case .link(let target, _):
             navigationController?.pushViewController(SettingsViewController(page: target), animated: true)
-        case .computer(let computer):
+        case .offlineComputer(let computer):
             navigationController?.pushViewController(SettingsViewController(page: .computer(computer.id)), animated: true)
-        case .remoteDesktop(let computer):
-            guard computer.online, let endpoint = Connection.shared.endpoint else { return }
-            RemoteDesktopViewController.open(computer, endpoint: endpoint, from: self)
-        case .policy(let computerId, let policy, let selected):
-            guard !selected, let computer = Store.shared.computer(id: computerId), mayChangePolicy(computer, to: policy) else { return }
-            setPolicy(policy, of: computerId)
         case .revokeComputer(let computer):
             confirmRevoke(computer)
         case .notifications(let status, _):
@@ -702,17 +857,13 @@ final class SettingsViewController: UICollectionViewController {
             createInvite()
         case .newCode:
             createCode()
-        case .code(let pairing):
-            copy(pairing.code, item: .code(pairing))
-        case .bridgeCommand(let command):
-            copy(command, item: .bridgeCommand(command))
         case .disconnect:
             let sheet = UIAlertController(
                 title: nil,
                 message: "这台手机会从这个 Pupu 注销，回到连接页。要再连，就用配对码重新配对。",
                 preferredStyle: .actionSheet
             )
-            sheet.addAction(UIAlertAction(title: "换一个 Pupu", style: .destructive) { _ in
+            sheet.addAction(UIAlertAction(title: "退出这个 Pupu", style: .destructive) { _ in
                 Connection.shared.signOut()
             })
             sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
@@ -796,17 +947,18 @@ final class SettingsViewController: UICollectionViewController {
         present(sheet, animated: true)
     }
 
-    private func copy(_ text: String, item: Item) {
-        UIPasteboard.general.string = text
-        copied = text
-        var snapshot = source.snapshot()
-        snapshot.reconfigureItems([item])
-        source.apply(snapshot, animatingDifferences: false)
+    /// 点码复制：倒计时那里写两秒「已复制。」，下一跳就换回倒计时。
+    private func copyCode(_ pairing: PairingCode) {
+        UIPasteboard.general.string = pairing.code
+        copiedAt = .now
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        reconfigureCode()
     }
 
     private func createCode() {
         guard !creating, let api = Store.shared.api else { return }
         creating = true
+        pairError = nil
         render()
         Task {
             defer {
@@ -817,12 +969,83 @@ final class SettingsViewController: UICollectionViewController {
                 let code = try await api.createPairingCode()
                 known = Set(Store.shared.devices.map(\.id) + Store.shared.computers.map(\.id))
                 joined = nil
-                copied = nil
+                copiedAt = nil
+                pairCollapsed = false
                 pairing = code
+                startTicking()
             } catch {
-                show(error.localizedDescription)
+                pairError = error.localizedDescription
             }
         }
+    }
+
+    /// 还剩几秒。没有码是 0。
+    private var secondsLeft: Int {
+        guard let pairing else { return 0 }
+        return max(0, Int((pairing.expiresAt / 1000 - Date.now.timeIntervalSince1970).rounded(.up)))
+    }
+
+    /// 二维码里的链接：`pupu://pair?server=<Pupu 的地址>&code=<配对码>`，和网页一样编码。
+    private func pairLink(_ pairing: PairingCode) -> String {
+        var server = Connection.shared.endpoint?.base.absoluteString ?? ""
+        if server.hasSuffix("/") { server.removeLast() }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.!~*'()"))
+        let encode = { (text: String) in text.addingPercentEncoding(withAllowedCharacters: allowed) ?? text }
+        return "pupu://pair?server=\(encode(server))&code=\(encode(pairing.code))"
+    }
+
+    /// 倒计时每秒走一次，离开这一页就停。走完了收起，写「配对码已过期。」。
+    private func startTicking() {
+        guard ticker == nil, pairing != nil else { return }
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+    }
+
+    private func stopTicking() {
+        ticker?.invalidate()
+        ticker = nil
+    }
+
+    private func tick() {
+        guard pairing != nil else { return stopTicking() }
+        if secondsLeft == 0 {
+            stopTicking()
+            render()
+        } else {
+            reconfigureCode()
+        }
+    }
+
+    private func reconfigureCode() {
+        var snapshot = source.snapshot()
+        let codes = snapshot.itemIdentifiers.filter { if case .code = $0 { true } else { false } }
+        guard !codes.isEmpty else { return }
+        snapshot.reconfigureItems(codes)
+        source.apply(snapshot, animatingDifferences: false)
+    }
+
+    /// 电脑页右上角的「配对」（规范 Devices）：`surface-inset` 胶囊，`plus` 加「配对」，高 36。点了在最上面展开、收起「连接新设备」。
+    private func makePairButton() -> UIBarButtonItem {
+        var config = UIButton.Configuration.filled()
+        config.title = "配对"
+        config.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        config.imagePadding = Theme.Space.s1
+        config.cornerStyle = .capsule
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
+        config.paint(fill: Theme.surfaceInset, ink: Theme.ink, style: .subheadline)
+        let button = UIButton(configuration: config, primaryAction: UIAction { [weak self] _ in
+            guard let self else { return }
+            self.pairOpen.toggle()
+            self.render()
+        })
+        button.configurationUpdateHandler = { button in
+            button.configuration?.paint(fill: Theme.surfaceInset, ink: Theme.ink, pressed: button.isHighlighted, style: .subheadline)
+        }
+        button.heightAnchor.constraint(equalToConstant: Theme.Size.controlSmall).isActive = true
+        let item = UIBarButtonItem(customView: button)
+        item.hidesSharedBackground = true
+        return item
     }
 
     private func testPush() {
@@ -875,25 +1098,20 @@ final class SettingsViewController: UICollectionViewController {
         present(sheet, animated: true)
     }
 
-    /// 成员 id 对应的邮箱。
-    private func email(of member: String?) -> String? {
-        guard let member else { return nil }
-        return Store.shared.members.first { $0.id == member }?.email
+    /// 主人自己的电脑（还没主人的也算）：「远程控制」和「远程控制前」只给主人，云端也这么判。
+    private func isMine(_ computer: Computer) -> Bool {
+        let me = Store.shared.members.first(where: \.current)
+        return computer.ownerId == nil || computer.ownerId == me?.id
     }
 
-    /// 和云端 members.ts 的 mayRevoke 一样：自己名下的自己能吊销，创建者能吊销所有人的。
-    /// 还没有成员（没开 Google 登录）时都能吊销，和以前一样。
-    /// 分级的下拉：一颗小胶囊，点开是三档。别人的电脑只能往严里改，放宽的几项灰掉。
-    private func policyMenu(for computer: Computer) -> UIButton {
-        var config = UIButton.Configuration.gray()
-        config.title = computer.currentPolicy.title
-        config.image = UIImage(systemName: "chevron.up.chevron.down")
-        config.imagePlacement = .trailing
-        config.imagePadding = 4
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .caption2, scale: .small)
-        config.cornerStyle = .capsule
-        config.buttonSize = .small
-        config.baseForegroundColor = Theme.ink
+    /// 别的 Pupu 的头像：只知道预设的像素猫，上传的图、没拿到时用自带的猫。
+    private func orgAvatar(_ org: OrgList.Org) -> (image: UIImage?, pixelArt: Bool) {
+        if Avatars.isPixelArt(org.avatar), let image = Avatars.shared.image(org.avatar) { return (image, true) }
+        return (UIImage(named: "pupu-avatar"), true)
+    }
+
+    /// 分级的三档。别人的电脑只能往严里改，放宽的几项灰掉。
+    private func policyMenu(for computer: Computer) -> UIMenu {
         let actions = Computer.Policy.allCases.map { policy in
             UIAction(
                 title: policy.title,
@@ -904,35 +1122,18 @@ final class SettingsViewController: UICollectionViewController {
                 self?.setPolicy(policy, of: computer.id)
             }
         }
-        let button = UIButton(configuration: config)
-        button.menu = UIMenu(options: .singleSelection, children: actions)
-        button.showsMenuAsPrimaryAction = true
-        button.accessibilityLabel = "「\(computer.name)」上什么时候先问你：\(computer.currentPolicy.title)"
-        return button
+        return UIMenu(options: .singleSelection, children: actions)
     }
 
-    /// 远程控制前确认几档：和分级一样的小胶囊。手机按面容确认，三档都能选；放宽只有主人（这一行也只给主人）。
-    private func remoteConfirmMenu(for computer: Computer) -> UIButton {
-        var config = UIButton.Configuration.gray()
-        config.title = computer.currentRemoteConfirm.title
-        config.image = UIImage(systemName: "chevron.up.chevron.down")
-        config.imagePlacement = .trailing
-        config.imagePadding = 4
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .caption2, scale: .small)
-        config.cornerStyle = .capsule
-        config.buttonSize = .small
-        config.baseForegroundColor = Theme.ink
+    /// 远程控制前确认几档。手机按面容确认，三档都能选；放宽只有主人（这一行也只给主人）。
+    private func remoteConfirmMenu(for computer: Computer) -> UIMenu {
         let actions = Computer.RemoteConfirm.allCases.map { level in
             UIAction(title: level.title, state: computer.currentRemoteConfirm == level ? .on : .off) { [weak self] _ in
                 guard level != computer.currentRemoteConfirm else { return }
                 self?.setRemoteConfirm(level, of: computer.id)
             }
         }
-        let button = UIButton(configuration: config)
-        button.menu = UIMenu(options: .singleSelection, children: actions)
-        button.showsMenuAsPrimaryAction = true
-        button.accessibilityLabel = "远程控制「\(computer.name)」前：\(computer.currentRemoteConfirm.title)"
-        return button
+        return UIMenu(options: .singleSelection, children: actions)
     }
 
     private func setRemoteConfirm(_ level: Computer.RemoteConfirm, of computerId: String) {
@@ -970,6 +1171,8 @@ final class SettingsViewController: UICollectionViewController {
         }
     }
 
+    /// 和云端 members.ts 的 mayRevoke 一样：自己名下的自己能吊销，创建者能吊销所有人的。
+    /// 还没有成员（没开 Google 登录）时都能吊销，和以前一样。
     private func mayRevoke(owner: String?) -> Bool {
         let members = Store.shared.members
         guard !members.isEmpty else { return true }
@@ -1140,7 +1343,7 @@ final class SettingsViewController: UICollectionViewController {
 }
 
 private extension Push.Status {
-    /// 「我」第一页通知那一行右边的字。
+    /// 设置首页通知那一行右边的字。
     var summary: String {
         switch self {
         case .on, .registering, .unknown: "已打开"
@@ -1155,6 +1358,6 @@ private extension Computer {
     /// 不去掉的话，每次心跳格子都被删了重建，正点着的那一下就丢了。
     var settled: Computer {
         guard online, lastSeenAt != nil else { return self }
-        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen, remoteConfirm: remoteConfirm, remoteTrusted: remoteTrusted)
+        return Computer(id: id, name: name, ownerId: ownerId, online: online, stale: stale, lastSeenAt: nil, policy: policy, screen: screen, remoteConfirm: remoteConfirm, remoteTrusted: remoteTrusted, model: model)
     }
 }

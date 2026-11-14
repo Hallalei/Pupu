@@ -105,7 +105,6 @@ final class AvatarPickerViewController: UIViewController, UIImagePickerControlle
         super.viewDidLoad()
         title = target == .pupu ? "Pupu 的头像" : "头像"
         view.backgroundColor = Theme.surfaceSheet
-        navigationItem.largeTitleDisplayMode = .always
 
         let scroll = UIScrollView()
         scroll.alwaysBounceVertical = true

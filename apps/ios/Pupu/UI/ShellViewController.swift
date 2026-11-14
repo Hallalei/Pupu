@@ -4,12 +4,15 @@ import UIKit
 /// 顶栏直接画在窗框上：左边切换按钮打开 SpaceSwitcher，中间是在哪，右边成员胶囊打开空间设置。
 /// 会话卡最上面是状态条（「我的 Pupu」和全员里）和等你批准的请示（哪儿都有），出现时把对话往下挤，不盖住。
 /// 电脑不在主界面上：列表、配对、远程控制都在设置里，Pupu 用电脑时对话里出一张电脑卡。设置从切换 sheet 最底下进。
+/// Artifacts 也是一个地方（规范 Docs）：窗框 `canvas`，卡片里是资料列表和正文页。
 /// 一个主界面只属于一个身份：换了 Pupu 或者重新配对，RootViewController 整个换一个新的。
 final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     /// 在哪：自己的 Pupu（私聊），或者某个空间。
     private enum Place: Equatable {
         case pupu
         case space(String)
+        /// Artifacts：组织层和看得到的空间里的资料、skill 和页面。
+        case docs
     }
 
     /// 每条聊天看到过的 lastAt，按身份记：`[身份: [session: lastAt]]`，只留现在这个身份的。
@@ -39,6 +42,8 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     /// 「我的 Pupu」那条聊天，留着，切回来不用等快照。
     private var ownChatView: ChatViewController?
     private var spaceChatView: ChatViewController?
+    /// 在 Artifacts 时卡片里的那个导航；离开就放掉，下次进来重新拉。
+    private var docsView: DocsNavigationController?
     private let loading = LoadingViewController()
     private var shown: UIViewController?
 
@@ -112,6 +117,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
 
     private func go(_ next: Place) {
         place = next
+        if next != .docs { docsView = nil }
         render()
     }
 
@@ -128,6 +134,8 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         strip.update(place == .pupu || inEveryone ? doingRows : [])
         if let project = currentProject {
             display(spaceChat(project))
+        } else if place == .docs {
+            display(docs)
         } else {
             // 还不知道有没有私聊：先别开会话，免得落到全员那条，发出去全组织都看得到。
             display(Store.shared.synced ? ownChat : loading)
@@ -159,7 +167,10 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func updateHeader() {
-        if let project = currentProject {
+        if place == .docs {
+            placeTitle.showDocs()
+            if navigationItem.rightBarButtonItem != nil { navigationItem.setRightBarButton(nil, animated: true) }
+        } else if let project = currentProject {
             placeTitle.show(project)
             let tappable = project.isEveryone ? project.mayManage == true : project.ownerId != nil
             let item = members.show(project, tappable: tappable) ? membersItem : nil
@@ -188,6 +199,13 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     // MARK: 聊天
+
+    private var docs: DocsNavigationController {
+        if let docsView { return docsView }
+        let docs = DocsNavigationController(identity: identity)
+        docsView = docs
+        return docs
+    }
 
     private var ownChat: ChatViewController {
         let chats = Store.shared.chats
@@ -288,6 +306,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         view.endEditing(true)
         let switcher = SpaceSwitcherViewController(
             current: currentProject?.id,
+            docs: place == .docs,
             pupuUnread: ownUnread,
             everyoneUnread: everyoneUnread,
             openPupu: { [weak self] in self?.go(.pupu) },
@@ -303,14 +322,14 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         present(sheet(switcher), animated: true)
     }
 
-    /// 资料：组织层和看得到的空间里的。整页 sheet，里面可以推进去读一份。
+    /// Artifacts：主界面里的一个地方。已经在这里时回到列表、重新拉一遍。
     private func openDocs() {
         view.endEditing(true)
-        let docs = DocsViewController(identity: identity)
-        docs.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak docs] _ in docs?.dismiss(animated: true) })
-        let nav = UINavigationController(rootViewController: docs)
-        nav.navigationBar.prefersLargeTitles = true
-        present(sheet(nav), animated: true)
+        if place == .docs {
+            docsView?.reload()
+        } else {
+            go(.docs)
+        }
     }
 
     /// 成员胶囊：空间设置。全员只有组织创建者打得开；老项目没有主人，不弹。
@@ -338,7 +357,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func openSettings(page: SettingsViewController.Page? = nil) {
-        let navigation = UINavigationController(rootViewController: SettingsViewController())
+        let navigation = SheetNavigationController(rootViewController: SettingsViewController())
         if let page { navigation.pushViewController(SettingsViewController(page: page), animated: false) }
         present(sheet(navigation), animated: true)
     }

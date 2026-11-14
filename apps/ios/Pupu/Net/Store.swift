@@ -31,6 +31,8 @@ final class Store {
         var pupuAvatarPresets: [AvatarPreset] = []
         /// Pupu 换过的头像地址，nil 用自带的。
         var pupuAvatar: String?
+        /// 在用的模型。旧版云端没有，是 nil。
+        var model: ModelState?
         var error: String?
         var loaded = false
         /// 至少成功拉到过一次：拉失败也算 loaded，但那时 chats 还是默认的那一份，不知道有没有私聊。
@@ -153,6 +155,7 @@ final class Store {
                     avatarPresets: state.avatarPresets ?? [],
                     pupuAvatarPresets: state.pupuAvatarPresets ?? state.avatarPresets ?? [],
                     pupuAvatar: state.pupuAvatar,
+                    model: state.model,
                     error: nil,
                     loaded: true,
                     synced: true

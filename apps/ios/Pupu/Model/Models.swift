@@ -149,6 +149,12 @@ nonisolated struct Computer: Decodable, Sendable, Hashable {
     let remoteConfirm: String?
     /// 这台手机确认过（只在档位是「每台设备确认一次」时有）。
     let remoteTrusted: Bool?
+    /// 在线、电脑报过本地模型时才有：这台电脑上设的模型。没设、老的桥都是 nil。
+    let model: LocalModel?
+
+    nonisolated struct LocalModel: Decodable, Sendable, Hashable {
+        let name: String
+    }
 
     /// 老云端没有这一项：照以前每次都确认。
     var currentRemoteConfirm: RemoteConfirm { remoteConfirm.flatMap(RemoteConfirm.init(rawValue:)) ?? .always }
@@ -229,6 +235,8 @@ nonisolated struct OrgList: Decodable, Sendable {
         let members: Int
         let role: String
         let current: Bool
+        /// 那个 Pupu 的头像：只给预设的像素猫（`/avatars/…`），上传的图和老云端是 nil，用自带的猫。
+        let avatar: String?
     }
 
     let current: String
@@ -470,6 +478,40 @@ nonisolated struct PupuState: Decodable, Sendable {
     let pupuAvatarPresets: [AvatarPreset]?
     /// Pupu 换过的头像地址，没换过或旧版云端是 nil。
     let pupuAvatar: String?
+    /// 这个 Pupu 用哪个模型。旧版云端不给。
+    let model: ModelState?
+}
+
+/// 这个 Pupu 在用的模型（云端 model/settings.ts 的 ModelView）。手机上只看，换模型在网页和电脑 App 里。
+nonisolated struct ModelState: Decodable, Sendable, Hashable {
+    nonisolated struct Current: Decodable, Sendable, Hashable {
+        /// pupu、computer、key。
+        let source: String
+        /// 自己的 key 时的模型名。
+        let model: String?
+        let computerId: String?
+        /// 电脑上的 Magpie 模型。
+        let magpie: Magpie?
+
+        nonisolated struct Magpie: Decodable, Sendable, Hashable {
+            let name: String
+        }
+    }
+
+    let current: Current
+
+    /// 设置首页「模型」右边那句（规范 ModelSettings「入口」）：Pupu 自带；自己的 key 写模型名；
+    /// 电脑上的写那台电脑报的模型名，报不上来写电脑名，电脑吊销了写「电脑上的」。和网页 modelSummary 一样。
+    func summary(computers: [Computer]) -> String {
+        switch current.source {
+        case "pupu": return "Pupu 自带"
+        case "key": return current.model ?? "自己的 key"
+        default:
+            if let magpie = current.magpie { return magpie.name }
+            let computer = computers.first { $0.id == current.computerId }
+            return computer?.model?.name ?? computer?.name ?? "电脑上的"
+        }
+    }
 }
 
 /// 预设头像：成员的是像素小人，Pupu 的是 Pupu 衍生的像素猫。`url` 相对这个 Pupu 的地址。

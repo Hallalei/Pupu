@@ -368,9 +368,10 @@ final class DesktopKeyboardField: UITextView, UITextViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// 键盘上面那一条（规范 RemoteDesktop）：`surface-sheet` 底，键是 `surface-inset` 胶囊。
     private func strip() -> UIView {
         let bar = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
-        bar.backgroundColor = .secondarySystemBackground
+        bar.backgroundColor = Theme.surfaceSheet
         bar.showsHorizontalScrollIndicator = false
         let row = UIStackView()
         row.spacing = Theme.Space.s1
@@ -401,30 +402,24 @@ final class DesktopKeyboardField: UITextView, UITextViewDelegate {
         return bar
     }
 
+    /// 一个键：`surface-inset` 胶囊、`ink` 字；修饰键按住时（`isSelected`）换 `action` 底、`on-action` 字。
     private func keyButton(_ title: String, _ action: @escaping () -> Void) -> UIButton {
-        var configuration = UIButton.Configuration.gray()
+        var configuration = UIButton.Configuration.filled()
         configuration.title = title
+        configuration.cornerStyle = .capsule
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
-        return UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
+        configuration.paint(fill: Theme.surfaceInset, ink: Theme.ink)
+        let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
+        button.configurationUpdateHandler = { button in
+            let held = button.isSelected
+            button.configuration?.paint(fill: held ? Theme.action : Theme.surfaceInset, ink: held ? Theme.onAction : Theme.ink, pressed: button.isHighlighted)
+        }
+        return button
     }
 
     private func toggle(_ modifier: String) {
         if modifiers.remove(modifier) == nil { modifiers.insert(modifier) }
-        buttons[modifier]?.configuration = modifiers.contains(modifier) ? selected(buttons[modifier]) : plain(buttons[modifier])
-    }
-
-    private func selected(_ button: UIButton?) -> UIButton.Configuration {
-        var configuration = UIButton.Configuration.filled()
-        configuration.title = button?.configuration?.title
-        configuration.contentInsets = button?.configuration?.contentInsets ?? .zero
-        return configuration
-    }
-
-    private func plain(_ button: UIButton?) -> UIButton.Configuration {
-        var configuration = UIButton.Configuration.gray()
-        configuration.title = button?.configuration?.title
-        configuration.contentInsets = button?.configuration?.contentInsets ?? .zero
-        return configuration
+        buttons[modifier]?.isSelected = modifiers.contains(modifier)
     }
 
     private func press(_ key: String) {
@@ -483,6 +478,7 @@ final class DesktopControlsViewController: UIViewController {
         modalPresentationStyle = .pageSheet
         sheetPresentationController?.detents = [.medium(), .large()]
         sheetPresentationController?.prefersGrabberVisible = true
+        sheetPresentationController?.preferredCornerRadius = Theme.Radius.sheetTop
     }
 
     @available(*, unavailable)
@@ -520,7 +516,7 @@ final class DesktopControlsViewController: UIViewController {
         }, for: .valueChanged)
         stack.addArrangedSubview(row("画质", qualityPicker))
 
-        let toggle = UISwitch()
+        let toggle = SwitchView()
         toggle.isOn = viewOnly
         toggle.addAction(UIAction { [weak self] action in
             guard let control = action.sender as? UISwitch else { return }
