@@ -11,6 +11,8 @@ final class Store {
 
     struct Snapshot {
         var projects: [Project] = []
+        /// 全员空间，旧版云端是 nil。
+        var everyone: Project?
         var chats: Chats = .mainOnly
         var computers: [Computer] = []
         var approvals: [Approval] = []
@@ -68,7 +70,13 @@ final class Store {
     var api: API? { Connection.shared.endpoint.map(API.init) }
 
     func project(id: String) -> Project? {
-        current.projects.first { $0.id == id }
+        if let everyone = current.everyone, everyone.id == id { return everyone }
+        return current.projects.first { $0.id == id }
+    }
+
+    /// 空间列表：全员在第一个。
+    var spaces: [Project] {
+        (current.everyone.map { [$0] } ?? []) + current.projects
     }
 
     func computer(id: String) -> Computer? {
@@ -129,6 +137,7 @@ final class Store {
             update(for: identity) { snapshot in
                 snapshot = Snapshot(
                     projects: state.projects,
+                    everyone: state.everyone,
                     chats: state.chats ?? .mainOnly,
                     computers: state.computers,
                     approvals: state.approvals ?? [],

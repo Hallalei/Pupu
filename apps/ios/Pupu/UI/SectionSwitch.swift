@@ -1,7 +1,7 @@
 import UIKit
 
 /// 顶栏中间的两段切换：玻璃胶囊底，选中的一段用 action 填充、on-action 写字，其余用 ink。
-/// 聊天段是 Pupu 的头像加当前那条聊天，长按切换大家和私聊。
+/// 聊天段是 Pupu 的头像加「Pupu」，打开自己的私聊。
 /// 不用 UISegmentedControl：iOS 26 把它放进导航栏后，选中段画成玻璃透镜，selectedSegmentTintColor 不生效，
 /// 选中的字成了浅底白字，看不清。
 final class SectionSwitch: UIControl {
@@ -20,7 +20,7 @@ final class SectionSwitch: UIControl {
         }
     }
 
-    /// 另一条聊天有新消息时，VoiceOver 读的话。没有新消息是 nil。
+    /// 私聊有新消息时，VoiceOver 读的话。没有新消息是 nil。
     var unread: String? {
         didSet {
             dot.isHidden = unread == nil
@@ -28,16 +28,10 @@ final class SectionSwitch: UIControl {
         }
     }
 
-    /// 长按聊天段弹的菜单，nil 就不弹。
-    var chatMenu: (() -> UIMenu?)? {
-        get { chat.menu }
-        set { chat.menu = newValue }
-    }
-
     private let glass = GlassView(interactive: true)
     private let indicator = UIView()
     private let labels: [UILabel]
-    private let chat = ChatSegment()
+    private let chat = UIControl()
     private let avatar = UIImageView(image: UIImage(named: "pupu-avatar"))
     private let dot = UIView()
 
@@ -71,7 +65,6 @@ final class SectionSwitch: UIControl {
         dot.isHidden = true
         dot.isUserInteractionEnabled = false
         chat.addSubview(dot)
-        chat.isContextMenuInteractionEnabled = true
         chat.addAction(UIAction { [weak self] _ in self?.pick(Self.chatIndex) }, for: .touchUpInside)
         chat.isAccessibilityElement = true
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
@@ -145,29 +138,7 @@ final class SectionSwitch: UIControl {
             label.font = Theme.font(.subheadline, weight: index == Self.chatIndex ? .semibold : .medium)
             label.accessibilityTraits = selected ? [.button, .selected] : .button
         }
-        chat.accessibilityLabel = ["聊天，现在是\(chatTitle)", unread].compactMap { $0 }.joined(separator: "，")
+        chat.accessibilityLabel = ["我的 Pupu", unread].compactMap { $0 }.joined(separator: "，")
         chat.accessibilityTraits = selectedIndex == Self.chatIndex ? [.button, .selected] : .button
-    }
-}
-
-/// 聊天段。长按走 UIControl 自带的菜单：从这一段弹出来，不把它抬起来。
-private final class ChatSegment: UIControl {
-    var menu: (() -> UIMenu?)?
-
-    override func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let menu = menu?() else { return nil }
-        return UIContextMenuConfiguration(actionProvider: { _ in menu })
-    }
-
-    override func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        willDisplayMenuFor configuration: UIContextMenuConfiguration,
-        animator: (any UIContextMenuInteractionAnimating)?
-    ) {
-        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 }

@@ -19,6 +19,13 @@ nonisolated struct Project: Decodable, Sendable, Hashable {
     let mode: String?
     /// 协调模式下派出去的子会话。
     let children: [SpaceChild]?
+    /// 只有全员空间给：现在这个人能不能切「只派活」（组织创建者能）。
+    let mayManage: Bool?
+
+    /// 全员空间：原来的主会话（root），组织里的人都在。云端 projects.ts 的 EVERYONE_ID。
+    static let everyoneId = "everyone"
+    var isEveryone: Bool { id == Self.everyoneId }
+    var delegateOnly: Bool { mode == "coordinator" }
 
     /// 列表第二行：有进展说进展，没有说目标。都没有是 nil。
     var summary: String? {
@@ -380,33 +387,12 @@ nonisolated struct Connectors: Decodable, Sendable, Hashable {
     static let empty = Connectors(enabled: false, services: [], accounts: [])
 }
 
-/// 聊天分两条：大家是全团体共用的主会话，私聊只有本人和 Pupu。
-nonisolated enum Lane: CaseIterable, Sendable {
-    case main, `private`
-
-    var title: String {
-        switch self {
-        case .main: "大家"
-        case .private: "私聊"
-        }
-    }
-
-    var placeholder: String {
-        switch self {
-        case .main: "发给大家和 Pupu"
-        case .private: "只发给 Pupu"
-        }
-    }
-
-    /// 空聊天里 Pupu 的开场白。
-    var intro: String {
-        switch self {
-        case .main: "这是我们的聊天，会一直接着聊下去。\n小事我直接办，要持续推进的事放进项目里。"
-        case .private: "这里只有你和我，别人看不到。\n小事我直接办，要持续推进的事放进项目里。"
-        }
-    }
-
-    var other: Lane { self == .main ? .private : .main }
+/// 输入框的提示和空聊天里 Pupu 的开场白。「我的 Pupu」是自己的私聊；全员是原来的主会话，排在空间第一个。
+nonisolated enum ChatCopy {
+    static let everyoneHint = "发给组织里所有人和 Pupu"
+    static let privateHint = "只发给 Pupu"
+    static let everyoneIntro = "组织里的人都看得到这里。\n小事我直接办，要持续推进的事放进空间里。"
+    static let privateIntro = "这里只有你和我，别人看不到。\n小事我直接办，要持续推进的事放进空间里。"
 }
 
 /// 这台手机能进的两条聊天。
@@ -421,19 +407,17 @@ nonisolated struct Chats: Decodable, Sendable, Hashable {
     /// 没有成员身份时是 nil，界面不给切换。
     let `private`: Chat?
 
-    /// 云端还没给 chats 时：只有大家这一条。
+    /// 云端还没给 chats 时：只有全员这一条。
     static let mainOnly = Chats(main: Chat(session: "1", lastAt: nil), private: nil)
 
-    subscript(lane: Lane) -> Chat? {
-        switch lane {
-        case .main: main
-        case .private: self.private
-        }
-    }
+    /// 「我的 Pupu」打开的那条：自己的私聊；没有成员身份时退回全员那条。
+    var own: Chat { self.private ?? main }
 }
 
 nonisolated struct PupuState: Decodable, Sendable {
     let projects: [Project]
+    /// 全员空间。旧版云端不给。
+    let everyone: Project?
     /// 旧版云端不给。
     let chats: Chats?
     let computers: [Computer]

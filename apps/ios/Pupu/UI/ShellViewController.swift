@@ -1,6 +1,6 @@
 import UIKit
 
-/// 主界面：顶栏的两段切换（聊天、项目），右边设置，项目页左边 ≡ 打开切换空间的 sheet。
+/// 主界面：顶栏的两段切换（「我的 Pupu」私聊、项目），右边设置，项目页左边 ≡ 打开切换空间的 sheet，全员在里面第一个。
 /// 电脑不在主界面上：列表、配对、远程控制都在设置里，Pupu 用电脑时对话里出一张电脑任务卡。
 /// 顶栏下方是等你批准的请示（哪一页都在）和聊天段的「正在做」，出现时把页面内容往下挤，不盖住对话。
 /// 空间名胶囊盖在内容上，不挤内容；胶囊上有成员头像，建的人还有「邀请」，点了打开邀请 sheet。
@@ -19,7 +19,7 @@ final class ShellViewController: UIViewController {
     private static let seenKey = "pupu.chat-seen"
 
     private let identity: Identity
-    private let segments = SectionSwitch(titles: [Lane.main.title, "项目"], selected: Section.chat.rawValue)
+    private let segments = SectionSwitch(titles: ["Pupu", "项目"], selected: Section.chat.rawValue)
     private let container = UIView()
     private lazy var approvals = ApprovalStackView(relayout: { [weak self] in self?.relayoutTop() })
     private let pill = ProjectPill()
@@ -27,7 +27,6 @@ final class ShellViewController: UIViewController {
     private var pillTop: NSLayoutConstraint!
     /// 顶栏下方那一叠占的高度，加给当前页面的安全区。
     private var topInset: CGFloat = 0
-    private var lane: Lane = .main
     /// 项目对话滚到了最新的消息：胶囊淡出。
     private var atLatest = false
     private var storeToken: StoreToken?
@@ -45,8 +44,8 @@ final class ShellViewController: UIViewController {
     )
     /// 现在打开的空间。
     private var currentProject: String?
-    /// 两条聊天都留着，切回来不用等快照。
-    private var laneChats: [Lane: ChatViewController] = [:]
+    /// 「我的 Pupu」那条聊天，留着，切回来不用等快照。
+    private var ownChatView: ChatViewController?
     private var projectChat: ChatViewController?
     private lazy var noProject = NoProjectViewController(create: { [weak self] in self?.createProject() })
     private var shown: UIViewController?
@@ -78,7 +77,6 @@ final class ShellViewController: UIViewController {
             UISelectionFeedbackGenerator().selectionChanged()
             self.show(self.section)
         }, for: .valueChanged)
-        segments.chatMenu = { [weak self] in self?.laneMenu() }
         navigationItem.titleView = segments
 
         settingsButton.primaryAction = UIAction(title: "我") { [weak self] _ in self?.openSettings() }
@@ -113,7 +111,6 @@ final class ShellViewController: UIViewController {
             pill.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: Theme.Size.bubbleMax)
         ])
 
-        setLane(.main)
         storeToken = Store.shared.observe { [weak self] in self?.storeChanged() }
         Store.shared.startPolling()
         show(.chat)
@@ -145,7 +142,6 @@ final class ShellViewController: UIViewController {
     private func storeChanged() {
         updateMe()
         approvals.update(Store.shared.approvals)
-        if Store.shared.chats[lane] == nil { setLane(.main) }
         render()
     }
 
@@ -164,73 +160,62 @@ final class ShellViewController: UIViewController {
     }
 
     private func render() {
-        doing.update(Store.shared.activity, shown: section == .chat)
+        doing.update(Store.shared.activity, shown: section == .chat || inEveryone)
         switch section {
-        case .chat: display(laneChat)
+        case .chat: display(ownChat)
         case .projects: showProjects()
         }
         updatePill()
         updateUnread()
     }
 
-    private func setLane(_ next: Lane) {
-        lane = next
-        segments.chatTitle = next.title
-    }
+    /// 正在看全员空间。
+    private var inEveryone: Bool { section == .projects && currentProject == Project.everyoneId }
 
-    /// 长按聊天段的菜单。没有私聊时不弹。
-    private func laneMenu() -> UIMenu? {
-        guard Store.shared.chats.private != nil else { return nil }
-        return UIMenu(children: Lane.allCases.map { item in
-            UIAction(
-                title: item.title,
-                image: Avatars.round(Avatars.shared.pupu().image, letter: "P", size: 26, pixelArt: Avatars.shared.pupu().pixelArt)
-                    .withRenderingMode(.alwaysOriginal),
-                state: item == lane ? .on : .off
-            ) { [weak self] _ in
-                UISelectionFeedbackGenerator().selectionChanged()
-                self?.setLane(item)
-                self?.show(.chat)
-            }
-        })
-    }
-
-    private var laneChat: ChatViewController {
+    private var ownChat: ChatViewController {
         let chats = Store.shared.chats
-        let session = (chats[lane] ?? chats.main).session
-        if let existing = laneChats[lane], existing.session == session { return existing }
+        let session = chats.own.session
+        if let existing = ownChatView, existing.session == session { return existing }
+        let mine = chats.private != nil
         let chat = ChatViewController(
             identity: identity,
             session: session,
-            placeholder: lane.placeholder,
+            placeholder: mine ? ChatCopy.privateHint : ChatCopy.everyoneHint,
             projectTags: true,
-            opening: .intro(lane.intro),
+            opening: .intro(mine ? ChatCopy.privateIntro : ChatCopy.everyoneIntro),
             openProject: { [weak self] id in
                 if let project = Store.shared.project(id: id) { self?.open(project) }
             }
         )
-        laneChats[lane] = chat
+        ownChatView = chat
         return chat
     }
 
-    /// 看着的这条记下看到哪了，另一条比记下的新就亮圆点。
+    private var seen: [String: Double] {
+        get { (UserDefaults.standard.dictionary(forKey: Self.seenKey)?[identity.key] as? [String: Double]) ?? [:] }
+        set { UserDefaults.standard.set([identity.key: newValue], forKey: Self.seenKey) }
+    }
+
+    /// 这条聊天有没有没看过的回复。
+    private func isUnread(_ chat: Chats.Chat) -> Bool {
+        chat.lastAt.map { $0 > seen[chat.session] ?? 0 } ?? false
+    }
+
+    /// 看着的那条记下看到哪了；「我的 Pupu」没在看、又有新回复，聊天段亮圆点。全员的圆点在切换空间的 sheet 里。
     private func updateUnread() {
         let chats = Store.shared.chats
-        var seen = (UserDefaults.standard.dictionary(forKey: Self.seenKey)?[identity.key] as? [String: Double]) ?? [:]
-        if section == .chat, let current = chats[lane], let lastAt = current.lastAt, seen[current.session] != lastAt {
-            seen[current.session] = lastAt
-            UserDefaults.standard.set([identity.key: seen], forKey: Self.seenKey)
+        let showing: Chats.Chat? = section == .chat ? chats.own : inEveryone && chats.private != nil ? chats.main : nil
+        if let showing, let lastAt = showing.lastAt, seen[showing.session] != lastAt {
+            seen[showing.session] = lastAt
         }
-        let other = chats[lane.other]
-        let unread = other.flatMap { chat in chat.lastAt.map { $0 > seen[chat.session] ?? 0 } } ?? false
-        let label = unread ? "\(lane.other.title)有新消息" : nil
+        let label = section != .chat && isUnread(chats.own) ? "有新消息" : nil
         if segments.unread != label { segments.unread = label }
     }
 
-    /// 「项目」直接打开上次的项目；没记住就打开最近活动的那个。
+    /// 「项目」直接打开上次的空间；没记住就打开最近活动的那个，一个都没有时是全员。
     private func showProjects() {
-        let projects = Store.shared.projects
-        guard let project = projects.first(where: { $0.id == lastProject }) ?? projects.first else {
+        let spaces = Store.shared.spaces
+        guard let project = spaces.first(where: { $0.id == lastProject }) ?? Store.shared.projects.first ?? spaces.first else {
             noProject.loaded = Store.shared.loaded
             display(noProject)
             return
@@ -239,13 +224,16 @@ final class ShellViewController: UIViewController {
         currentProject = project.id
         lastProject = project.id
         if projectChat?.session != project.session {
+            let everyone = project.isEveryone
             let chat = ChatViewController(
                 identity: identity,
                 session: project.session,
-                placeholder: "在「\(project.name)」里说",
-                projectTags: false,
-                opening: .project(project),
-                openProject: { _ in }
+                placeholder: everyone ? ChatCopy.everyoneHint : "在「\(project.name)」里说",
+                projectTags: everyone,
+                opening: everyone ? .intro(ChatCopy.everyoneIntro) : .project(project),
+                openProject: { [weak self] id in
+                    if let project = Store.shared.project(id: id) { self?.open(project) }
+                }
             )
             chat.onScroll = { [weak self] atLatest in
                 self?.atLatest = atLatest
@@ -271,13 +259,11 @@ final class ShellViewController: UIViewController {
     /// ≡：切换空间的 sheet。第一行回到自己的 Pupu（私聊）。
     private func openSwitcher() {
         view.endEditing(true)
+        let chats = Store.shared.chats
         let switcher = SpaceSwitcherViewController(
             current: currentProject,
-            openPupu: { [weak self] in
-                guard let self else { return }
-                if Store.shared.chats.private != nil { self.setLane(.private) }
-                self.show(.chat)
-            },
+            everyoneUnread: chats.private != nil && !inEveryone && isUnread(chats.main),
+            openPupu: { [weak self] in self?.show(.chat) },
             open: { [weak self] project in self?.open(project) },
             openChild: { [weak self] project, child in
                 self?.open(project)
@@ -293,9 +279,10 @@ final class ShellViewController: UIViewController {
         present(switcher, animated: true)
     }
 
-    /// 空间名胶囊：成员和邀请。老项目没有主人，不弹。
+    /// 空间名胶囊：成员和邀请；全员是设置（只有组织创建者打得开）。老项目没有主人，不弹。
     private func openInvite() {
-        guard let id = currentProject, let project = Store.shared.project(id: id), project.ownerId != nil else { return }
+        guard let id = currentProject, let project = Store.shared.project(id: id) else { return }
+        guard project.isEveryone ? project.mayManage == true : project.ownerId != nil else { return }
         let invite = InviteSheetViewController(projectId: project.id)
         if let sheet = invite.sheetPresentationController {
             sheet.detents = [.large()]
@@ -332,7 +319,7 @@ final class ShellViewController: UIViewController {
         setContentScrollView(next.contentScrollView(for: .top), for: .top)
 
         // 深色是私聊的记号。天空和导航栏都在这个控制器外面，要从最外层改才盖得到。
-        let style: UIUserInterfaceStyle = lane == .private && next === laneChats[.private] ? .dark : .unspecified
+        let style: UIUserInterfaceStyle = Store.shared.chats.private != nil && next === ownChatView ? .dark : .unspecified
         if let root = navigationController?.parent, root.overrideUserInterfaceStyle != style {
             UIView.transition(with: root.view, duration: 0.2, options: .transitionCrossDissolve) {
                 root.overrideUserInterfaceStyle = style
@@ -365,7 +352,7 @@ final class ShellViewController: UIViewController {
     private func openActivity(_ activity: ComputerActivity) {
         if let ref = activity.project, let project = Store.shared.project(id: ref.id) {
             open(project)
-        } else if section != .chat || !laneChat.showComputerCard(activity.computerId) {
+        } else if !((section == .chat ? ownChat : inEveryone ? projectChat : nil)?.showComputerCard(activity.computerId) ?? false) {
             openSettings(page: .computer(activity.computerId))
         }
     }
@@ -498,6 +485,19 @@ final class ProjectPill: UIControl {
 
     func show(_ project: Project, me: String?) {
         label.text = project.name
+        if project.isEveryone {
+            // 全员：名字加楼，组织创建者点了打开设置。
+            managed = true
+            let settings = project.mayManage == true
+            isUserInteractionEnabled = settings
+            building.isHidden = false
+            avatars.show([])
+            invite.isHidden = true
+            accessibilityLabel = project.name
+            accessibilityTraits = settings ? .button : .staticText
+            accessibilityHint = settings ? "设置" : nil
+            return
+        }
         managed = project.ownerId != nil
         isUserInteractionEnabled = managed
         building.isHidden = !(managed && project.isOpen)

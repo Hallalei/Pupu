@@ -156,19 +156,25 @@ private class SheetRow: UIControl {
         didSet { backgroundColor = isHighlighted && action != nil ? Theme.scrim : .clear }
     }
 
-    /// 行里的按钮（邀请、移出）自己接；别处都算点这一行。
+    /// 行里的控件（邀请、移出、开关）自己接；别处都算点这一行。开关点到的是它里面的子视图，往上找到控件本身。
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let hit = super.hitTest(point, with: event) else { return nil }
-        return hit is UIControl ? hit : self
+        var view: UIView? = hit
+        while let current = view, current !== self {
+            if current is UIControl { return hit }
+            view = current.superview
+        }
+        return self
     }
 }
 
 /// 当前空间下面的子会话：缩进，点 + 名字 + 状态字。
 private final class SheetSubRow: SheetRow {}
 
-/// 切换空间的 sheet：「我的 Pupu」一行，「空间」和「新空间」，下面每个空间一行，当前空间展开它的子会话。
+/// 切换空间的 sheet：「我的 Pupu」一行，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
 final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
+    private let everyoneUnread: Bool
     private let openPupu: () -> Void
     private let open: (Project) -> Void
     private let openChild: (Project, SpaceChild) -> Void
@@ -176,8 +182,9 @@ final class SpaceSwitcherViewController: UIViewController {
     private let content = UIStackView()
     private var token: StoreToken?
 
-    init(current: String?, openPupu: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void) {
+    init(current: String?, everyoneUnread: Bool, openPupu: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void) {
         self.current = current
+        self.everyoneUnread = everyoneUnread
         self.openPupu = openPupu
         self.open = open
         self.openChild = openChild
@@ -215,7 +222,7 @@ final class SpaceSwitcherViewController: UIViewController {
         let waiting = ComputerActivity.waitingProjects(Store.shared.activity)
         let pupu = Avatars.shared.pupu()
         var key = Hasher()
-        key.combine(Store.shared.projects)
+        key.combine(Store.shared.spaces)
         key.combine(Set(waiting))
         key.combine(pupu.image != nil)
         let shownNow = key.finalize()
@@ -251,15 +258,24 @@ final class SpaceSwitcherViewController: UIViewController {
         content.setCustomSpacing(Theme.Space.s1, after: header)
 
         var rows: [UIView] = []
-        for project in Store.shared.projects {
+        for project in Store.shared.spaces {
             let selected = project.id == current
-            let icon = UIImageView(image: UIImage(systemName: "folder"))
+            let icon = UIImageView(image: UIImage(systemName: project.isEveryone ? "building.2" : "folder"))
             icon.tintColor = Theme.ink
             icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
             icon.setContentHuggingPriority(.required, for: .horizontal)
             var trailing: [UIView] = []
+            if project.isEveryone && everyoneUnread {
+                let dot = UIView()
+                dot.backgroundColor = Theme.danger
+                dot.layer.cornerRadius = 4
+                dot.isAccessibilityElement = false
+                dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
+                dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
+                trailing.append(dot)
+            }
             if waiting.contains(project.id) { trailing.append(WaitingMark()) }
-            trailing.append(spaceMark(project))
+            if !project.isEveryone { trailing.append(spaceMark(project)) }
             let check = UIImageView(image: UIImage(systemName: "checkmark"))
             check.tintColor = Theme.ink
             check.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
@@ -270,7 +286,7 @@ final class SpaceSwitcherViewController: UIViewController {
             let row = SheetRow(leading: icon, title: project.name, weight: selected ? .semibold : .regular, trailing: trailing) { [weak self] in
                 self?.finish { $0.open(project) }
             }
-            if selected { row.accessibilityValue = "当前" }
+            if selected { row.accessibilityValue = "当前" } else if project.isEveryone && everyoneUnread { row.accessibilityValue = "有新消息" }
             rows.append(row)
             guard selected else { continue }
             for child in project.spaceChildren.reversed() {
@@ -293,7 +309,8 @@ final class SpaceSwitcherViewController: UIViewController {
     }
 }
 
-/// 邀请 sheet：成员名单、找组织里的人、谁看得到。只有建的人能邀请、移出、改密级；别人只看名单。
+/// 邀请 sheet：成员名单、找组织里的人、谁看得到、只派活。只有建的人能邀请、移出、改密级、切只派活；别人只看名单。
+/// 全员空间也用它当设置：只有「只派活」一项，组织创建者才打得开。
 final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
     private let projectId: String
     private let content = UIStackView()
@@ -384,6 +401,10 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
         titleLabel.text = project.name
         // 搜索框不能跟着重建，不然打字时键盘会收起来。
         content.arrangedSubviews.forEach { if $0 !== search.superview?.superview { $0.removeFromSuperview() } }
+        if project.isEveryone {
+            if project.mayManage == true { content.addArrangedSubview(modeGroup(project, detail: "Pupu 不自己动手，事情交给各个空间去做")) }
+            return
+        }
         let owner = project.isOwner(me)
         if owner { content.insertArrangedSubview(searchBox(), at: 0) }
 
@@ -447,6 +468,24 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
         let group = SheetGroup(radios, separatorInset: 48)
         group.accessibilityLabel = "谁看得到"
         content.addArrangedSubview(group)
+        content.addArrangedSubview(modeGroup(project, detail: "Pupu 不自己动手，事情交给子会话去做"))
+    }
+
+    /// 只派活：默认关，开了 Pupu 只把事派给子会话。
+    private func modeGroup(_ project: Project, detail: String) -> UIView {
+        let toggle = UISwitch()
+        toggle.isOn = project.delegateOnly
+        toggle.onTintColor = Theme.action
+        toggle.accessibilityLabel = "只派活"
+        toggle.addAction(UIAction { [weak self, weak toggle] _ in
+            guard let toggle else { return }
+            self?.change(["kind": "mode", "mode": toggle.isOn ? "coordinator" : "direct"])
+        }, for: .valueChanged)
+        toggle.accessibilityHint = detail
+        let row = SheetRow(leading: nil, title: "只派活", detail: detail, trailing: [toggle], height: 64, action: nil)
+        // VoiceOver 直接落在开关上。
+        row.isAccessibilityElement = false
+        return SheetGroup([row])
     }
 
     private func searchBox() -> UIView {
@@ -498,6 +537,9 @@ final class InviteSheetViewController: UIViewController, UITextFieldDelegate {
                 present(alert, animated: true)
             }
             busy = false
+            // 没做成时开关已经拨过去了：按现在的数据重画一次。
+            shown = nil
+            render()
             Store.shared.refresh()
         }
     }
