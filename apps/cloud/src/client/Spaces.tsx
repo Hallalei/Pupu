@@ -194,7 +194,7 @@ type NavProps = {
 };
 
 /**
- * 电脑上的左侧栏，直接画在窗框上，没有自己的底。红绿灯那一行留空；「我的 Pupu」、「资料」，
+ * 电脑上的左侧栏，直接画在窗框上，没有自己的底。红绿灯那一行留空；「我的 Pupu」、「Artifacts」，
  * 「空间」组标题和「+」，每个空间一行，最下面是自己（点开设置）。子会话不进侧栏。
  */
 export function SpaceSidebar({ spaces, members, me, pupuAvatar, current, unread, onPupu, onDocs, onOpen, onCreate, onSettings }: NavProps) {
@@ -211,7 +211,7 @@ export function SpaceSidebar({ spaces, members, me, pupuAvatar, current, unread,
         <span className="grid size-mark shrink-0 place-items-center text-[16px] text-ink-muted">
           <FileIcon />
         </span>
-        <span className="min-w-0 flex-1 truncate">资料</span>
+        <span className="min-w-0 flex-1 truncate">Artifacts</span>
       </button>
       <div className="flex items-center justify-between pt-3.5 pb-1 pl-2.5 text-footnote text-ink-muted">
         <span>空间</span>
@@ -286,7 +286,7 @@ function Current({ on }: { on: boolean }) {
 }
 
 /**
- * 手机上切换会话的 sheet：「我的 Pupu」和资料一组，空间一组，每个空间下面挂着正在做和等你批准的子会话。
+ * 手机上切换会话的 sheet：「我的 Pupu」和 Artifacts 一组，空间一组，每个空间下面挂着正在做和等你批准的子会话。
  * 点一行就切过去，sheet 收起。设置在最底下，从自己的头像进。
  */
 export function SpaceSwitcher({
@@ -311,7 +311,7 @@ export function SpaceSwitcher({
             <span className="grid size-7.5 shrink-0 place-items-center text-[20px] text-ink-muted">
               <FileIcon />
             </span>
-            <span className="min-w-0 flex-1 truncate text-body">资料</span>
+            <span className="min-w-0 flex-1 truncate text-body">Artifacts</span>
             <Current on={current === "docs"} />
           </SwitchRow>
         </div>
@@ -426,7 +426,7 @@ export function PlaceTitle({ space, pupuAvatar, docs = false }: { space?: Projec
         <span className="grid size-mark shrink-0 place-items-center text-[16px] text-ink-muted">
           <FileIcon />
         </span>
-        <span className="truncate text-headline">资料</span>
+        <span className="truncate text-headline">Artifacts</span>
       </span>
     );
   }

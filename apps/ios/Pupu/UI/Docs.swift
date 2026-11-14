@@ -1,11 +1,13 @@
 import UIKit
+import WebKit
 
-/// 资料：组织层和看得到的空间里的，按地方分组。点开读正文；右上角上传文字。照网页的 Docs.tsx。
+/// Artifacts：资料、skill 和页面，组织层和看得到的空间里的，按地方分组。点开读正文，页面放进隔开的 WKWebView；
+/// 右上角上传文字或一页 HTML。照网页的 Docs.tsx。
 final class DocsViewController: UITableViewController {
     private let identity: Identity
     private var view_: DocsView?
     private var groups: [(place: DocsView.Place, docs: [DocMeta])] = []
-    private let empty = UILabel(text: "还没有资料", style: .body, color: Theme.inkMuted)
+    private let empty = UILabel(text: "还没有 Artifacts", style: .body, color: Theme.inkMuted)
     private let spinner = UIActivityIndicatorView(style: .medium)
 
     init(identity: Identity) {
@@ -17,7 +19,7 @@ final class DocsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "资料"
+        title = "Artifacts"
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "doc")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             title: "上传", image: UIImage(systemName: "plus"),
@@ -50,7 +52,7 @@ final class DocsViewController: UITableViewController {
             .map { place in (place, next.docs.filter { $0.spaceId == place.id }) }
             .filter { !$0.1.isEmpty }
         refreshControl?.endRefreshing()
-        empty.text = "还没有资料"
+        empty.text = "还没有 Artifacts"
         tableView.backgroundView = groups.isEmpty ? empty : nil
         navigationItem.rightBarButtonItem?.isEnabled = true
         tableView.reloadData()
@@ -70,7 +72,7 @@ final class DocsViewController: UITableViewController {
         let doc = groups[indexPath.section].docs[indexPath.row]
         let cell = tableView.dequeueReusableCell(withIdentifier: "doc", for: indexPath)
         var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: doc.isSkill ? "wand.and.stars" : "doc.text")
+        content.image = UIImage(systemName: doc.isSkill ? "wand.and.stars" : doc.isPage ? "chevron.left.forwardslash.chevron.right" : "doc.text")
         content.imageProperties.tintColor = Theme.inkMuted
         content.text = doc.title
         content.textProperties.font = Theme.font(.body, weight: .medium)
@@ -81,7 +83,7 @@ final class DocsViewController: UITableViewController {
         content.secondaryTextProperties.numberOfLines = 1
         cell.contentConfiguration = content
         cell.accessoryType = .disclosureIndicator
-        cell.accessibilityLabel = doc.isSkill ? "\(doc.title)，skill" : doc.title
+        cell.accessibilityLabel = doc.isSkill ? "\(doc.title)，skill" : doc.isPage ? "\(doc.title)，页面" : doc.title
         return cell
     }
 
@@ -166,6 +168,18 @@ final class DocPageViewController: UIViewController {
 
     private func show(_ doc: DocView) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        if doc.mayDelete == true {
+            let delete = UIBarButtonItem(
+                title: "删除", image: UIImage(systemName: "trash"),
+                primaryAction: UIAction { [weak self] _ in self?.delete() }
+            )
+            delete.tintColor = Theme.dangerInk
+            navigationItem.rightBarButtonItem = delete
+        }
+        if doc.kind == "page" {
+            showPage(doc)
+            return
+        }
         let heading = UILabel(text: doc.title, style: .title, lines: 0)
         heading.accessibilityTraits = .header
         stack.addArrangedSubview(heading)
@@ -186,14 +200,20 @@ final class DocPageViewController: UIViewController {
                 stack.addArrangedSubview(block)
             }
         }
-        if doc.mayDelete == true {
-            let delete = UIBarButtonItem(
-                title: "删除", image: UIImage(systemName: "trash"),
-                primaryAction: UIAction { [weak self] _ in self?.delete() }
-            )
-            delete.tintColor = Theme.dangerInk
-            navigationItem.rightBarButtonItem = delete
-        }
+    }
+
+    /// 页面盖满这一屏，标题放导航栏。
+    private func showPage(_ doc: DocView) {
+        title = doc.title
+        let page = PageView(html: doc.body)
+        view.addSubview(page)
+        page.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            page.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            page.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            page.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
     }
 
     private func showError(_ message: String) {
@@ -226,7 +246,7 @@ final class UploadDocViewController: UIViewController {
     private let titleField = UITextField()
     private let summaryField = UITextField()
     private let body = UITextView()
-    private let bodyHint = UILabel(text: "贴进正文", style: .body, color: .placeholderText)
+    private let bodyHint = UILabel(text: "贴进正文，或者一整页 HTML", style: .body, color: .placeholderText)
     private let placeButton = UIButton(type: .system)
     private let skill = UISwitch()
     private var place: String?
@@ -244,7 +264,7 @@ final class UploadDocViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "上传资料"
+        title = "上传"
         view.backgroundColor = .systemGroupedBackground
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "上传", primaryAction: UIAction { [weak self] _ in self?.save() })
@@ -357,10 +377,11 @@ final class UploadDocViewController: UIViewController {
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let summary = (summaryField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let text = body.text ?? ""
-        Task { [weak self, identity, operation, place, skill = skill.isOn] in
+        let kind = PageView.looksLikePage(text) ? "page" : skill.isOn ? "skill" : "doc"
+        Task { [weak self, identity, operation, place] in
             do {
                 let meta = try await API(endpoint: identity.endpoint).uploadDoc(
-                    title: title, summary: summary, body: text, skill: skill, spaceId: place, operation: operation
+                    title: title, summary: summary, body: text, kind: kind, spaceId: place, operation: operation
                 )
                 self?.dismiss(animated: true) { self?.onDone(meta) }
             } catch {
@@ -377,5 +398,56 @@ extension UploadDocViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         bodyHint.isHidden = !textView.text.isEmpty
         validate()
+    }
+}
+
+/// 一页 HTML（Artifacts 里的页面）。和 App 隔开：不存东西的数据仓、没有 baseURL（不透明源）、不挂任何脚本接口，
+/// App 的凭据在请求头里，页面拿不到。页面里点链接交给 Safari，自己只显示这一页。和网页的 PAGE_SANDBOX 是一个意思。
+final class PageView: UIView, WKNavigationDelegate, WKUIDelegate {
+    private let web: WKWebView
+
+    init(html: String) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        web = WKWebView(frame: .zero, configuration: configuration)
+        super.init(frame: .zero)
+        web.navigationDelegate = self
+        web.uiDelegate = self
+        web.isOpaque = false
+        web.backgroundColor = .white
+        backgroundColor = .white
+        addSubview(web)
+        web.pin(to: self)
+        web.loadHTMLString(html, baseURL: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 和云端 docs.ts 的 looksLikePage 一样：以 <!doctype html> 或 <html 开头。
+    static func looksLikePage(_ text: String) -> Bool {
+        text.range(of: #"^\s*(<!--[\s\S]*?-->\s*)*<(!doctype\s+html|html[\s>])"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        // 只放行这一页自己（about:blank 和页内锚点）和页面里的 iframe。主框架要换成别的地址一律不让：
+        // 人点的链接交给 Safari，脚本自己跳的直接丢掉，免得页面一载入就把人带走。
+        if action.targetFrame?.isMainFrame == false || action.request.url?.scheme == "about" {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(.cancel)
+        if action.navigationType == .linkActivated { open(action.request.url) }
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // target=_blank 的链接也走这里；只认人点的。
+        if action.navigationType == .linkActivated { open(action.request.url) }
+        return nil
+    }
+
+    private func open(_ url: URL?) {
+        guard let url, url.scheme == "https" || url.scheme == "http" || url.scheme == "mailto" else { return }
+        UIApplication.shared.open(url)
     }
 }

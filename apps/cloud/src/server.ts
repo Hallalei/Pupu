@@ -1,6 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ProviderStreams } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { googleGenerativeAIApi } from "@earendil-works/pi-ai/api/google-generative-ai.lazy";
+import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conversations.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
@@ -56,10 +60,12 @@ import {
 import { ComputerStore } from "./bridge/store";
 import { ANY_COMPUTER, FollowUpStore } from "./bridge/followups";
 import { createComputerTools } from "./bridge/tools";
-import { ModelRelay } from "./bridge/model-relay";
-import { probeModel } from "./model/probe";
-import { ROUTER_MODEL, routerProvider } from "./model/router";
-import { modelView, parseChoice, type ModelView } from "./model/settings";
+import { ModelRelay, type MagpieModel } from "./bridge/model-relay";
+import { templateOf, type OwnApi } from "./model/catalog";
+import { probeKeyModel } from "./model/key-probe";
+import { listModels, type ModelList } from "./model/list";
+import { keyModel, magpieModel, RELAY_KEY, ROUTER_MODEL, routerProvider } from "./model/router";
+import { keyBaseUrl, keyView, modelView, parseChoice, type KeyView, type ModelView } from "./model/settings";
 import { ModelStore } from "./model/store";
 import { ConnectorClient, connectorConfigFrom, connectorMessage } from "./connectors/client";
 import {
@@ -162,7 +168,7 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
-import { DOC_BODY_LIMIT, DocStore, docScope, mayDeleteDoc, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
+import { bodyFits, DOC_BODY_LIMIT, DocStore, docScope, kindOf, mayDeleteDoc, PAGE_BODY_LIMIT, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
 import { createOrgTools } from "./org.ts";
 import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
@@ -217,6 +223,13 @@ export type DocView = Doc & { mayDelete: boolean };
 /** 状态里的空间：项目本身加上它的子会话。 */
 export type ProjectView = Project & { readonly children: readonly ChildView[] };
 
+/** 一台电脑上的 Magpie，见 `PupuState.model.magpie`。 */
+export type MagpieView = {
+  readonly computerId: string;
+  readonly on: boolean;
+  readonly models: readonly MagpieModel[];
+};
+
 export type PupuState = {
   readonly projects: readonly ProjectView[];
   /** 全员空间（原来的「大家」，会话是 root）。`mayManage`：组织的创建者能切它的模式。旧客户端不认这一项，照旧用 chats.main。 */
@@ -248,7 +261,19 @@ export type PupuState = {
   /** Pupu 自己的头像，相对地址。null 是没换过，用各端自带的。 */
   readonly pupuAvatar: string | null;
   /** 用哪个模型，没有 key。`mayEdit`：这个人能不能改（只有创建者）。 */
-  readonly model: { readonly current: ModelView; readonly mayEdit: boolean };
+  readonly model: {
+    readonly current: ModelView;
+    readonly mayEdit: boolean;
+    /** 最后一次用的自带 key 设置（没有 key），换回来时预先填好。只给能改的人。 */
+    readonly own?: KeyView | null;
+    /** 哪几家存过 key，地址是存的时候的。只给能改的人。 */
+    readonly keys?: readonly { readonly provider: string; readonly baseUrl: string }[];
+    /**
+     * 本人电脑上 Magpie 里能选的模型。`on` 是现在开着。只给能改的人，也只有本人的电脑：
+     * 清单看得出订了哪些服务，用别人电脑上的 Magpie 就是花别人的订阅。
+     */
+    readonly magpie?: readonly MagpieView[];
+  };
   /** 本人的通行密钥和能不能再加一把（见 passkeys.ts 的 `addRule`）。不是成员是 null。 */
   readonly passkeys: { readonly keys: readonly PasskeyView[]; readonly add: AddRule } | null;
 };
@@ -327,6 +352,14 @@ export class Pupu extends DurableObject<Env> {
   readonly usage = new UsageStore(this.ctx.storage.sql);
   /** 用哪个模型。 */
   readonly modelChoice = new ModelStore(this.ctx.storage.sql);
+  /** 云端会说的几种协议，自带 key 按模型的 api 挑。 */
+  readonly modelApis: Partial<Record<OwnApi, ProviderStreams>> = {
+    "openai-completions": openAICompletionsApi(),
+    "openai-responses": openAIResponsesApi(),
+    "anthropic-messages": anthropicMessagesApi(),
+    "google-generative-ai": googleGenerativeAIApi(),
+    "mistral-conversations": mistralConversationsApi()
+  };
   /** 连接器工具和审批要用的状态。 */
   readonly #connectorDeps: ConnectorDeps = {
     client: () => this.#connectorClient(),
@@ -518,10 +551,11 @@ export class Pupu extends DurableObject<Env> {
             model: pupuModel,
             apiKey: () => this.env.DEEPSEEK_API_KEY
           },
-          openai: openAICompletionsApi(),
+          apis: this.modelApis,
           computerModel: (computerId) => this.bridge.modelOf(computerId),
+          computerMagpie: (computerId) => this.#magpieOf(computerId),
           computerName: (computerId) => this.#computerName(computerId),
-          relayFetch: (computerId) => this.relay.fetch(computerId)
+          relayFetch: (computerId, target) => this.relay.fetch(computerId, target)
         })
       );
       return Harness.open(
@@ -636,6 +670,12 @@ export class Pupu extends DurableObject<Env> {
     };
     this.bridge.onModel = (computerId, message) => this.relay.receive(computerId, message);
     this.bridge.onModelGone = (computerId) => this.relay.gone(computerId);
+    this.bridge.onMagpie = (computerId, models) => {
+      // 只记创建者自己的和没主人的电脑：别人的清单用不上，也不该留在云端。
+      const owner = this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+      const creator = this.members.list().find((member) => member.role === "creator")?.id ?? null;
+      if (owner === null || owner === creator) this.modelChoice.setMagpieModels(computerId, models);
+    };
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
       this.sockets.broadcast({ type: "computers_changed" });
@@ -1054,7 +1094,7 @@ export class Pupu extends DurableObject<Env> {
       avatarPresets: AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
       pupuAvatarPresets: PUPU_AVATAR_PRESETS.map((preset) => ({ ...preset, url: `/avatars/${preset.id}.png` })),
       pupuAvatar: pupuAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null),
-      model: { current: modelView(this.modelChoice.get()), mayEdit: mayChangeModel(this.#actor(current)) },
+      model: this.#modelState(current),
       passkeys:
         viewer === null
           ? null
@@ -1520,17 +1560,116 @@ export class Pupu extends DurableObject<Env> {
   async setModel(input: unknown, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
     await this.lifecycle.start();
     if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
-    const parsed = parseChoice(input, this.modelChoice.get());
+    const actor = this.#actor(device);
+    const parsed = parseChoice(
+      input,
+      (provider, baseUrl) => this.modelChoice.savedKey(provider, baseUrl),
+      (computerId, modelId) =>
+        this.#magpieComputers(actor).includes(computerId)
+          ? (this.modelChoice.magpieModels(computerId)?.find((model) => model.id === modelId) ?? null)
+          : null
+    );
     if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
     const choice = parsed.choice;
     if (choice.source === "computer" && !this.computers.list().some((row) => row.id === choice.computerId)) {
       return { ok: false, status: 400, error: "没有这台电脑。" };
     }
     if (choice.source === "key") {
-      const probe = await probeModel({ baseUrl: choice.baseUrl, apiKey: choice.apiKey, model: choice.model });
+      const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis: this.modelApis });
+      if (!probe.ok) return { ok: false, status: 400, error: probe.error };
+    }
+    const before = this.modelChoice.get();
+    // 只拨了「离线时用 Pupu 自带的」：不用再试，电脑离线时也要能拨。
+    const sameMagpie =
+      choice.source === "computer" &&
+      before.source === "computer" &&
+      before.computerId === choice.computerId &&
+      before.magpie?.id === choice.magpie?.id;
+    if (choice.source === "computer" && choice.magpie && !sameMagpie) {
+      const state = this.#magpieOf(choice.computerId);
+      const name = this.#computerName(choice.computerId);
+      if (state === "offline") return { ok: false, status: 400, error: `「${name}」没连上，连上后再选。` };
+      if (state === "outdated") return { ok: false, status: 400, error: `「${name}」上的 Pupu 太旧，更新电脑 App 后再选。` };
+      if (state === null) return { ok: false, status: 400, error: `「${name}」上的 Magpie 没开，打开后再选。` };
+      // 和真正调用走同一条路试一次：Magpie 能转到、这个模型会调工具。
+      const probe = await probeKeyModel({
+        model: magpieModel(choice.magpie),
+        apiKey: RELAY_KEY,
+        apis: this.modelApis,
+        fetch: this.relay.fetch(choice.computerId, "magpie")
+      });
       if (!probe.ok) return { ok: false, status: 400, error: probe.error };
     }
     this.modelChoice.set(choice);
+    this.sockets.broadcast({ type: "computers_changed" });
+    return { ok: true };
+  }
+
+  #modelState(device: string | null): PupuState["model"] {
+    const mayEdit = mayChangeModel(this.#actor(device));
+    const current = modelView(this.modelChoice.get());
+    if (!mayEdit) return { current, mayEdit };
+    const own = this.modelChoice.lastOwn();
+    const magpie: MagpieView[] = [];
+    for (const computerId of this.#magpieComputers(this.#actor(device))) {
+      const models = this.modelChoice.magpieModels(computerId);
+      if (!models) continue;
+      magpie.push({ computerId, on: this.bridge.magpieOf(computerId) === true, models });
+    }
+    return { current, mayEdit, own: own ? keyView(own) : null, keys: this.modelChoice.keyProviders(), magpie };
+  }
+
+  /** 这个人能用哪几台电脑上的 Magpie：只有自己的和没主人的。本机开发没带凭据的都能用。 */
+  #magpieComputers(actor: Actor | null | undefined): string[] {
+    if (actor === undefined) return [];
+    return this.computers
+      .list()
+      // 早期配对的电脑没有主人，和别处一样当创建者的（只有创建者能换模型）。
+      .filter((row) => actor === null || row.ownerId === null || row.ownerId === actor.memberId)
+      .map((row) => row.id);
+  }
+
+  /** 这台电脑上的 Magpie：开着给清单，关着是 null。 */
+  #magpieOf(computerId: string): readonly MagpieModel[] | null | "offline" | "outdated" {
+    const state = this.bridge.magpieOf(computerId);
+    if (state === "offline" || state === "outdated") return state;
+    return state ? (this.modelChoice.magpieModels(computerId) ?? null) : null;
+  }
+
+  /**
+   * 一家服务商能选的模型。key 留空用存过的（地址一样才算）。只有能换模型的人能拉：要用到存的 key。
+   */
+  async listProviderModels(
+    input: { provider?: unknown; baseUrl?: unknown; apiKey?: unknown },
+    device: string | null = null
+  ): Promise<{ ok: true; list: ModelList } | { ok: false; status: 400 | 403; error: string }> {
+    await this.lifecycle.start();
+    if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
+    const template = templateOf(typeof input.provider === "string" ? input.provider : undefined);
+    if (!template) return { ok: false, status: 400, error: "没有这家服务商。" };
+    const baseUrl = keyBaseUrl(template, template.api, input.baseUrl);
+    if (template.editableBaseUrl) {
+      let url: URL;
+      try {
+        url = new URL(baseUrl);
+      } catch {
+        return { ok: true, list: { models: [], error: null } };
+      }
+      const local = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+      if ((url.protocol !== "https:" && !local) || url.username || url.password) {
+        return { ok: true, list: { models: [], error: "地址要用 https。" } };
+      }
+    }
+    const typed = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
+    const apiKey = typed || this.modelChoice.savedKey(template.id, baseUrl);
+    return { ok: true, list: await listModels(template, baseUrl, apiKey) };
+  }
+
+  /** 忘掉一家的 key。正在用它就换回 Pupu 自带的。 */
+  async forgetModelKey(provider: string, device: string | null = null): Promise<{ ok: true } | { ok: false; status: 403; error: string }> {
+    await this.lifecycle.start();
+    if (!mayChangeModel(this.#actor(device))) return { ok: false, status: 403, error: "只有创建者能换模型。" };
+    this.modelChoice.forget(provider);
     this.sockets.broadcast({ type: "computers_changed" });
     return { ok: true };
   }
@@ -2131,7 +2270,7 @@ export class Pupu extends DurableObject<Env> {
     return "ok";
   }
 
-  /** 人上传一份资料。放到哪由他选，只能是他看得到的地方；算他写的。 */
+  /** 人上传一份资料或页面。放到哪由他选，只能是他看得到的地方；算他写的。 */
   async uploadDoc(
     input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string },
     device: string | null = null
@@ -2139,7 +2278,7 @@ export class Pupu extends DurableObject<Env> {
     await this.lifecycle.start();
     const viewer = this.#viewer(device);
     const title = input.title.trim();
-    if (!title || !input.body.trim() || input.body.length > DOC_BODY_LIMIT) return "invalid";
+    if (!title || !input.body.trim() || !bodyFits(input.kind, input.body)) return "invalid";
     const target = viewerTarget(viewer, input.spaceId, this.store.listProjects());
     if (target === undefined) return "forbidden";
     const meta = this.docs.write(
@@ -2770,6 +2909,15 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     }
     return Response.json({ ok: true });
   }
+  if (pathname === "/api/model/models" && method === "POST") {
+    const result = await caller.pupu.listProviderModels(await readJson<Record<string, unknown>>(request), caller.device);
+    return result.ok ? Response.json(result.list) : Response.json({ error: result.error }, { status: result.status });
+  }
+  if (pathname === "/api/model/forget" && method === "POST") {
+    const body = await readJson<{ provider?: unknown }>(request);
+    const result = await caller.pupu.forgetModelKey(String(body.provider ?? ""), caller.device);
+    return result.ok ? Response.json({ ok: true }) : Response.json({ error: result.error }, { status: result.status });
+  }
   if (pathname === "/api/model" && method === "POST") {
     const result = await caller.pupu.setModel(await readJson<unknown>(request), caller.device);
     return result.ok ? Response.json({ ok: true }) : Response.json({ error: result.error }, { status: result.status });
@@ -3005,13 +3153,13 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
         title: String(body.title ?? ""),
         summary: String(body.summary ?? ""),
         body: String(body.body ?? ""),
-        kind: body.kind === "skill" ? "skill" : "doc",
+        kind: kindOf(body.kind),
         spaceId: typeof body.spaceId === "string" ? body.spaceId : null,
         operation: typeof body.operation === "string" && body.operation ? body.operation : crypto.randomUUID()
       },
       caller.device
     );
-    if (result === "invalid") return Response.json({ error: `标题和正文都要有，正文不超过 ${DOC_BODY_LIMIT} 字` }, { status: 400 });
+    if (result === "invalid") return Response.json({ error: `标题和正文都要有。文字不超过 ${DOC_BODY_LIMIT / 10_000} 万字，页面不超过 ${PAGE_BODY_LIMIT / 1_000_000}MB` }, { status: 400 });
     if (result === "forbidden") return Response.json({ error: "没有这个空间" }, { status: 404 });
     return Response.json(result);
   }

@@ -171,7 +171,7 @@ private class SheetRow: UIControl {
 /// 当前空间下面的子会话：缩进，点 + 名字 + 状态字。
 private final class SheetSubRow: SheetRow {}
 
-/// 切换空间的 sheet：「我的 Pupu」和「资料」，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
+/// 切换空间的 sheet：「我的 Pupu」和「Artifacts」，「空间」和「新空间」，下面全员在第一个，再是每个空间一行，当前空间展开它的子会话。
 final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
     private let everyoneUnread: Bool
@@ -239,7 +239,7 @@ final class SpaceSwitcherViewController: UIViewController {
         docsIcon.widthAnchor.constraint(equalToConstant: 28).isActive = true
         content.addArrangedSubview(SheetGroup([
             SheetRow(leading: avatar, title: "我的 Pupu", weight: .semibold) { [weak self] in self?.finish { $0.openPupu() } },
-            SheetRow(leading: docsIcon, title: "资料") { [weak self] in self?.finish { $0.openDocs() } }
+            SheetRow(leading: docsIcon, title: "Artifacts") { [weak self] in self?.finish { $0.openDocs() } }
         ]))
 
         let label = UILabel(text: "空间", style: .footnote, color: Theme.inkMuted)

@@ -201,9 +201,10 @@ function chatPrompt(thread: ChatThread, nameOf: (memberId: string) => string): s
   return thread.kind === "main" ? MAIN_PROMPT : privatePrompt(nameOf(thread.memberId));
 }
 
-const DOCS = `组织里有共享的资料和 skill：
+const DOCS = `组织里有共享的 Artifacts：资料、skill 和页面。
 - 资料是「是什么」：需求、规格、定下的方案。skill 是「这件事怎么做」：步骤、口径、格式。用 doc_search、doc_list 找，doc_read 读正文。工具只给这条会话的受众都能看的。
 - 用户要你记下一份方案、规格，就用 doc_write 存成资料。用户说「把刚才这个流程存成 skill」，或者你看出这是以后会反复用的做法，先用一句话问要不要存成 skill，同意了再存（kind 写 skill，summary 写清楚什么时候用）。
+- 用户要一个看板、图解、对比表、小工具、原型这类给人看或者点的东西，用 doc_write 存成页面（kind 写 page，一整页 HTML），存好说一句在 Artifacts 里打开。数据直接写进页面，页面在沙箱里，连不到 Pupu 也存不了东西。
 - 存到哪由工具按这条会话判断：空间里只存本空间，全员里默认存到组织层，私聊里先问用户存到组织层还是哪个空间。被拒了照实说，不要换个地方硬存。
 
 记忆：人说「记住……」，或者你看出这是以后每次都用得上的一句话（偏好、分工、定下的规矩），用 remember 记下，很短，一条一件事。记下后在回复里单独写一行「已记住：……」。记住的事放在最新一条消息末尾的 [[pupu:memory]] 和 [[/pupu:memory]] 之间，每一轮都带着，那不是人刚说的话。长的方案和规格存成资料，不要记成记忆。`;

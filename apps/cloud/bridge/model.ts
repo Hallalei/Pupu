@@ -9,6 +9,7 @@ import {
 } from "../src/bridge/model-relay.ts";
 import { DEFAULT_CONTEXT, MIN_CONTEXT, normalizeBaseUrl } from "../src/model/settings.ts";
 import { pupuDir } from "./config.ts";
+import type { Magpie } from "./magpie.ts";
 
 /**
  * 这台电脑上的模型（docs/自带模型方案.md 第 2 节）。地址和 key 只在这里，云端只知道模型名、上下文多长、能不能看图。
@@ -85,7 +86,7 @@ export async function writeModelFile(model: LocalModel | null): Promise<void> {
   await rename(temporary, target);
 }
 
-type Incoming = { pieces: string[]; size: number; controller: AbortController | null };
+type Incoming = { pieces: string[]; size: number; controller: AbortController | null; magpie: boolean };
 
 /**
  * 桥这头：收齐请求体，用本地的地址和 key 调模型，把响应原样传回去。
@@ -95,16 +96,20 @@ type Incoming = { pieces: string[]; size: number; controller: AbortController | 
 export class ModelRelayClient {
   readonly #send: (message: ModelUp) => boolean;
   readonly #current: () => LocalModel | null;
+  readonly #magpie: () => Promise<Magpie | null>;
   readonly #fetch: typeof fetch;
   readonly #incoming = new Map<string, Incoming>();
 
   constructor(options: {
     send: (message: ModelUp) => boolean;
     current: () => LocalModel | null;
+    /** 这台电脑上的 Magpie。只转给它报过的模型，地址也只用这里的。 */
+    magpie?: () => Promise<Magpie | null>;
     fetch?: typeof fetch;
   }) {
     this.#send = options.send;
     this.#current = options.current;
+    this.#magpie = options.magpie ?? (async () => null);
     this.#fetch = options.fetch ?? fetch;
   }
 
@@ -118,7 +123,7 @@ export class ModelRelayClient {
     let incoming = this.#incoming.get(message.id);
     if (!incoming) {
       if (message.seq !== 0) return;
-      incoming = { pieces: [], size: 0, controller: null };
+      incoming = { pieces: [], size: 0, controller: null, magpie: message.target === "magpie" };
       this.#incoming.set(message.id, incoming);
     }
     if (incoming.controller || message.seq !== incoming.pieces.length) {
@@ -144,11 +149,6 @@ export class ModelRelayClient {
     const controller = new AbortController();
     incoming.controller = controller;
     this.#send({ kind: "ack", id });
-    const local = this.#current();
-    if (!local) {
-      this.#reply(id, 503, "这台电脑上没有设模型。");
-      return;
-    }
     let body: Record<string, unknown>;
     try {
       body = JSON.parse(incoming.pieces.join("")) as Record<string, unknown>;
@@ -156,22 +156,47 @@ export class ModelRelayClient {
       this.#reply(id, 400, "模型请求不是 JSON。");
       return;
     }
-    body.model = local.model;
+    let target: { baseUrl: string; apiKey: string };
+    if (incoming.magpie) {
+      const magpie = await this.#magpie();
+      if (!magpie) {
+        this.#reply(id, 503, "这台电脑上的 Magpie 没开。打开 Magpie 再试。");
+        return;
+      }
+      // 模型名由云端指定，但只能是这台电脑报过的那几个。
+      if (typeof body.model !== "string" || !magpie.models.some((model) => model.id === body.model)) {
+        this.#reply(id, 404, "Magpie 里没有这个模型了，到设置里重新选一个。");
+        return;
+      }
+      target = { baseUrl: magpie.baseUrl, apiKey: "" };
+    } else {
+      const local = this.#current();
+      if (!local) {
+        this.#reply(id, 503, "这台电脑上没有设模型。");
+        return;
+      }
+      body.model = local.model;
+      target = local;
+    }
     let response: Response;
     try {
-      response = await this.#fetch(`${local.baseUrl}/chat/completions`, {
+      response = await this.#fetch(`${target.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           accept: body.stream === true ? "text/event-stream" : "application/json",
-          ...(local.apiKey ? { authorization: `Bearer ${local.apiKey}` } : {})
+          ...(target.apiKey ? { authorization: `Bearer ${target.apiKey}` } : {})
         },
         body: JSON.stringify(body),
         signal: controller.signal
       });
     } catch (error) {
       if (controller.signal.aborted) return this.#forget(id);
-      this.#reply(id, 502, `这台电脑连不上它设的模型服务：${causeOf(error)}`);
+      this.#reply(
+        id,
+        502,
+        incoming.magpie ? `这台电脑连不上 Magpie：${causeOf(error)}` : `这台电脑连不上它设的模型服务：${causeOf(error)}`
+      );
       return;
     }
     if (!this.#incoming.has(id)) {

@@ -7,6 +7,9 @@
  *
  * 帧包在桥协议的 `{ type: "model", message }` 里，和远程桌面一样。老的桥不认识 `model` 帧，会静默丢掉；
  * 所以云端只给连上后报过 `info` 的电脑转发。
+ *
+ * 电脑上开着 Magpie 的，桥另报一份 `magpie` 清单；请求带 `target: "magpie"` 的转给它。老的云端不认识 `magpie` 帧，
+ * 丢掉就是；老的桥不认识 `target`，会转给本地设的模型，所以云端只给报过清单的电脑发这种请求。
  */
 
 /** 电脑报给云端的本地模型，不含地址和 key。 */
@@ -16,16 +19,36 @@ export type LocalModelInfo = {
   readonly contextWindow: number;
 };
 
+/** 电脑上 Magpie 里能用的一个模型。`name` 是 Magpie 起的名字。 */
+export type MagpieModel = {
+  readonly id: string;
+  readonly name: string;
+  readonly contextWindow: number;
+  readonly vision: boolean;
+  readonly reasoning: boolean;
+};
+
+export type ModelTarget = "local" | "magpie";
+
 /** 云端 → 电脑。 */
 export type ModelDown =
-  /** 请求体的一片。`last` 的那片到了，电脑开始调模型。 */
-  | { readonly kind: "request"; readonly id: string; readonly seq: number; readonly text: string; readonly last: boolean }
+  /** 请求体的一片。`last` 的那片到了，电脑开始调模型。`target` 只在第一片上有，没有是本地设的模型。 */
+  | {
+      readonly kind: "request";
+      readonly id: string;
+      readonly seq: number;
+      readonly text: string;
+      readonly last: boolean;
+      readonly target?: ModelTarget;
+    }
   | { readonly kind: "cancel"; readonly id: string };
 
 /** 电脑 → 云端。 */
 export type ModelUp =
   /** 连上时报一次，本地设置变了再报。null 是这台电脑没设模型。 */
   | { readonly kind: "info"; readonly model: LocalModelInfo | null }
+  /** 连上时报一次，Magpie 开了、关了、清单变了再报。null 是这台电脑上没开 Magpie。 */
+  | { readonly kind: "magpie"; readonly models: readonly MagpieModel[] | null }
   /** 请求体收齐了，开始调。 */
   | { readonly kind: "ack"; readonly id: string }
   /** 上游回了响应头。连不上上游时电脑自己回 502，正文说明原因。 */
@@ -48,6 +71,7 @@ export const MODEL_IDLE_MS = 5 * 60_000;
 /** 请求体最大多大。和桥的文件传输上限一个量级，再大就是上下文出了问题。 */
 export const MAX_MODEL_BODY_CHARS = 64 * 1024 * 1024;
 const MAX_NAME_CHARS = 200;
+const MAX_MAGPIE_MODELS = 200;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -64,10 +88,36 @@ export function parseLocalModelInfo(value: unknown): LocalModelInfo | null {
   };
 }
 
+export function parseMagpieModels(value: unknown): MagpieModel[] | null {
+  if (!Array.isArray(value)) return null;
+  const seen = new Set<string>();
+  const out: MagpieModel[] = [];
+  for (const item of value.slice(0, MAX_MAGPIE_MODELS)) {
+    if (!isRecord(item) || typeof item.id !== "string" || !item.id.trim() || item.id.length > MAX_NAME_CHARS) continue;
+    const id = item.id.trim();
+    const contextWindow = typeof item.contextWindow === "number" && item.contextWindow > 0 ? Math.floor(item.contextWindow) : 0;
+    if (!contextWindow || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: (typeof item.name === "string" && item.name.trim() ? item.name.trim() : id).slice(0, MAX_NAME_CHARS),
+      contextWindow,
+      vision: item.vision === true,
+      reasoning: item.reasoning === true
+    });
+  }
+  return out;
+}
+
 export function parseModelUp(value: unknown): ModelUp | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "info") {
     return { kind: "info", model: value.model === null ? null : parseLocalModelInfo(value.model) };
+  }
+  if (value.kind === "magpie") {
+    if (value.models === null) return { kind: "magpie", models: null };
+    const models = parseMagpieModels(value.models);
+    return models ? { kind: "magpie", models } : null;
   }
   const id = typeof value.id === "string" && value.id ? value.id : null;
   if (!id) return null;
@@ -94,16 +144,30 @@ export function parseModelDown(value: unknown): ModelDown | null {
   if (value.kind === "cancel") return { kind: "cancel", id: value.id };
   if (value.kind !== "request") return null;
   return typeof value.seq === "number" && typeof value.text === "string" && value.text.length <= MODEL_PIECE_CHARS
-    ? { kind: "request", id: value.id, seq: value.seq, text: value.text, last: value.last === true }
+    ? {
+        kind: "request",
+        id: value.id,
+        seq: value.seq,
+        text: value.text,
+        last: value.last === true,
+        ...(value.target === "magpie" ? { target: "magpie" as const } : {})
+      }
     : null;
 }
 
 /** 把请求体切片。 */
-export function requestPieces(id: string, body: string): ModelDown[] {
+export function requestPieces(id: string, body: string, target: ModelTarget = "local"): ModelDown[] {
   const pieces: ModelDown[] = [];
   for (let start = 0, seq = 0; start < body.length || seq === 0; start += MODEL_PIECE_CHARS, seq += 1) {
     const text = body.slice(start, start + MODEL_PIECE_CHARS);
-    pieces.push({ kind: "request", id, seq, text, last: start + MODEL_PIECE_CHARS >= body.length });
+    pieces.push({
+      kind: "request",
+      id,
+      seq,
+      text,
+      last: start + MODEL_PIECE_CHARS >= body.length,
+      ...(seq === 0 && target === "magpie" ? { target } : {})
+    });
   }
   return pieces;
 }
@@ -144,7 +208,7 @@ export class ModelRelay {
     return this.#pending.size;
   }
 
-  fetch(computerId: string): typeof fetch {
+  fetch(computerId: string, target: ModelTarget = "local"): typeof fetch {
     return async (input, init) => {
       const body = await bodyText(input, init);
       if (body.length > MAX_MODEL_BODY_CHARS) throw new Error("模型请求太大，转发不了。");
@@ -164,7 +228,7 @@ export class ModelRelay {
         };
         this.#pending.set(id, pending);
         signal?.addEventListener("abort", onAbort, { once: true });
-        for (const piece of requestPieces(id, body)) {
+        for (const piece of requestPieces(id, body, target)) {
           if (!this.#send(computerId, piece)) {
             this.#fail(id, "relay connection refused: 电脑没连上");
             return;
@@ -177,7 +241,7 @@ export class ModelRelay {
 
   /** 桥发来的。 */
   receive(computerId: string, message: ModelUp): void {
-    if (message.kind === "info") return;
+    if (message.kind === "info" || message.kind === "magpie") return;
     const pending = this.#pending.get(message.id);
     if (!pending || pending.computerId !== computerId) return;
     switch (message.kind) {

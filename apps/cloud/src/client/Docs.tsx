@@ -1,10 +1,10 @@
 import { Input, Label, Modal, Spinner, Switch, TextArea } from "@heroui/react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { DocMeta } from "../docs";
+import { looksLikePage, PAGE_SANDBOX, type DocMeta } from "../docs";
 import type { DocPlace, DocView, DocsView } from "../server";
 import { api } from "./api";
-import { ChevronDownIcon, ChevronLeftIcon, FileIcon, PlusIcon, TrashIcon } from "./icons";
+import { ChevronDownIcon, ChevronLeftIcon, CodeIcon, FileIcon, PlusIcon, TrashIcon } from "./icons";
 import { PILL_ACTION, PILL_SECONDARY } from "./settings-ui";
 import { BuildingIcon, SpaceMark } from "./Spaces";
 
@@ -18,8 +18,8 @@ const ROUND = "tap grid size-control-sm shrink-0 place-items-center rounded-full
 const SMALL_PILL = "tap inline-flex h-8 shrink-0 items-center rounded-full bg-surface-inset text-subheadline text-ink";
 
 /**
- * 资料（规范 Docs）：组织层和看得到的空间里的，按地方分组。点开读正文；上传放文字。图片和设计稿以后再说。
- * 画在会话卡片上，内容列居中、最宽 column-max；窗框是 canvas（资料不属于哪个空间）。
+ * Artifacts（规范 Docs）：资料、skill 和页面，组织层和看得到的空间里的，按地方分组。点开读正文，页面在沙箱 iframe 里跑。
+ * 上传放文字或一页 HTML，图片和多文件的页面以后再说。画在会话卡片上，内容列居中、最宽 column-max；窗框是 canvas（不属于哪个空间）。
  */
 export function Docs({ version, open, onOpen }: { version: unknown; open: string | undefined; onOpen: (id: string | undefined) => void }) {
   const [view, setView] = useState<DocsView | null>(null);
@@ -69,9 +69,9 @@ export function Docs({ version, open, onOpen }: { version: unknown; open: string
         {!view && (error ? <p className="m-0 px-1 text-subheadline text-danger-ink">{error}</p> : <ListSkeleton />)}
         {view && groups.length === 0 && (
           <div className="flex flex-col items-center gap-2 pt-12 text-center">
-            <p className="m-0 text-message text-ink">还没有资料</p>
+            <p className="m-0 text-message text-ink">还没有 Artifacts</p>
             <p className="m-0 max-w-90 text-subheadline text-ink-muted">
-              组织和你看得到的空间里的资料会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字。
+              组织和你看得到的空间里的资料、skill 和页面会列在这里。让 Pupu 在聊天里记下来，或者点「上传」放一份文字或一页 HTML。
             </p>
           </div>
         )}
@@ -117,7 +117,11 @@ function DocRow({ doc, onOpen }: { doc: DocMeta; onOpen: () => void }) {
       onClick={onOpen}
       className="tap flex min-h-13 w-full items-center gap-3 px-4 py-2.5 text-left pointer-fine:hover:bg-line"
     >
-      <FileIcon className="shrink-0 text-[18px] text-ink-muted" />
+      {doc.kind === "page" ? (
+        <CodeIcon className="shrink-0 text-[18px] text-ink-muted" />
+      ) : (
+        <FileIcon className="shrink-0 text-[18px] text-ink-muted" />
+      )}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-body font-medium text-ink">{doc.title}</span>
@@ -175,25 +179,41 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
     }
   }
 
+  const bar = (
+    <div className="flex items-center justify-between gap-3">
+      <button type="button" aria-label="回到 Artifacts" onClick={onBack} className={`${ROUND} text-ink`}>
+        <ChevronLeftIcon />
+      </button>
+      {doc?.kind === "page" && <h1 className="m-0 min-w-0 flex-1 truncate text-headline text-ink">{doc.title}</h1>}
+      {doc?.mayDelete && (
+        <button
+          type="button"
+          aria-label="删除"
+          aria-disabled={deleting || undefined}
+          onClick={() => !deleting && void remove()}
+          className={`${ROUND} text-danger-ink`}
+        >
+          {deleting ? <Spinner size="sm" color="current" aria-label="正在删除" className="size-3.5" /> : <TrashIcon />}
+        </button>
+      )}
+    </div>
+  );
+
+  // 页面占满卡片，标题写在返回键旁边。
+  if (doc?.kind === "page") {
+    return (
+      <div className="flex h-full flex-col gap-3 px-4 pb-4">
+        {bar}
+        {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
+        <PageFrame title={doc.title} html={doc.body} />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <article className="mx-auto flex max-w-column flex-col gap-3 px-4 pb-6 text-ink">
-        <div className="flex items-center justify-between">
-          <button type="button" aria-label="回到资料" onClick={onBack} className={`${ROUND} text-ink`}>
-            <ChevronLeftIcon />
-          </button>
-          {doc?.mayDelete && (
-            <button
-              type="button"
-              aria-label="删除"
-              aria-disabled={deleting || undefined}
-              onClick={() => !deleting && void remove()}
-              className={`${ROUND} text-danger-ink`}
-            >
-              {deleting ? <Spinner size="sm" color="current" aria-label="正在删除" className="size-3.5" /> : <TrashIcon />}
-            </button>
-          )}
-        </div>
+        {bar}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
         {doc === undefined && <PageSkeleton />}
         {doc === null && <p className="m-0 text-message text-ink">没有这份资料</p>}
@@ -211,6 +231,28 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
   );
 }
 
+/**
+ * 一页 HTML 放进沙箱 iframe（`PAGE_SANDBOX`）。srcdoc 的页面是不透明源：拿不到 App 的 cookie、存储和 DOM，
+ * 往 App 发请求带 Origin: null，云端不认。白底，和 Claude 的 Artifacts 一样，页面自己管深色。
+ * 规范没画：画框圆角 radius-row，白卡片上靠 1pt line 外圈认出边。
+ */
+function PageFrame({ title, html }: { title: string; html: string }) {
+  return (
+    <iframe
+      title={title}
+      srcDoc={html}
+      sandbox={PAGE_SANDBOX}
+      referrerPolicy="no-referrer"
+      className="min-h-0 w-full flex-1 rounded-row bg-white ring-1 ring-line"
+    />
+  );
+}
+
+/** 页面的标题：<title> 里的。 */
+function pageTitle(html: string): string {
+  return /<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
+}
+
 function PageSkeleton() {
   return (
     <div role="status" aria-label="正在打开" className="flex flex-col gap-3">
@@ -225,7 +267,7 @@ function PageSkeleton() {
 
 /**
  * 上传（规范 Docs「上传」）：居中弹窗，宽 520，窄屏占 92%。从上到下各项隔 12：标题、说明、正文、选文件和放在哪、skill 开关，
- * 最下面「取消」「上传」并排等宽。文字类：选一个 .md / .txt，或者直接贴进来。
+ * 最下面「取消」「上传」并排等宽。选一个 .md / .txt / .html，或者直接贴进来；贴的是一整页 HTML 就存成页面，skill 开关换成一句话。
  */
 function Upload({
   isOpen,
@@ -252,9 +294,11 @@ function Upload({
 
   async function pick(chosen: File | undefined) {
     if (!chosen) return;
-    setBody(await chosen.text());
-    if (!title.trim()) setTitle(chosen.name.replace(/\.(md|markdown|txt)$/i, ""));
+    const text = await chosen.text();
+    setBody(text);
+    if (!title.trim()) setTitle((looksLikePage(text) && pageTitle(text)) || chosen.name.replace(/\.(md|markdown|txt|html?)$/i, ""));
   }
+  const page = looksLikePage(body);
 
   async function save() {
     if (!ready || busy) return;
@@ -265,7 +309,7 @@ function Upload({
         title: title.trim(),
         summary: summary.trim(),
         body,
-        kind: skill ? "skill" : "doc",
+        kind: page ? "page" : skill ? "skill" : "doc",
         spaceId: place === "org" ? null : place,
         operation: operation.current
       });
@@ -288,15 +332,21 @@ function Upload({
       <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Modal.Container placement="center">
           <Modal.Dialog className="layer-dialog w-[min(92vw,520px)] max-w-none gap-3 p-4">
-            <Modal.Heading className="m-0 px-1 pt-1 text-title text-ink">上传资料</Modal.Heading>
+            <Modal.Heading className="m-0 px-1 pt-1 text-title text-ink">上传</Modal.Heading>
             <Input aria-label="标题" placeholder="标题" value={title} onChange={(event) => setTitle(event.target.value)} />
             <Input
               aria-label="一句说明"
-              placeholder={skill ? "什么时候用它" : "一句说明（选填）"}
+              placeholder={skill && !page ? "什么时候用它" : "一句说明（选填）"}
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
             />
-            <TextArea aria-label="正文" placeholder="贴进正文" rows={8} value={body} onChange={(event) => setBody(event.target.value)} />
+            <TextArea
+              aria-label="正文"
+              placeholder="贴进正文，或者一整页 HTML"
+              rows={8}
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+            />
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => file.current?.click()} className={`${SMALL_PILL} px-3`}>
                 选文件
@@ -304,7 +354,7 @@ function Upload({
               <input
                 ref={file}
                 type="file"
-                accept=".md,.markdown,.txt,text/plain,text/markdown"
+                accept=".md,.markdown,.txt,.html,.htm,text/plain,text/markdown,text/html"
                 className="hidden"
                 onChange={(event) => void pick(event.target.files?.[0])}
               />
@@ -324,14 +374,18 @@ function Upload({
                 <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
               </span>
             </div>
-            <Switch isSelected={skill} onChange={setSkill} className="flex w-full px-1">
-              <Switch.Content className="flex w-full items-center gap-3">
-                <Label className="min-w-0 flex-1 text-body font-normal">是做事的方法（skill）</Label>
-                <Switch.Control className="shrink-0">
-                  <Switch.Thumb />
-                </Switch.Control>
-              </Switch.Content>
-            </Switch>
+            {page ? (
+              <p className="m-0 px-1 text-subheadline text-ink-muted">是一页 HTML，存成页面</p>
+            ) : (
+              <Switch isSelected={skill} onChange={setSkill} className="flex w-full px-1">
+                <Switch.Content className="flex w-full items-center gap-3">
+                  <Label className="min-w-0 flex-1 text-body font-normal">是做事的方法（skill）</Label>
+                  <Switch.Control className="shrink-0">
+                    <Switch.Thumb />
+                  </Switch.Control>
+                </Switch.Content>
+              </Switch>
+            )}
             {error && <p className="m-0 px-1 text-subheadline text-danger-ink">{error}</p>}
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={() => onOpenChange(false)} className={`${PILL_SECONDARY} flex-1`}>
