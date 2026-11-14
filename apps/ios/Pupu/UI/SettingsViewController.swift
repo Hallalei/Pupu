@@ -645,6 +645,8 @@ final class SettingsViewController: UICollectionViewController {
         case .link, .pupuAvatar, .computer, .remoteDesktop, .policy, .revokeComputer, .notifications, .invite, .newCode, .code, .bridgeCommand, .disconnect: true
         case .inviteCode(let invite): invite.usedBy == nil
         case .newInvite(let left, let busy): left > 0 && !busy
+        case .org(let org, _): !org.current && switching == nil
+        case .openOwn: switching == nil
         default: false
         }
     }

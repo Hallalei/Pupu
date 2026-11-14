@@ -120,7 +120,9 @@ final class Connection {
     /// 还存着别的 Pupu 的凭据（比如被移出了这一个），换到那边，不回连接页。
     func rejected(_ rejected: Identity) {
         guard rejected == identity else { return }
-        if let next = stashedOrgs().lazy.compactMap(takeOut).first {
+        // 不用 lazy.compactMap(...).first：lazy 集合取 first 会把 takeOut 跑两遍，第二遍已经取空了。
+        for org in stashedOrgs() {
+            guard let next = takeOut(org) else { continue }
             activate(next, notice: "你已经不在刚才那个 Pupu 里了。")
             return
         }
