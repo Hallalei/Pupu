@@ -10,7 +10,7 @@ import type { ComputerPolicy } from "../bridge/policy";
 import type { DeviceView } from "../devices";
 import type { InviteList } from "../directory";
 import type { Purpose } from "../passkeys";
-import type { Level } from "../access";
+import type { SpaceChange } from "../spaces";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
 import type { Doc, DocKind, DocMeta } from "../docs";
@@ -63,8 +63,8 @@ export const api = {
   /** 建私有空间（L3，只有自己）。本机开发没登录时云端回 403。 */
   createSpace: (name: string, goal: string) =>
     request<Project>("/api/spaces", { method: "POST", body: JSON.stringify({ name, goal }) }),
-  /** 主人改空间：拉人、移人、改密级。 */
-  changeSpace: (id: string, change: { kind: "add" | "remove"; memberId: string } | { kind: "level"; level: Level }) =>
+  /** 主人改空间：拉人、移人、改密级、切只派活。全员空间只能切模式，组织创建者切。 */
+  changeSpace: (id: string, change: SpaceChange) =>
     request<{ ok: true }>(`/api/spaces/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(change) }),
   /** 资料：看得到的，和上传能放到哪。 */
   docs: () => request<DocsView>("/api/docs"),
@@ -172,6 +172,7 @@ export function usePupuState() {
   const [connectors, setConnectors] = useState<PupuState["connectors"]>(NO_CONNECTORS);
   const [reports, setReports] = useState<readonly ReportCard[]>([]);
   const [chats, setChats] = useState<ChatsView>(NO_CHATS);
+  const [everyone, setEveryone] = useState<PupuState["everyone"] | null>(null);
   const [passkeys, setPasskeys] = useState<PupuState["passkeys"]>(null);
   const [pupuAvatar, setPupuAvatar] = useState<string | null>(null);
   const [model, setModel] = useState<PupuState["model"] | null>(null);
@@ -198,6 +199,7 @@ export function usePupuState() {
         // 部署新云端之前的老 DO 没有这一项。
         setReports(state.reports ?? []);
         setChats(state.chats ?? NO_CHATS);
+        setEveryone(state.everyone ?? null);
         setPasskeys(state.passkeys ?? null);
         setPupuAvatar(state.pupuAvatar ?? null);
         setModel(state.model ?? null);
@@ -255,6 +257,7 @@ export function usePupuState() {
     applyActivity,
     reports,
     chats,
+    everyone,
     passkeys,
     pupuAvatar,
     model,

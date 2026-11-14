@@ -1,19 +1,19 @@
-import { Button, Dropdown, Label, Spinner, Tabs } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Button, Spinner, Tabs } from "@heroui/react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { busyComputers, waitingProjects } from "../bridge/activity";
 import type { ApprovalView } from "../bridge/approvals";
 import { actorOf } from "../members";
 import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
-import type { Project } from "../projects";
+import { EVERYONE_ID } from "../projects";
 import { api, usePupuState } from "./api";
 import { Approvals, WaitingChip } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
-import { Chat, usePressMenu, type ChatContext } from "./Chat";
-import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
+import { Chat, type ChatContext } from "./Chat";
+import { EVERYONE_HINT, PRIVATE_HINT, useChatLines } from "./chat-lines";
 import { Docs } from "./Docs";
 import { Doing } from "./Doing";
-import { CheckIcon, ChevronLeftIcon, CloseIcon, MenuIcon, PlusIcon } from "./icons";
-import { ChildDot, childLabel, InviteSheet, ownsSpace, SpaceHeader, SpaceList } from "./Spaces";
+import { ChevronLeftIcon, CloseIcon, MenuIcon, PlusIcon } from "./icons";
+import { ChildDot, childLabel, EveryoneHeader, EveryoneSheet, InviteSheet, ownsSpace, SpaceHeader, SpaceList } from "./Spaces";
 import type { ChildView, ProjectView } from "../server";
 import { Login } from "./Login";
 import { NewProject } from "./NewProject";
@@ -107,7 +107,7 @@ function rememberProject(id: string) {
 }
 
 /**
- * 和 iOS 同一个结构：顶栏中间切换聊天和项目，聊天那段是 Pupu，长按、右键或再点一下换大家和私聊；
+ * 和 iOS 同一个结构：顶栏中间切换聊天和项目，聊天那段是「我的 Pupu」，自己的私聊；全员在空间列表第一个。
  * 右边「我」打开设置。项目页顶上的小胶囊写项目名。
  * 窄于 1024：项目页左上角 ≡ 打开整页项目列表。宽屏（电脑 App 的窗口、电脑浏览器）：这页列表常驻在左边。
  */
@@ -124,6 +124,7 @@ export function App() {
     applyActivity,
     reports,
     chats,
+    everyone,
     passkeys,
     pupuAvatar,
     model,
@@ -135,11 +136,22 @@ export function App() {
   const [listOpen, setListOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [inviting, setInviting] = useState<string | null>(null);
+  const [everyoneSettings, setEveryoneSettings] = useState(false);
   const wide = useWide();
   const [settings, setSettings] = useState<SettingsPage | null>(null);
   const section = sectionOf(route);
-  const lines = useChatLines(chats, route.kind === "chat");
-  const { line, session, canSwitch } = lines;
+  // 全员空间就是原来的主会话（root）。路由里是 `#/projects/everyone`。
+  const project =
+    route.kind === "project"
+      ? route.id === EVERYONE_ID
+        ? (everyone ?? undefined)
+        : projects.find((item) => item.id === route.id)
+      : undefined;
+  const inEveryone = project !== undefined && project.id === EVERYONE_ID;
+  const lines = useChatLines(chats, route.kind === "chat" ? (chats.private ?? chats.main).session : inEveryone && route.kind === "project" && !route.child ? project.session : null);
+  // 聊天页显示的那条：自己的私聊，本机开发没登录时是全员那条。
+  const session = lines.own;
+  const allSpaces = useMemo(() => (everyone ? [everyone, ...projects] : projects), [everyone, projects]);
   // 允许和放宽权限要电脑主人亲手确认。本机开发没设访问口令时没有「这台设备」，照常能点。
   const current = devices.find((device) => device.current);
   const confirmBy = confirmWhere(current?.kind ?? null, passkeys);
@@ -157,25 +169,30 @@ export function App() {
   const chat: ChatContext = useMemo(
     () => ({
       projects: new Map(projects.map((project) => [project.id, project])),
-      projectTags: route.kind === "chat",
+      projectTags: route.kind === "chat" || inEveryone,
       computers,
       approvals,
       members,
-      reports: route.kind === "chat" ? reports.filter((card) => card.chat === session) : undefined,
+      reports:
+        route.kind === "chat"
+          ? reports.filter((card) => card.chat === session)
+          : inEveryone
+            ? reports.filter((card) => card.chat === project.session)
+            : undefined,
       onOpenProject: (id) => go({ kind: "project", id }),
-      children: new Map(projects.flatMap((space) => space.children.map((child) => [child.session, child] as const))),
+      children: new Map(allSpaces.flatMap((space) => space.children.map((child) => [child.session, child] as const))),
       onOpenChild: (session) => {
-        const space = projects.find((item) => item.children.some((child) => child.session === session));
+        const space = allSpaces.find((item) => item.children.some((child) => child.session === session));
         if (space) go({ kind: "project", id: space.id, child: session });
       },
       onProjectsChanged: () => void refresh(),
       onActivity: applyActivity
     }),
-    [projects, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind]
+    [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind, inEveryone, project?.session]
   );
 
   // 夜空是私聊的记号；项目是公开的，不用。登录页也是夜空，衬着左边的大图。
-  const night = unauthorized || (line === "private" && route.kind === "chat");
+  const night = unauthorized || (lines.isPrivate && route.kind === "chat");
   useEffect(() => {
     setNight(night);
   }, [night]);
@@ -183,16 +200,18 @@ export function App() {
   useEffect(() => {
     if (section !== "projects") setListOpen(false);
   }, [section]);
+  useEffect(() => {
+    if (!inEveryone) setEveryoneSettings(false);
+  }, [inEveryone]);
 
   // 「项目」没指定是哪个：回到上次那个，没有就打开最近活跃的。
   useEffect(() => {
     if (route.kind !== "projects" || !loaded) return;
     const last = lastProject();
-    const target = projects.find((project) => project.id === last) ?? projects[0];
+    const target = allSpaces.find((space) => space.id === last) ?? projects[0] ?? everyone;
     if (target) go({ kind: "project", id: target.id });
-  }, [route.kind, loaded, projects, go]);
+  }, [route.kind, loaded, allSpaces, projects, everyone, go]);
 
-  const project = route.kind === "project" ? projects.find((item) => item.id === route.id) : undefined;
   const child = route.kind === "project" && route.child ? project?.children.find((item) => item.session === route.child) : undefined;
   const me = members.find((member) => member.current);
   const inviteSpace = projects.find((item) => item.id === inviting && item.id === project?.id);
@@ -210,18 +229,16 @@ export function App() {
 
   if (unauthorized) return <Login />;
 
-  const openLine = (key: LineKey) => {
-    lines.pick(key);
-    go({ kind: "chat" });
-  };
-  /** 「我的 Pupu」是自己的私聊；没有成员身份（本机开发没登录）时只有大家。 */
+  /** 「我的 Pupu」是自己的私聊；没有成员身份（本机开发没登录）时是全员那条。 */
   const openPupu = () => {
     setListOpen(false);
-    openLine(chats.private ? "private" : "main");
+    go({ kind: "chat" });
   };
   const spaceList = (inWide: boolean) => (
     <SpaceList
       spaces={projects}
+      everyone={everyone}
+      everyoneUnread={lines.unread.everyone}
       members={members}
       waiting={waiting}
       current={project?.id}
@@ -271,11 +288,11 @@ export function App() {
         key={session}
         session={session}
         context={chat}
-        placeholder={LINE_HINTS[line]}
+        placeholder={lines.isPrivate ? PRIVATE_HINT : EVERYONE_HINT}
         empty={
           <div className="flex flex-col gap-2 text-center text-ink-sky">
             <div className="text-greeting">我是 Pupu</div>
-            {line === "private" && <div className="text-message">这里只有你和我，别人看不到。</div>}
+            {lines.isPrivate && <div className="text-message">这里只有你和我，别人看不到。</div>}
           </div>
         }
         starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事"]}
@@ -292,6 +309,17 @@ export function App() {
         <ChildDot child={child} />
         <span className="shrink-0 text-muted">{childLabel(child)}</span>
       </span>
+    );
+  } else if (project && inEveryone) {
+    body = (
+      <Chat
+        key={project.session}
+        session={project.session}
+        context={chat}
+        placeholder={EVERYONE_HINT}
+        top={<EveryoneHeader space={project} mayManage={everyone?.mayManage ?? false} onSettings={() => setEveryoneSettings(true)} />}
+        empty={<div className="text-greeting text-ink-sky">{project.name}</div>}
+      />
     );
   } else if (project) {
     body = (
@@ -369,10 +397,7 @@ export function App() {
             <SectionSwitch
               section={section}
               onSection={(kind) => go({ kind })}
-              line={line}
-              canSwitch={canSwitch}
-              unread={lines.unread}
-              onOpenLine={openLine}
+              unread={lines.unread.own}
               avatar={pupuAvatar}
             />
             <button
@@ -406,7 +431,7 @@ export function App() {
               await refresh();
             }}
           />
-          {route.kind === "chat" && (
+          {(route.kind === "chat" || (inEveryone && !child)) && (
             <Doing
               rows={doing}
               onOpen={(activity) => {
@@ -454,6 +479,14 @@ export function App() {
           <div className="relative min-h-0 flex-1">{childChat(project, child)}</div>
         </aside>
       )}
+      <EveryoneSheet
+        space={everyoneSettings && inEveryone && everyone?.mayManage ? project : undefined}
+        onClose={() => setEveryoneSettings(false)}
+        onChange={async (mode) => {
+          await api.changeSpace(EVERYONE_ID, { kind: "mode", mode });
+          await refresh();
+        }}
+      />
       <InviteSheet
         space={inviteSpace}
         members={members}
@@ -530,87 +563,41 @@ function showComputerCard(computerId: string): boolean {
   return true;
 }
 
-/** 顶部切换。聊天那段是 Pupu：写着当前那条聊天，长按、右键或在已选中时再点一下，换大家和私聊。 */
+/** 顶部切换。聊天那段是「我的 Pupu」：自己的私聊。 */
 function SectionSwitch({
   section,
   onSection,
-  line,
-  canSwitch,
   unread,
-  onOpenLine,
   avatar
 }: {
   section: Section;
   onSection: (section: Section) => void;
-  line: LineKey;
-  canSwitch: boolean;
-  unread: Record<LineKey, boolean>;
-  onOpenLine: (line: LineKey) => void;
+  unread: boolean;
   /** Pupu 换过的头像，没换过是 null。 */
   avatar: string | null;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const anchor = useRef<HTMLElement | null>(null);
-  const press = usePressMenu((target) => {
-    anchor.current = target;
-    setMenuOpen(true);
-  });
-  const fresh = (["main", "private"] as const).filter((key) => unread[key]);
   const segment =
     "h-bar-inner rounded-full px-0 text-subheadline text-foreground data-[selected=true]:text-background";
   const indicator = <Tabs.Indicator className="rounded-full bg-foreground" />;
 
   return (
-    <>
-      <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Pupu" className="glass h-bar rounded-full p-1">
-            <Tabs.Tab
-              id="chat"
-              aria-label={[LINE_NAMES[line], ...fresh.map((key) => `${LINE_NAMES[key]}有新消息`)].join("，")}
-              className={`${segment} font-semibold`}
-            >
-              <span
-                {...(canSwitch ? press : {})}
-                onClick={(event) => {
-                  // 电脑上没有长按：已经在聊天时再点一下也打开菜单。
-                  if (canSwitch && section === "chat") press.onContextMenu(event);
-                }}
-                className="pressable relative flex h-bar-inner items-center gap-1.5 pr-3 pl-1"
-              >
-                <MemberAvatar name="Pupu" src={avatar ?? PUPU_AVATAR} className="size-6.5 pointer-fine:size-6" />
-                {LINE_NAMES[line]}
-                {fresh.length > 0 && (
-                  <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />
-                )}
-              </span>
-              {indicator}
-            </Tabs.Tab>
-            <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}>
-              项目
-              {indicator}
-            </Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
-      </Tabs>
-      <Dropdown isOpen={menuOpen} onOpenChange={setMenuOpen}>
-        <Dropdown.Popover triggerRef={anchor} placement="bottom">
-          <Dropdown.Menu
-            aria-label="切换聊天"
-            onAction={(key) => {
-              setMenuOpen(false);
-              onOpenLine(key as LineKey);
-            }}
-          >
-            {(["main", "private"] as const).map((key) => (
-              <Dropdown.Item key={key} id={key} textValue={LINE_NAMES[key]}>
-                <Label>{LINE_NAMES[key]}</Label>
-                {key === line && <CheckIcon className="ml-auto" />}
-              </Dropdown.Item>
-            ))}
-          </Dropdown.Menu>
-        </Dropdown.Popover>
-      </Dropdown>
-    </>
+    <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
+      <Tabs.ListContainer>
+        <Tabs.List aria-label="Pupu" className="glass h-bar rounded-full p-1">
+          <Tabs.Tab id="chat" aria-label={unread ? "我的 Pupu，有新消息" : "我的 Pupu"} className={`${segment} font-semibold`}>
+            <span className="relative flex h-bar-inner items-center gap-1.5 pr-3 pl-1">
+              <MemberAvatar name="Pupu" src={avatar ?? PUPU_AVATAR} className="size-6.5 pointer-fine:size-6" />
+              Pupu
+              {unread && <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />}
+            </span>
+            {indicator}
+          </Tabs.Tab>
+          <Tabs.Tab id="projects" className={`${segment} w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}>
+            项目
+            {indicator}
+          </Tabs.Tab>
+        </Tabs.List>
+      </Tabs.ListContainer>
+    </Tabs>
   );
 }

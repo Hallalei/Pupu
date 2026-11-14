@@ -1,7 +1,8 @@
-import { Button, Modal } from "@heroui/react";
+import { Button, Label, Modal, Switch } from "@heroui/react";
 import { useState, type SVGProps } from "react";
 import type { Level } from "../access";
 import type { MemberView } from "../members";
+import type { SpaceMode } from "../projects";
 import type { ChildView, ProjectView } from "../server";
 import { WaitingChip } from "./Approvals";
 import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
@@ -74,6 +75,8 @@ function SpaceMark({ space, members }: { space: ProjectView; members: readonly M
  */
 export function SpaceList({
   spaces,
+  everyone,
+  everyoneUnread,
   members,
   waiting,
   current,
@@ -88,6 +91,9 @@ export function SpaceList({
   wide
 }: {
   spaces: readonly ProjectView[];
+  /** 全员空间。部署新云端之前的老 DO 没有。 */
+  everyone: ProjectView | null;
+  everyoneUnread: boolean;
   members: readonly MemberView[];
   waiting: ReadonlySet<string>;
   current: string | undefined;
@@ -131,20 +137,27 @@ export function SpaceList({
           <PlusIcon />
         </button>
       </div>
-      {spaces.map((space) => {
+      {(everyone ? [everyone, ...spaces] : spaces).map((space) => {
         const selected = space.id === current;
+        const all = space.id === everyone?.id;
         return (
           <div key={space.id} className="flex flex-col">
             <button
               type="button"
               onClick={() => onOpen(space.id)}
               aria-current={selected && !currentChild ? "page" : undefined}
+              aria-label={all && everyoneUnread ? `${space.name}，有新消息` : undefined}
               className={`${row} ${selected ? (wide ? "bg-nav-current font-semibold" : "font-semibold") : hover}`}
             >
-              <FolderIcon className="shrink-0 text-[16px] text-muted" />
+              {all ? (
+                <BuildingIcon className="shrink-0 text-[16px] text-muted" />
+              ) : (
+                <FolderIcon className="shrink-0 text-[16px] text-muted" />
+              )}
               <span className="min-w-0 flex-1 truncate">{space.name}</span>
+              {all && everyoneUnread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-danger" />}
               {waiting.has(space.id) && <WaitingChip />}
-              <SpaceMark space={space} members={members} />
+              {!all && <SpaceMark space={space} members={members} />}
             </button>
             {selected &&
               space.children.map((child) => (
@@ -204,6 +217,89 @@ export function SpaceHeader({
   );
 }
 
+/** 全员顶上的胶囊：名字和楼。组织创建者点楼打开设置。 */
+export function EveryoneHeader({ space, mayManage, onSettings }: { space: ProjectView; mayManage: boolean; onSettings: () => void }) {
+  return (
+    <span className="glass pointer-events-auto flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-foreground">
+      <span className="truncate font-semibold">{space.name}</span>
+      {mayManage ? (
+        <button type="button" aria-label="设置" onClick={onSettings} className="tap -mr-1 grid size-6 place-items-center rounded-full hover:bg-foreground/8">
+          <BuildingIcon className="text-[16px] text-muted" />
+        </button>
+      ) : (
+        <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[16px] text-muted" />
+      )}
+    </span>
+  );
+}
+
+/** 只派活：Pupu 不自己动手，把事交给子会话去做。默认关。 */
+function ModeSwitch({ mode, busy, detail, onChange }: { mode: SpaceMode; busy: boolean; detail: string; onChange: (mode: SpaceMode) => void }) {
+  return (
+    <div className="px-1">
+      <Switch isSelected={mode === "coordinator"} isDisabled={busy} onChange={(on) => onChange(on ? "coordinator" : "direct")}>
+        <Switch.Content className="flex w-full items-center gap-3">
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <Label className="text-body">只派活</Label>
+            <span className="text-subheadline text-muted">{detail}</span>
+          </span>
+          <Switch.Control className="shrink-0">
+            <Switch.Thumb />
+          </Switch.Control>
+        </Switch.Content>
+      </Switch>
+    </div>
+  );
+}
+
+/** 全员的设置：现在只有只派活一项，组织创建者才打得开。 */
+export function EveryoneSheet({
+  space,
+  onClose,
+  onChange
+}: {
+  space: ProjectView | undefined;
+  onClose: () => void;
+  onChange: (mode: SpaceMode) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run(mode: SpaceMode) {
+    setBusy(true);
+    setError(null);
+    try {
+      await onChange(mode);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal>
+      <Modal.Backdrop isOpen={space !== undefined} onOpenChange={(open) => !open && onClose()}>
+        <Modal.Container placement="center">
+          <Modal.Dialog aria-label="全员设置" className="w-[min(92vw,420px)] rounded-panel">
+            <Modal.Header className="flex flex-row items-center justify-between">
+              <Modal.Heading className="text-title">{space?.name}</Modal.Heading>
+              <button type="button" aria-label="关闭" onClick={onClose} className="tap grid size-9 place-items-center rounded-full bg-surface-inset">
+                <CloseIcon />
+              </button>
+            </Modal.Header>
+            <Modal.Body className="flex flex-col gap-4">
+              {space && <ModeSwitch mode={space.mode} busy={busy} detail="Pupu 不自己动手，事情交给各个空间去做" onChange={(mode) => void run(mode)} />}
+              {error && <div className="text-subheadline text-danger-ink">{error}</div>}
+            </Modal.Body>
+            <Modal.Footer className="hidden">
+              <Button slot="close">关闭</Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
+  );
+}
+
 const LEVEL_OPTIONS: readonly { level: Level; name: string; detail: string }[] = [
   { level: "L3", name: "只有成员", detail: "成员在自己的 Pupu 里也问得到" },
   { level: "L2", name: "全组织", detail: "组织里谁都能进来看" },
@@ -222,7 +318,9 @@ export function InviteSheet({
   members: readonly MemberView[];
   mine: boolean;
   onClose: () => void;
-  onChange: (change: { kind: "add" | "remove"; memberId: string } | { kind: "level"; level: Level }) => Promise<void>;
+  onChange: (
+    change: { kind: "add" | "remove"; memberId: string } | { kind: "level"; level: Level } | { kind: "mode"; mode: SpaceMode }
+  ) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -325,6 +423,14 @@ export function InviteSheet({
                     ))}
                   </div>
                 </fieldset>
+              )}
+              {mine && space && (
+                <ModeSwitch
+                  mode={space.mode}
+                  busy={busy !== null}
+                  detail="Pupu 不自己动手，事情交给子会话去做"
+                  onChange={(mode) => void run("mode", { kind: "mode", mode })}
+                />
               )}
               {error && <div className="text-subheadline text-danger-ink">{error}</div>}
             </Modal.Body>

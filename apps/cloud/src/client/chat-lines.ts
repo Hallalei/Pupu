@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ChatLine, ChatsView } from "../threads";
 
-export type LineKey = "main" | "private";
-
-export const LINE_NAMES: Record<LineKey, string> = { main: "大家", private: "私聊" };
-
-export const LINE_HINTS: Record<LineKey, string> = { main: "发给大家和 Pupu", private: "只发给 Pupu" };
+/** 全员空间输入框里的一行字。 */
+export const EVERYONE_HINT = "发给组织里所有人和 Pupu";
+export const PRIVATE_HINT = "只发给 Pupu";
 
 const SEEN_KEY = "pupu:chat-seen";
 
@@ -27,38 +25,34 @@ function saveSeen(seen: Record<string, number>) {
 }
 
 /**
- * 当前是大家还是私聊，以及没在显示的那条有没有新消息。打开时总在大家。
- * `onScreen` 是聊天页正显示着：显示着的那条算看过。
+ * 「我的 Pupu」是自己的私聊；本机开发没登录时没有私聊，退回全员那条。
+ * `showing` 是正显示着的那条会话（没在看聊天是 null）：显示着的算看过。
+ * 返回私聊（或退回的那条）和全员各自有没有没看过的回复。
  */
-export function useChatLines(chats: ChatsView, onScreen: boolean) {
-  const [picked, setPicked] = useState<LineKey>("main");
+export function useChatLines(chats: ChatsView, showing: string | null) {
   const [seen, setSeen] = useState(loadSeen);
-  const own = chats.private;
-  const line: LineKey = own ? picked : "main";
-  const current: ChatLine = own && line === "private" ? own : chats.main;
+  const own: ChatLine = chats.private ?? chats.main;
+  const shown = showing === own.session ? own : showing === chats.main.session ? chats.main : null;
 
-  const { session, lastAt } = current;
+  const session = shown?.session;
+  const lastAt = shown?.lastAt ?? null;
   useEffect(() => {
-    if (!onScreen || lastAt === null) return;
+    if (!session || lastAt === null) return;
     setSeen((known) => {
       if ((known[session] ?? 0) >= lastAt) return known;
       const next = { ...known, [session]: lastAt };
       saveSeen(next);
       return next;
     });
-  }, [onScreen, session, lastAt]);
+  }, [session, lastAt]);
 
-  const isNew = (chat: ChatLine | null) =>
-    chat !== null &&
-    chat.lastAt !== null &&
-    chat.lastAt > (seen[chat.session] ?? 0) &&
-    !(onScreen && chat.session === session);
+  const isNew = (chat: ChatLine) =>
+    chat.lastAt !== null && chat.lastAt > (seen[chat.session] ?? 0) && chat.session !== showing;
 
   return {
-    line,
-    session,
-    canSwitch: own !== null,
-    pick: setPicked,
-    unread: { main: isNew(chats.main), private: isNew(own) } satisfies Record<LineKey, boolean>
+    /** 「我的 Pupu」打开的会话。 */
+    own: own.session,
+    isPrivate: chats.private !== null,
+    unread: { own: isNew(own), everyone: chats.private !== null && isNew(chats.main) }
   };
 }
