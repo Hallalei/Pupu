@@ -160,6 +160,7 @@ import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit 
 import { maySeeSpace } from "./access.ts";
 import { DOC_BODY_LIMIT, DocStore, docScope, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
+import { createOrgTools } from "./org.ts";
 import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
 import { childReport, COORDINATOR_KEY, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
@@ -391,6 +392,7 @@ export class Pupu extends DurableObject<Env> {
           ...this.#delegationTools,
           ...this.#docTools,
           ...this.#memoryTools,
+          ...this.#orgTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -1827,6 +1829,20 @@ export class Pupu extends DurableObject<Env> {
   readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
 
   /** 共享资料和 skill 的工具，按会话的受众筛，见 docs.ts、docs-tools.ts。 */
+  /** 组织概况，按会话受众现查，见 org.ts。 */
+  readonly #orgTools = createOrgTools({
+    spaces: () => this.store.listProjects(),
+    children: (projectId) => this.children.ofProject(projectId),
+    docs: (scope) => this.docs.list(scope),
+    waiting: () => new Set(this.approvals.pending(Date.now()).flatMap((row) => (row.session ? [row.session] : []))),
+    nameOf: (memberId) => {
+      const member = this.members.byId(memberId);
+      return member ? memberName(member) : "一位成员";
+    },
+    now: () => Date.now(),
+    threadOf: (session) => this.threads.of(session)
+  });
+
   readonly #memoryTools = createMemoryTools({
     memories: this.memories,
     threadOf: (session) => this.threads.of(session),
@@ -1985,7 +2001,7 @@ export class Pupu extends DurableObject<Env> {
     const pi = await this.harness.pi();
     const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
     if (!conversation) return false;
-    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools, ...this.#memoryTools].filter((tool) =>
+    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools, ...this.#memoryTools, ...this.#orgTools].filter((tool) =>
       COORDINATOR_TOOLS.includes(tool.name)
     );
     await conversation.configure(mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } }, BACKGROUND_CONTEXT);
