@@ -485,6 +485,7 @@ async function paired(desktop: Credential, computer: Credential, renewed: boolea
   startBridge();
   render();
   pairWindow?.close();
+  if (renewed) await clearOrgCookies();
   if (renewed && mainWindow) {
     await setCookie(desktop.token);
     mainWindow.reload();
@@ -505,6 +506,7 @@ async function checkDesktop(): Promise<void> {
     pairing = { ...pairing, desktop: null };
     await savePairing();
     await windowSession().cookies.remove(`${origin}/`, TOKEN_COOKIE);
+    await clearOrgCookies();
     mainWindow?.close();
     openPairWindow();
     render();
@@ -520,6 +522,19 @@ async function checkDesktop(): Promise<void> {
 
 function windowSession(): Session {
   return session.fromPartition(PARTITION);
+}
+
+/**
+ * 窗口切到别的 Pupu 时，云端把那边的凭据种在 `pupu_org_<id>`，`pupu_active` 记着选中哪个（见云端 server.ts 的
+ * `cookieCandidates`）。重新配对或者凭据被吊销时一起清掉，免得换了账号还用着上一个人的。
+ */
+async function clearOrgCookies(): Promise<void> {
+  const cookies = await windowSession().cookies.get({ url: `${origin}/` });
+  for (const cookie of cookies) {
+    if (cookie.name === "pupu_active" || cookie.name.startsWith("pupu_org_")) {
+      await windowSession().cookies.remove(`${origin}/`, cookie.name);
+    }
+  }
 }
 
 /** 不带过期时间：只在内存里，不写进磁盘上的 cookie 库。凭据本身在 safeStorage 里。 */

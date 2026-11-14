@@ -29,3 +29,4 @@
 - [设置](./settings.md)：设备和电脑列表、配对码。
 - [电脑配对](./desktop-pairing.md)：电脑 App 配对并上线。
 - [手机连接](./ios-connect.md)：配对链接把手机连上，手机看到云端数据。
+- [多组织](./multi-org.md)：一个账号在好几个 Pupu 里，邀请、切换、移出后锁个人入口。要假 Google。

@@ -93,7 +93,8 @@ export type AuthContext = {
   /** 浏览器的名字，比如「Safari · Mac」。 */
   readonly browserName: (userAgent: string | null) => string;
   /** 浏览器凭据的 cookie。 */
-  readonly deviceCookie: (url: URL, token: string) => string;
+  /** 登录成功种下的 cookie。可以是几条：网页登录回来顺手清掉选中的组织，回到这次登录的那个。 */
+  readonly deviceCookie: (url: URL, token: string) => string | readonly string[];
   readonly source: (request: Request) => string;
   readonly now?: () => number;
   readonly fetch?: typeof fetch;
@@ -279,7 +280,7 @@ async function callback(request: Request, url: URL, client: OidcClient, context:
 function granted(flow: SignInFlow, grant: SignInGrant, url: URL, cleared: string, context: AuthContext): Response {
   if (grant.kind === "refused") return fail(flow, grant.error, cleared);
   if (grant.kind === "invite") return redirect(INVITE_PATH, [cleared, authCookie(url, INVITE_COOKIE, grant.token)]);
-  if (grant.kind === "cookie") return redirect("/", [cleared, context.deviceCookie(url, grant.token)]);
+  if (grant.kind === "cookie") return redirect("/", [cleared, ...[context.deviceCookie(url, grant.token)].flat()]);
   const target = new URL(flow.redirect ?? "/", url);
   target.searchParams.set("code", grant.code);
   return redirect(target.toString(), [cleared]);

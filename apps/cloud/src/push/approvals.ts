@@ -31,6 +31,8 @@ export type ApprovalPusherOptions = {
   readonly apns: () => PushSender | null;
   readonly now: () => number;
   readonly log?: (message: string) => void;
+  /** 这个 Pupu 的 id，写进推送：手机在好几个 Pupu 里，靠它挑用哪张凭据去批。 */
+  readonly pupu?: () => string | null;
 };
 
 /**
@@ -84,7 +86,7 @@ export class ApprovalPusher {
           priority: 10,
           collapseId: row.id,
           expiration: Math.floor(row.expiresAt / 1000),
-          payload: approvalAlert(row)
+          payload: approvalAlert(row, this.#options.pupu?.() ?? null)
         }))
       );
     }
@@ -105,7 +107,7 @@ export class ApprovalPusher {
             priority: 10,
             collapseId: id,
             expiration: Math.floor(now / 1000) + SETTLED_TTL_S,
-            payload: approvalSettled(id, row, now)
+            payload: approvalSettled(id, row, now, this.#options.pupu?.() ?? null)
           })
         )
       );
@@ -140,7 +142,7 @@ function clip(text: string, max: number): string {
 }
 
 /** 带按钮的那条。手机靠 `approvalId` 知道点的是哪一条。 */
-export function approvalAlert(row: ApprovalRow): object {
+export function approvalAlert(row: ApprovalRow, pupu: string | null = null): object {
   return {
     aps: {
       alert: {
@@ -155,12 +157,13 @@ export function approvalAlert(row: ApprovalRow): object {
       "interruption-level": "time-sensitive",
       "thread-id": THREAD
     },
-    approvalId: row.id
+    approvalId: row.id,
+    ...(pupu ? { pupu } : {})
   };
 }
 
 /** 替换上面那条：不响、不亮屏、没有按钮。审批记录已经清掉了就只说处理过了。 */
-export function approvalSettled(id: string, row: ApprovalRow | undefined, now: number): object {
+export function approvalSettled(id: string, row: ApprovalRow | undefined, now: number, pupu: string | null = null): object {
   const status = !row ? null : row.status === "pending" ? (row.expiresAt <= now ? "expired" : null) : row.status;
   const outcome = status ? OUTCOMES[status] : "已处理";
   return {
@@ -173,6 +176,7 @@ export function approvalSettled(id: string, row: ApprovalRow | undefined, now: n
       "thread-id": THREAD
     },
     approvalId: id,
-    settled: status ?? "settled"
+    settled: status ?? "settled",
+    ...(pupu ? { pupu } : {})
   };
 }

@@ -179,6 +179,22 @@ nonisolated struct PairingCode: Decodable, Sendable, Hashable {
 }
 
 /// 配对换来的凭据。明文只在这一次返回。
+/// `/api/orgs`：这个账号在的 Pupu，`current` 是这张凭据所在的那个。
+nonisolated struct OrgList: Decodable, Sendable {
+    nonisolated struct Org: Decodable, Sendable, Hashable {
+        let id: String
+        let name: String
+        let creator: String?
+        let members: Int
+        let role: String
+        let current: Bool
+    }
+
+    let current: String
+    let orgs: [Org]
+    let canOpenOwn: Bool
+}
+
 nonisolated struct Paired: Decodable, Sendable {
     let id: String
     let name: String
