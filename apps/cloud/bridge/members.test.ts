@@ -129,10 +129,27 @@ describe("成员表", () => {
     const members = new MemberStore(sqlStorage());
     const creator = members.addCreator("c@example.com", NOW);
     const mom = members.invite("mom@example.com", null, NOW);
-    assert.equal(members.remove(creator?.id ?? ""), false);
-    assert.equal(members.remove(mom?.id ?? ""), true);
-    assert.equal(members.remove(mom?.id ?? ""), false);
+    assert.equal(members.remove(creator?.id ?? "", NOW), false);
+    assert.equal(members.remove(mom?.id ?? "", NOW), true);
+    assert.equal(members.remove(mom?.id ?? "", NOW), false);
     assert.equal(members.byEmail("mom@example.com"), undefined);
+    assert.equal(members.byId(mom?.id ?? ""), undefined);
+    assert.equal(members.list().length, 1, "名单里没有他");
+    assert.equal(members.former(mom?.id ?? "")?.email, "mom@example.com", "名字和 id 留着");
+  });
+
+  test("移除后再邀请回来用回原来的 id，个人入口挂在这个 id 上，就回来了", () => {
+    const members = new MemberStore(sqlStorage());
+    const creator = members.addCreator("c@example.com", NOW)!;
+    const mom = members.invite("mom@example.com", creator.id, NOW)!;
+    members.markJoined(mom.id, NOW);
+    members.markLeaving(mom.id, NOW + 1);
+    members.remove(mom.id, NOW + 2);
+    const back = members.invite("Mom@Example.com", creator.id, NOW + 3);
+    assert.equal(back?.id, mom.id);
+    assert.equal(back?.joinedAt, null, "算重新邀请，还没登录");
+    assert.equal(members.former(mom.id), undefined);
+    assert.equal(members.invite("mom@example.com", creator.id, NOW + 4), undefined, "已经在名单上");
   });
 });
 
@@ -264,6 +281,7 @@ describe("移除成员", () => {
     devices.addCode("my-code", NOW + 60_000, NOW, { byPhone: true, memberId: creator.id, deviceId: own.id });
     connectors.save({ id: "app-1", service: "gmail", alias: "a", account: null, memberId: mom.id, createdAt: NOW });
     const released: string[] = [];
+    const left: string[] = [];
     let connectorUp = true;
     let directoryUp = true;
     let duringDisconnect: (() => void) | null = null;
@@ -280,6 +298,9 @@ describe("移除成员", () => {
         connectors.remove(id);
         return true;
       },
+      leaveSpaces: async (memberId) => {
+        left.push(memberId);
+      },
       release: async (email) => {
         if (!directoryUp) throw new Error("目录没回");
         released.push(email);
@@ -293,6 +314,7 @@ describe("移除成员", () => {
       mom,
       removal,
       released,
+      left,
       connectorDown: (down: boolean) => (connectorUp = !down),
       directoryDown: (down: boolean) => (directoryUp = !down),
       whileDisconnecting: (check: () => void) => (duringDisconnect = check)
@@ -309,6 +331,7 @@ describe("移除成员", () => {
     assert.ok(pupu.devices.takeCode("my-code", NOW), "别人的码不动");
     assert.deepEqual(pupu.connectors.list(), []);
     assert.deepEqual(pupu.released, ["mom@example.com"]);
+    assert.deepEqual(pupu.left, [pupu.mom.id], "从空间里拿掉");
   });
 
   test("等着断开账号的时候，他已经登录不了、码换不到、设备都吊销了", async () => {

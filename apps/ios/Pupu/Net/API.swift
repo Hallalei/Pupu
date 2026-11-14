@@ -153,6 +153,24 @@ nonisolated struct API: Sendable {
         let _: Done = try await send("api/connectors/\(id)/remove", method: "POST", body: [:])
     }
 
+    /// 这个账号在的几个 Pupu，见云端 server.ts 的 `orgList`。
+    func orgs() async throws -> OrgList {
+        try await send("api/orgs")
+    }
+
+    /// 切到另一个 Pupu：手机拿到一个码，用自己的 verifier 去换那边的凭据（和 Google 登录回来一样，可能要等已有手机允许）。
+    func switchOrg(_ org: String, challenge: String) async throws -> String {
+        let grant: OrgGrant = try await send("api/orgs/switch", method: "POST", body: ["org": org, "challenge": challenge])
+        return grant.code
+    }
+
+    /// 用邀请码开自己的 Pupu，同样拿到一个换凭据的码。
+    func openOwnOrg(code: String, challenge: String) async throws -> String {
+        let grant: OrgGrant = try await send("api/orgs/own", method: "POST", body: ["code": code, "challenge": challenge])
+        return grant.code
+    }
+
+    private struct OrgGrant: Decodable { let code: String }
     private struct Started: Decodable { let url: String }
     private struct Created: Decodable { let code: String }
     private struct Done: Decodable {}

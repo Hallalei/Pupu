@@ -287,18 +287,21 @@ export class SignInStore {
     email: string;
     challenge: string;
     now: number;
+    /** 不用已有手机点允许，来了就发：同一台已经连上的手机从别的 Pupu 切过来。 */
+    approved?: boolean;
   }): SignInRow {
     this.#db().exec("DELETE FROM pupu_sign_ins WHERE created_at < ?", input.now - KEEP_MS);
     const id = crypto.randomUUID();
     this.#db().exec(
       `INSERT INTO pupu_sign_ins
         (id, code_hash, client, email, challenge, name, place, status, created_at, expires_at, decided_at)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, 'ready', ?, ?, NULL)`,
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, NULL)`,
       id,
       input.codeHash,
       input.client,
       input.email,
       input.challenge,
+      input.approved ? "allowed" : "ready",
       input.now,
       input.now + GRANT_TTL_MS
     );

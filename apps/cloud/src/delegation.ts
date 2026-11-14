@@ -4,7 +4,7 @@
  * - 子会话是普通的顶层 pi 会话，和项目会话一样建、一样提交，靠这张表认出它属于哪个空间。只有一层：子会话不能再派。
  * - 主会话能用的工具在 `mayCall` 里写死，`beforeTool` 先过它，被拦的调用不会生成审批卡。
  * - 委派工具都是 `deferred`：默认不给任何会话，空间切成协调模式时才写进主会话的 `modelTools`。
- *   这一版没有入口能切换，所有会话的工具和 0.2.6 一样。
+ *   第 4 步起所有空间默认是协调模式，老空间启动时切过去（server.ts 的 `#coordinateSpaces`）。
  */
 
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
@@ -28,12 +28,15 @@ export type SpaceChild = {
 /** 回投到主会话的结果最多这么长，超出的截掉，人可以点进子会话看全文。 */
 export const REPORT_LIMIT = 1500;
 
-import { DOC_READ_TOOLS } from "./docs-tools.ts";
+import { DOC_TOOLS } from "./docs-tools.ts";
+import { MEMORY_TOOLS } from "./memory.ts";
 
 export const DELEGATION_TOOLS = ["delegate", "message_child", "list_children", "stop_child"] as const;
 
-/** 协调模式下主会话只能用这些。 */
-export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects", ...DOC_READ_TOOLS];
+/** 协调模式下主会话只能用这些：委派、只读的组织查询，加上资料和记忆（不动电脑，人在空间里说「存一下」「记住」时用得上）。 */
+export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects", "org_overview", ...DOC_TOOLS, ...MEMORY_TOOLS];
+/** 这一版协调模式的工具列表。会话里记的和它不一样，启动时重配。 */
+export const COORDINATOR_KEY = COORDINATOR_TOOLS.join(",");
 
 type Row = Record<string, SqlStorageValue>;
 

@@ -113,6 +113,7 @@ import {
   memberView,
   removeMember,
   type Actor,
+  type MemberRole,
   type MemberRow,
   type MemberView
 } from "./members";
@@ -162,8 +163,10 @@ import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit 
 import { maySeeSpace } from "./access.ts";
 import { DOC_BODY_LIMIT, DocStore, docScope, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
+import { createOrgTools } from "./org.ts";
+import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
-import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
+import { childReport, COORDINATOR_KEY, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
 import { createPupuTools } from "./tools";
 
@@ -244,6 +247,36 @@ export type PairResult =
   | { readonly ok: true; readonly id: string; readonly name: string; readonly token: string }
   | { readonly ok: false; readonly status: 400 | 401 | 403 | 429; readonly error: string };
 
+/** `/api/orgs`：这个账号在的 Pupu，和现在看的是哪个。 */
+export type OrgList = {
+  readonly current: string;
+  readonly orgs: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly creator: string | null;
+    readonly members: number;
+    readonly role: MemberRole;
+    readonly current: boolean;
+  }[];
+  /** 还没有自己的 Pupu、又开放了名额：能填邀请码开一个。 */
+  readonly canOpenOwn: boolean;
+};
+
+/** 切换列表里一个 Pupu 的样子，见 `Pupu.orgCard`。 */
+export type OrgCard = {
+  /** 创建者的名字。还没有创建者是 null。 */
+  readonly creator: string | null;
+  readonly members: number;
+  /** 来看的人在这里的角色。不在名单上（被移除了、正在移除）是 null。 */
+  readonly role: MemberRole | null;
+};
+
+/** 切进一个 Pupu 的结果，见 `Pupu.switchIn`。 */
+export type SwitchGrant =
+  | { readonly kind: "token"; readonly token: string }
+  | { readonly kind: "code"; readonly code: string }
+  | { readonly kind: "refused"; readonly error: string };
+
 /** 一张新凭据：明文发给对方，这边只存哈希。 */
 type Minted = { readonly token: string; readonly hash: string };
 
@@ -261,6 +294,7 @@ export class Pupu extends DurableObject<Env> {
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly children = new SpaceSessionStore(this.ctx.storage.sql);
   readonly docs = new DocStore(this.ctx.storage.sql);
+  readonly memories = new MemoryStore(this.ctx.storage.sql);
   readonly threads = new ThreadStore(this.ctx.storage.sql, this.store, (session) => {
     const child = this.children.bySession(session);
     const project = child && this.store.getProject(child.projectId);
@@ -314,6 +348,7 @@ export class Pupu extends DurableObject<Env> {
     // 新手机登录的等批推给所有手机（谁的手机都能批，见 sign-ins.ts）。
     audience: (row) => (row.kind === "sign_in" ? () => true : this.#phonesOf(row.computerId)),
     apns: () => this.#apnsClient(),
+    pupu: () => (this.#root ? ROOT_PUPU : (this.store.meta("pupu") ?? null)),
     now: () => Date.now(),
     log: (message) => console.warn(message)
   });
@@ -390,6 +425,8 @@ export class Pupu extends DurableObject<Env> {
           ...this.#pupuTools,
           ...this.#delegationTools,
           ...this.#docTools,
+          ...this.#memoryTools,
+          ...this.#orgTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -406,8 +443,12 @@ export class Pupu extends DurableObject<Env> {
           }),
           hook(GenerationTask, {
             beforeRequest: (request, api) => {
-              this.#rememberAsk(String(api.conversationId), request.messages);
-              return undefined;
+              const session = String(api.conversationId);
+              this.#rememberAsk(session, request.messages);
+              // 记住的事每一轮全量带上，放在最后一条用户消息前面（协作方案第 9.2 节）。
+              const thread = this.threads.of(session);
+              const messages = thread ? withMemory(request.messages, memoryBlock(thread, this.memories)) : undefined;
+              return messages ? { messages } : undefined;
             },
             afterResponse: (message, api) => {
               this.usage.add(dayOf(Date.now()), message.usage.cost.total);
@@ -595,6 +636,7 @@ export class Pupu extends DurableObject<Env> {
     // 这个任务上线之前开的屏幕授权，还没排到期。
     this.#scheduleScreen();
     await this.#syncModel();
+    await this.#coordinateSpaces();
     await this.sockets.reattach();
   }
 
@@ -1183,6 +1225,58 @@ export class Pupu extends DurableObject<Env> {
     return { kind: "code", code };
   }
 
+  // ---- 一个账号在好几个 Pupu 里（docs/协作方案.md 第 1、9 节）----
+
+  /** 切换列表里这个 Pupu 的样子：创建者是谁、几个人。`email` 是来看的人，看他在不在。 */
+  async orgCard(email: string): Promise<OrgCard> {
+    const creator = this.members.creator();
+    const member = this.members.byEmail(email);
+    return { creator: creator ? memberName(creator) : null, members: this.members.list().length, role: member?.role ?? null };
+  }
+
+  /** 发请求的设备是谁的、什么设备：切到别的 Pupu 时，那边按这个给同一个人发同一种设备。 */
+  async whoIs(device: string | null): Promise<{ email: string; name: string | null; kind: DeviceKind; deviceName: string } | null> {
+    if (device === null) return null;
+    const row = this.devices.list().find((each) => each.id === device);
+    const member = row?.memberId ? this.members.byId(row.memberId) : undefined;
+    if (!row || row.revokedAt !== null || !member) return null;
+    return { email: member.email, name: member.name, kind: row.kind, deviceName: row.name };
+  }
+
+  /**
+   * 同一个人从别的 Pupu 切进来。目录已经核对过他在这里（`home`）。门照这个 Pupu 自己的来：
+   * - 浏览器和电脑 App 的窗口直接发一张同种的凭据（和 Google 登录发的一样，都只认他是不是成员）；
+   * - 手机发一个一次性的码，手机带自己的 verifier 去 `/api/auth/redeem` 换。不用这里已有的手机点允许：
+   *   来切的是他在别的 Pupu 里已经连上的手机（`me.kind` 来自那台设备的凭据），切换不加确认。
+   */
+  async switchIn(input: {
+    email: string;
+    displayName: string | null;
+    kind: DeviceKind;
+    deviceName: string;
+    challenge: string | null;
+    home: Home;
+  }): Promise<SwitchGrant> {
+    if (input.home.pupu !== ROOT_PUPU) this.store.setMeta("pupu", input.home.pupu);
+    const member = this.#admit(input.email, input.displayName, Date.now(), input.home.founder);
+    if (!member) return { kind: "refused", error: NOT_MEMBER };
+    if (input.kind !== "phone") {
+      const credential = await this.#credential(input.kind, input.deviceName, member.id);
+      return credential ? { kind: "token", token: credential.token } : { kind: "refused", error: NOT_MEMBER };
+    }
+    if (!input.challenge) return { kind: "refused", error: "手机切换要带 challenge" };
+    const code = scopedCredential(this.#pupu(), randomToken());
+    this.signIns.add({
+      codeHash: await tokenHash(code),
+      client: "phone",
+      email: member.email,
+      challenge: input.challenge,
+      now: Date.now(),
+      approved: true
+    });
+    return { kind: "code", code };
+  }
+
   /**
    * App 拿码换凭据，规则见 `redeemStep`。新手机要已有手机点允许时，第一次来就开始等、推通知，
    * 之后每隔几秒再来问，等到允许才发凭据。码不对按来源记失败次数，和配对码共用一个上限。
@@ -1501,8 +1595,7 @@ export class Pupu extends DurableObject<Env> {
     if (!mayInvite(actor, proven)) return "creator_phone_only";
     if (!isEmail(email)) return "invalid";
     if (this.members.byEmail(email)) return "exists";
-    // 第一个 Pupu 的老成员不在目录里，目录认不出他已经有家了。
-    if (!this.#root && (await root(this.env).admits(email))) return "taken";
+    // 已经有自己的 Pupu、或者在别的 Pupu 里的人也能邀请：一个账号能在好几个 Pupu 里。
     const assignment = await directory(this.env).assign(email, this.#pupu());
     if (assignment !== "ok") return assignment;
     if (!this.members.invite(email, actor?.memberId ?? null, Date.now())) return "exists";
@@ -1513,7 +1606,8 @@ export class Pupu extends DurableObject<Env> {
   /**
    * 创建者移除一个成员，步骤见 members.ts 的 `removeMember`。他连的账号有一个断不开是 failed，
    * 他留在名单上、登录不了，创建者再点一次接着做完。
-   * 他的私聊留着：映射还在，谁也打不开，创建者也一样。
+   * 他的个人入口留着：挂在他的 id 上，id 不再发出去，谁也打不开，创建者也一样；再邀请回来用回这个 id，就回来了。
+   * 只断这一个 Pupu，他自己的和别的 Pupu 不动。
    */
   async removeMember(id: string, device: string | null = null): Promise<"ok" | "missing" | "creator_only" | "failed"> {
     const target = this.members.list().find((row) => row.id === id);
@@ -1529,6 +1623,11 @@ export class Pupu extends DurableObject<Env> {
         revokeDevice: (deviceId) => this.#revokeDevice(deviceId),
         revokeComputer: (computerId) => this.#revokeComputer(computerId),
         disconnect: (connectorId) => this.#disconnect(connectorId),
+        leaveSpaces: async (memberId) => {
+          for (const project of this.store.listProjects()) {
+            if (project.members.includes(memberId)) await this.store.removeMember(this.#sqlWriter, project.id, memberId);
+          }
+        },
         release: (email) => directory(this.env).release(email, this.#pupu())
       },
       Date.now()
@@ -1845,12 +1944,14 @@ export class Pupu extends DurableObject<Env> {
     const name = input.name.trim();
     if (!name) throw new Error("项目名不能为空");
     const session = await this.harness.sessions.create();
-    const project = this.store.insertProject({
+    const inserted = this.store.insertProject({
       session: session.id,
       name,
       goal: input.goal.trim(),
       background: input.background.trim()
     });
+    await this.#applyMode(inserted, "coordinator");
+    const project = this.store.getProject(inserted.id)!;
     this.#changed();
     return project;
   }
@@ -1866,6 +1967,26 @@ export class Pupu extends DurableObject<Env> {
   readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
 
   /** 共享资料和 skill 的工具，按会话的受众筛，见 docs.ts、docs-tools.ts。 */
+  /** 组织概况，按会话受众现查，见 org.ts。 */
+  readonly #orgTools = createOrgTools({
+    spaces: () => this.store.listProjects(),
+    children: (projectId) => this.children.ofProject(projectId),
+    docs: (scope) => this.docs.list(scope),
+    waiting: () => new Set(this.approvals.pending(Date.now()).flatMap((row) => (row.session ? [row.session] : []))),
+    nameOf: (memberId) => {
+      const member = this.members.byId(memberId);
+      return member ? memberName(member) : "一位成员";
+    },
+    now: () => Date.now(),
+    threadOf: (session) => this.threads.of(session)
+  });
+
+  readonly #memoryTools = createMemoryTools({
+    memories: this.memories,
+    threadOf: (session) => this.threads.of(session),
+    now: () => Date.now()
+  });
+
   readonly #docTools = createDocTools({
     docs: this.docs,
     threadOf: (session) => this.threads.of(session),
@@ -1915,11 +2036,13 @@ export class Pupu extends DurableObject<Env> {
     const name = input.name.trim();
     if (!name) throw new Error("空间名不能为空");
     const session = await this.harness.sessions.create();
-    const project = await this.store.createSpace(
+    const created = await this.store.createSpace(
       this.#sqlWriter,
       { session: session.id, name, goal: input.goal.trim(), background: "", ownerId: owner },
       Date.now()
     );
+    await this.#applyMode(created, "coordinator");
+    const project = this.store.getProject(created.id)!;
     this.#changed();
     return project;
   }
@@ -1997,23 +2120,51 @@ export class Pupu extends DurableObject<Env> {
   }
 
   /**
-   * 把空间切成协调模式：主会话只留委派工具。主人在界面上切（`changeSpace`），本机开发另有 `/api/projects/:id/mode`。
+   * 切空间的模式。主人在界面上切（`changeSpace`），本机开发另有 `/api/projects/:id/mode`。
    */
   async setSpaceMode(projectId: string, mode: SpaceMode): Promise<boolean> {
     await this.lifecycle.start();
     const project = this.store.getProject(projectId);
     if (!project) return false;
-    await this.store.setMode(this.#sqlWriter, projectId, mode, Date.now());
+    const ok = await this.#applyMode(project, mode);
+    if (ok) this.#changed();
+    return ok;
+  }
+
+  /**
+   * 先改主会话给模型看的工具，再改 `mode`（`mayCall` 的硬限制）：顺序反过来，中途失败会留下一个模型看得到、却全被拦下的工具列表。
+   * 记下这个空间按哪一版工具配的（`coordinator:<id>`），切回直接做的记 `direct`，启动时不再替主人切回去。
+   */
+  async #applyMode(project: Project, mode: SpaceMode): Promise<boolean> {
     const pi = await this.harness.pi();
     const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
     if (!conversation) return false;
-    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
-    await conversation.configure(
-      mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } },
-      BACKGROUND_CONTEXT
+    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools, ...this.#memoryTools, ...this.#orgTools].filter((tool) =>
+      COORDINATOR_TOOLS.includes(tool.name)
     );
-    this.#changed();
+    await conversation.configure(mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } }, BACKGROUND_CONTEXT);
+    if (project.mode !== mode) await this.store.setMode(this.#sqlWriter, project.id, mode, Date.now());
+    this.store.setMeta(`coordinator:${project.id}`, mode === "coordinator" ? COORDINATOR_KEY : "direct");
     return true;
+  }
+
+  /**
+   * 第 4 步起空间的主会话只做汇报和委派（协作方案第 7 节第 4 步）：老空间启动时切过去，已有的对话留着。
+   * 已经切过、工具也是这一版的跳过；工具列表变了的重配一次。主人切回直接做的不动。一个失败不挡别的，下次启动再试。
+   */
+  async #coordinateSpaces(): Promise<void> {
+    let changed = false;
+    for (const project of this.store.listProjects()) {
+      const applied = this.store.meta(`coordinator:${project.id}`);
+      if (applied === "direct" && project.mode === "direct") continue;
+      if (applied === COORDINATOR_KEY && project.mode === "coordinator") continue;
+      try {
+        changed = (await this.#applyMode(project, "coordinator")) || changed;
+      } catch (error) {
+        console.warn(`空间「${project.name}」没切成协调模式`, error);
+      }
+    }
+    if (changed) this.#changed();
   }
 
   /** 聊天把一件事交给项目：作为一条消息提交到项目会话，项目自己接着做。`origin` 是来自哪条聊天，报告卡回到那里。 */
@@ -2088,6 +2239,14 @@ export class Directory extends DurableObject<Env> {
     return this.store.knows(pupu);
   }
 
+  async memberships(email: string): Promise<Home[]> {
+    return this.store.memberships(email);
+  }
+
+  async openOwn(email: string, code: string): Promise<Home | "exists" | "wrong" | "full" | "limited"> {
+    return this.store.openOwn(email, code, seatsFrom(this.env), Date.now());
+  }
+
   async rememberCode(codeHash: string, pupu: string, expiresAt: number): Promise<void> {
     this.store.rememberCode(codeHash, pupu, expiresAt, Date.now());
   }
@@ -2103,11 +2262,53 @@ function credentialOf(request: Request): { token: string; cookie: boolean } | nu
     const token = header.slice("Bearer ".length).trim();
     if (token) return { token, cookie: false };
   }
+  const token = cookiesOf(request).get(TOKEN_COOKIE);
+  return token ? { token, cookie: true } : null;
+}
+
+function cookiesOf(request: Request): Map<string, string> {
+  const cookies = new Map<string, string>();
   for (const part of (request.headers.get("Cookie") ?? "").split(";")) {
-    const [name, value] = part.trim().split("=");
-    if (name === TOKEN_COOKIE && value) return { token: value, cookie: true };
+    const at = part.indexOf("=");
+    if (at <= 0) continue;
+    const name = part.slice(0, at).trim();
+    const value = part.slice(at + 1).trim();
+    if (value && !cookies.has(name)) cookies.set(name, value);
   }
-  return null;
+  return cookies;
+}
+
+/**
+ * 网页和电脑 App 的窗口靠 cookie：`pupu_token` 是登录时发的那张，切到别的 Pupu 拿到的放在 `pupu_org_<id>`，
+ * `pupu_active` 记着现在看的是哪个。按「选中的、登录的、其余的」顺序试，第一张还认的就用它：
+ * 在选中的那个 Pupu 里被移除了，自动回到别的，不会整页 401。
+ */
+function cookieCandidates(request: Request): { name: string; token: string }[] {
+  const cookies = cookiesOf(request);
+  const active = cookies.get(ACTIVE_COOKIE);
+  const all: { name: string; token: string }[] = [];
+  const push = (name: string) => {
+    const token = cookies.get(name);
+    if (token && !all.some((each) => each.name === name)) all.push({ name, token });
+  };
+  if (active && ORG_ID.test(active)) push(orgCookieName(active));
+  push(TOKEN_COOKIE);
+  for (const name of cookies.keys()) if (name.startsWith(ORG_COOKIE_PREFIX)) push(name);
+  return all;
+}
+
+const ACTIVE_COOKIE = "pupu_active";
+const ORG_COOKIE_PREFIX = "pupu_org_";
+const ORG_ID = /^(me|[0-9a-f]{32})$/;
+
+function orgCookieName(pupu: string): string {
+  return `${ORG_COOKIE_PREFIX}${pupu}`;
+}
+
+function cookieHeader(url: URL, name: string, value: string | null): string {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  const body = value ? `${value}; Max-Age=31536000` : "; Max-Age=0";
+  return `${name}=${body}; Path=/; HttpOnly${secure}; SameSite=Lax`;
 }
 
 type PupuStub = DurableObjectStub<Pupu>;
@@ -2115,7 +2316,13 @@ type PupuStub = DurableObjectStub<Pupu>;
 /**
  * 发请求的设备和它所在的 Pupu。`device` 是 null：本机开发、没设访问口令、什么凭据都没带。
  */
-type Caller = { readonly device: string | null; readonly pupu: PupuStub; readonly name: string };
+type Caller = {
+  readonly device: string | null;
+  readonly pupu: PupuStub;
+  readonly name: string;
+  /** 凭据是哪个 cookie 里的。用 Authorization 头或者本机没带凭据是 null。 */
+  readonly cookie: string | null;
+};
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
@@ -2149,16 +2356,26 @@ async function handleConnectorDone(env: Env, url: URL): Promise<Response> {
  */
 async function authenticate(request: Request, env: Env): Promise<Caller | null> {
   const credential = credentialOf(request);
-  if (credential) {
+  if (credential && !credential.cookie) return deviceOf(env, credential.token, null);
+  const candidates = cookieCandidates(request);
+  if (candidates.length > 0) {
     // cookie 是浏览器自己带上的：别的网站发起的请求和 WebSocket（Origin 对不上）不认。
     const origin = request.headers.get("Origin");
-    if (credential.cookie && origin !== null && origin !== new URL(request.url).origin) return null;
-    const name = pupuOfCredential(credential.token);
-    const home = await knownPupu(env, name);
-    const device = await home?.authenticateDevice(credential.token);
-    return home && device ? { device, pupu: home, name } : null;
+    if (origin !== null && origin !== new URL(request.url).origin) return null;
+    for (const candidate of candidates) {
+      const caller = await deviceOf(env, candidate.token, candidate.name);
+      if (caller) return caller;
+    }
+    return null;
   }
-  return isLocal(request) && !env.ACCESS_TOKEN ? { device: null, pupu: root(env), name: ROOT_PUPU } : null;
+  return isLocal(request) && !env.ACCESS_TOKEN ? { device: null, pupu: root(env), name: ROOT_PUPU, cookie: null } : null;
+}
+
+async function deviceOf(env: Env, token: string, cookie: string | null): Promise<Caller | null> {
+  const name = pupuOfCredential(token);
+  const home = await knownPupu(env, name);
+  const device = await home?.authenticateDevice(token);
+  return home && device ? { device, pupu: home, name, cookie } : null;
 }
 
 /** 浏览器的凭据只放进 HttpOnly cookie，页面上的脚本拿不到。`token` 是 null 时清掉。 */
@@ -2306,10 +2523,94 @@ async function handlePair(request: Request, env: Env, url: URL): Promise<Respons
   });
   if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
   if (kind !== "browser") return Response.json({ id: result.id, name: result.name, token: result.token });
-  return Response.json(
-    { id: result.id, name: result.name },
-    { headers: { "Set-Cookie": deviceCookie(url, result.token) } }
-  );
+  const headers = new Headers();
+  for (const cookie of signedInCookies(url, request, result.token)) headers.append("Set-Cookie", cookie);
+  return Response.json({ id: result.id, name: result.name }, { headers });
+}
+
+/**
+ * 这个浏览器重新登录（或配对）了：种下新凭据，切换时留下的别的 Pupu 的 cookie 和选中的都清掉。
+ * 换了个 Google 账号登录时，上一个人在别的 Pupu 里的凭据不能留着被用上。
+ */
+function signedInCookies(url: URL, request: Request, token: string): string[] {
+  const stale = [...cookiesOf(request).keys()].filter((name) => name.startsWith(ORG_COOKIE_PREFIX) || name === ACTIVE_COOKIE);
+  return [deviceCookie(url, token), ...stale.map((name) => cookieHeader(url, name, null))];
+}
+
+/** 这个账号在的所有 Pupu：目录里记的，加上第一个 Pupu（它的老成员不在目录里）。 */
+async function orgsOf(env: Env, email: string): Promise<Home[]> {
+  const homes = await directory(env).memberships(email);
+  if (!homes.some((each) => each.pupu === ROOT_PUPU) && (await root(env).admits(email))) {
+    homes.push({ pupu: ROOT_PUPU, founder: false });
+  }
+  return homes;
+}
+
+/** 切换列表。只列他还在名单上的；自己开的叫「我的 Pupu」，排第一。 */
+async function orgList(env: Env, caller: Caller): Promise<OrgList> {
+  const me = await caller.pupu.whoIs(caller.device);
+  if (!me) return { current: caller.name, orgs: [], canOpenOwn: false };
+  const homes = await orgsOf(env, me.email);
+  const cards = await Promise.all(homes.map((home) => pupuNamed(env, home.pupu).orgCard(me.email)));
+  const orgs = homes
+    .map((home, index) => ({ home, card: cards[index] }))
+    .flatMap(({ home, card }) => (card?.role ? [{ home, card, role: card.role }] : []))
+    .map(({ home, card, role }) => ({
+      id: home.pupu,
+      name: role === "creator" ? "我的 Pupu" : `${card.creator ?? "别人"}的 Pupu`,
+      creator: card.creator,
+      members: card.members,
+      role,
+      current: home.pupu === caller.name
+    }))
+    .sort((a, b) => Number(b.role === "creator") - Number(a.role === "creator"));
+  return {
+    current: caller.name,
+    orgs,
+    canOpenOwn: seatsFrom(env) > 0 && !orgs.some((each) => each.role === "creator")
+  };
+}
+
+/**
+ * 切到 `home`。网页和电脑 App 的窗口（cookie）：那个 Pupu 的 cookie 还认就只改选中的，没有才让那边发一张新的。
+ * 手机（Authorization 头）：手机自己存着各个 Pupu 的凭据，来这里说明没有，那边发一个码，手机去换。
+ */
+async function switchTo(
+  request: Request,
+  env: Env,
+  url: URL,
+  caller: Caller,
+  me: { email: string; name: string | null; kind: DeviceKind; deviceName: string },
+  home: Home,
+  challenge: string | null
+): Promise<Response> {
+  const active = cookieHeader(url, ACTIVE_COOKIE, home.pupu);
+  if (caller.cookie !== null) {
+    const cookies = cookiesOf(request);
+    for (const name of [orgCookieName(home.pupu), TOKEN_COOKIE]) {
+      const token = cookies.get(name);
+      const found = token && pupuOfCredential(token) === home.pupu ? await deviceOf(env, token, name) : null;
+      // 留着的 cookie 还得是同一个人的：换过账号登录的浏览器里，可能有上一个人的。
+      if (found && (await found.pupu.whoIs(found.device))?.email === emailKey(me.email)) {
+        return Response.json({ ok: true, org: home.pupu }, { headers: { "Set-Cookie": active } });
+      }
+    }
+  }
+  const grant = await pupuNamed(env, home.pupu).switchIn({
+    email: me.email,
+    displayName: me.name,
+    kind: me.kind,
+    deviceName: me.deviceName,
+    challenge,
+    home
+  });
+  if (grant.kind === "refused") return Response.json({ error: grant.error }, { status: 403 });
+  if (grant.kind === "code") return Response.json({ org: home.pupu, code: grant.code });
+  if (caller.cookie === null) return Response.json({ org: home.pupu, token: grant.token });
+  const headers = new Headers();
+  headers.append("Set-Cookie", cookieHeader(url, orgCookieName(home.pupu), grant.token));
+  headers.append("Set-Cookie", active);
+  return Response.json({ ok: true, org: home.pupu }, { headers });
 }
 
 async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
@@ -2318,6 +2619,29 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
 
   if (pathname === "/api/state" && method === "GET") {
     return Response.json(await caller.pupu.state(caller.device));
+  }
+  if (pathname === "/api/orgs" && method === "GET") {
+    return Response.json(await orgList(env, caller));
+  }
+  if ((pathname === "/api/orgs/switch" || pathname === "/api/orgs/own") && method === "POST") {
+    const me = await caller.pupu.whoIs(caller.device);
+    if (!me) return Response.json({ error: "要先用 Google 登录" }, { status: 403 });
+    const body = await readJson<{ org?: unknown; code?: unknown; challenge?: unknown }>(request);
+    let home: Home | undefined;
+    if (pathname === "/api/orgs/own") {
+      const opened = await directory(env).openOwn(me.email, typeof body.code === "string" ? body.code : "");
+      if (opened === "wrong") return Response.json({ error: INVITE_WRONG }, { status: 400 });
+      if (opened === "limited") return Response.json({ error: "填错的次数太多了，过一小时再试" }, { status: 429 });
+      if (opened === "full") return Response.json({ error: SEATS_FULL }, { status: 409 });
+      if (opened === "exists") return Response.json({ error: "你已经有自己的 Pupu 了" }, { status: 409 });
+      home = opened;
+    } else {
+      const org = typeof body.org === "string" ? body.org : "";
+      if (!ORG_ID.test(org)) return Response.json({ error: "没有这个 Pupu" }, { status: 400 });
+      home = (await orgsOf(env, me.email)).find((each) => each.pupu === org);
+      if (!home) return Response.json({ error: "你不在这个 Pupu 里" }, { status: 403 });
+    }
+    return switchTo(request, env, url, caller, me, home, typeof body.challenge === "string" ? body.challenge : null);
   }
   if (pathname === "/api/pairing-codes" && method === "POST") {
     const code = await caller.pupu.createPairingCode(caller.device);
@@ -2330,7 +2654,8 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (result === "missing") return Response.json({ error: "没有这台设备" }, { status: 404 });
     if (result === "forbidden") return Response.json({ error: "别人的设备只有创建者能吊销" }, { status: 403 });
     // 吊销的是自己：浏览器顺手清掉 cookie。
-    const headers: HeadersInit = id === caller.device ? { "Set-Cookie": deviceCookie(url, null) } : {};
+    const headers: HeadersInit =
+      id === caller.device && caller.cookie ? { "Set-Cookie": cookieHeader(url, caller.cookie, null) } : {};
     return Response.json({ ok: true }, { headers });
   }
   const remoteTrust = pathname.match(/^\/api\/computers\/([^/]+)\/remote-trust$/);
@@ -2431,7 +2756,6 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     );
     if (result === "invalid") return Response.json({ error: "填一个 Google 账号的邮箱" }, { status: 400 });
     if (result === "exists") return Response.json({ error: "这个人已经在成员名单上了" }, { status: 409 });
-    if (result === "taken") return Response.json({ error: "这个账号已经有自己的 Pupu 了" }, { status: 409 });
     if (result === "full") return Response.json({ error: SEATS_FULL }, { status: 409 });
     if (result === "creator_phone_only") {
       return Response.json({ error: "邀请成员要创建者亲手确认：在手机 App 上做，或者用通行密钥" }, { status: 403 });
@@ -2644,7 +2968,7 @@ export default {
           backend: authBackend(env),
           google: googleClientFrom(env, isLocal(request)),
           browserName,
-          deviceCookie: (target, token) => deviceCookie(target, token),
+          deviceCookie: (target, token) => signedInCookies(target, request, token),
           source: (incoming) => sourceOf(incoming.headers.get("CF-Connecting-IP"))
         });
         if (response) return response;

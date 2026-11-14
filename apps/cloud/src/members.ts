@@ -192,6 +192,9 @@ export class MemberStore {
       if (!columns.some((row) => row.name === "avatar")) {
         this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN avatar TEXT");
       }
+      if (!columns.some((row) => row.name === "removed_at")) {
+        this.#sql.exec("ALTER TABLE pupu_members ADD COLUMN removed_at INTEGER");
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -204,12 +207,15 @@ export class MemberStore {
 
   /** 还在的成员。正在移除的不算：他登录不了，凭据和账号也不再发给他。 */
   byId(id: string): MemberRow | undefined {
-    return this.#one("SELECT * FROM pupu_members WHERE id = ? AND leaving_at IS NULL", id);
+    return this.#one("SELECT * FROM pupu_members WHERE id = ? AND leaving_at IS NULL AND removed_at IS NULL", id);
   }
 
   /** 还在的成员，同 `byId`。 */
   byEmail(email: string): MemberRow | undefined {
-    return this.#one("SELECT * FROM pupu_members WHERE email = ? AND leaving_at IS NULL", emailKey(email));
+    return this.#one(
+      "SELECT * FROM pupu_members WHERE email = ? AND leaving_at IS NULL AND removed_at IS NULL",
+      emailKey(email)
+    );
   }
 
   creator(): MemberRow | undefined {
@@ -219,7 +225,7 @@ export class MemberStore {
   /** 名单，创建者在前，其余按邀请的先后。上次没移除完的也在，创建者再点一次移除接着做完。 */
   list(): MemberRow[] {
     return this.#db()
-      .exec("SELECT * FROM pupu_members ORDER BY role = 'creator' DESC, created_at")
+      .exec("SELECT * FROM pupu_members WHERE removed_at IS NULL ORDER BY role = 'creator' DESC, created_at")
       .toArray()
       .map(toRow);
   }
@@ -239,8 +245,26 @@ export class MemberStore {
     return this.byId(id);
   }
 
-  /** 邀请一个人。这个邮箱已经在名单里了返回 undefined。 */
+  /** 被移除过的人，名字和 id 留着：他说过的话还署着他的名。 */
+  former(id: string): MemberRow | undefined {
+    return this.#one("SELECT * FROM pupu_members WHERE id = ? AND removed_at IS NOT NULL", id);
+  }
+
+  /**
+   * 邀请一个人。这个邮箱已经在名单里了返回 undefined。
+   * 以前被移除过的，用回原来的 id：他的个人入口挂在这个 id 上，这样就回来了（docs/协作方案.md 第 9 节第 4 条）。
+   */
   invite(email: string, invitedBy: string | null, now: number): MemberRow | undefined {
+    const revived = this.#db()
+      .exec(
+        `UPDATE pupu_members SET removed_at = NULL, leaving_at = NULL, role = 'member', invited_by = ?, created_at = ?, joined_at = NULL
+         WHERE email = ? AND removed_at IS NOT NULL RETURNING id`,
+        invitedBy,
+        now,
+        emailKey(email)
+      )
+      .toArray();
+    if (revived[0]) return this.byId(String(revived[0].id));
     const id = crypto.randomUUID();
     const inserted = this.#db()
       .exec(
@@ -279,10 +303,17 @@ export class MemberStore {
     );
   }
 
-  /** 删掉一个成员。创建者删不掉。 */
-  remove(id: string): boolean {
+  /**
+   * 移出名单。创建者移不掉。行留着、标上移除的时间：id 不再发出去，个人入口谁都打不开；
+   * 再被邀请时 `invite` 用回这个 id。照 Zulip 停用账号的做法（`is_active` 置否，行不删）。
+   */
+  remove(id: string, now: number): boolean {
     const removed = this.#db()
-      .exec("DELETE FROM pupu_members WHERE id = ? AND role <> 'creator' RETURNING id", id)
+      .exec(
+        "UPDATE pupu_members SET removed_at = ?, avatar = NULL WHERE id = ? AND role <> 'creator' AND removed_at IS NULL RETURNING id",
+        now,
+        id
+      )
       .toArray();
     return removed.length > 0;
   }
@@ -300,7 +331,9 @@ export type MemberRemoval = {
   revokeComputer(id: string): void;
   /** 在 open-connector 撤销授权，成功了再删这边的记录。 */
   disconnect(connectorId: string): Promise<boolean>;
-  /** 目录里空出他占的名额。 */
+  /** 把他从所有空间的成员里拿掉：再邀请回来只恢复个人入口，空间要重新拉。 */
+  leaveSpaces(memberId: string): Promise<void>;
+  /** 目录里断开他和这个 Pupu，别的 Pupu 不动。 */
   release(email: string): Promise<void>;
 };
 
@@ -309,8 +342,8 @@ export type MemberRemoval = {
  * 1. 标成正在移除：从这一刻起他登录不了，配对码、登录、连账号都不再给他发东西。
  * 2. 吊销他的设备和电脑，作废他生成的配对码。都在本地，中间没有 await，马上生效。
  * 3. 断开他连的账号。有一个断不开就停下，返回 failed：他还在名单上，账号还挂在他名下。
- * 4. 目录里释放名额。出错就抛出去，他还在名单上。
- * 5. 删掉他。
+ * 4. 从空间里拿掉，目录里断开这个 Pupu。出错就抛出去，他还在名单上。
+ * 5. 移出名单（行留着，见 `MemberStore.remove`）。
  */
 export async function removeMember(target: MemberRow, removal: MemberRemoval, now: number): Promise<"ok" | "failed"> {
   removal.members.markLeaving(target.id, now);
@@ -320,7 +353,8 @@ export async function removeMember(target: MemberRow, removal: MemberRemoval, no
   for (const row of removal.connectors.list()) {
     if (row.memberId === target.id && !(await removal.disconnect(row.id))) return "failed";
   }
+  await removal.leaveSpaces(target.id);
   await removal.release(target.email);
-  removal.members.remove(target.id);
+  removal.members.remove(target.id, now);
   return "ok";
 }

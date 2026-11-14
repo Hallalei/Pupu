@@ -97,6 +97,8 @@ final class Connection {
     /// 原来连着别的，先换成新的再去那边注销：那边回的 401 对不上现在的身份，不会被当成「被吊销了」。
     func adopt(base: URL, paired: Paired) {
         let previous = identity
+        // 重新配对可能换了账号：切换时存下的别的 Pupu 的凭据不留。
+        stashedOrgs().compactMap(takeOut).forEach(revoke)
         UserDefaults.standard.set(base.absoluteString, forKey: Self.serverKey)
         UserDefaults.standard.set(paired.id, forKey: Self.deviceKey)
         Keychain.write(paired.token, account: Self.tokenAccount)
@@ -105,17 +107,119 @@ final class Connection {
     }
 
     /// 从这个 Pupu 注销这台手机，回到连接页。先在本机忘掉，再去 Pupu 上吊销；
-    /// 连不上就只忘掉，凭据留在设备列表里，可以从别处吊销。
+    /// 连不上就只忘掉，凭据留在设备列表里，可以从别处吊销。切换时存下的别的 Pupu 的凭据一起注销。
     func signOut() {
         let previous = identity
+        let others = stashedOrgs().compactMap(takeOut)
         forget(notice: nil)
         revoke(previous)
+        others.forEach(revoke)
     }
 
     /// Pupu 不认这份凭据了（401）。只算现在这个身份的：换走之前那份的回应晚到了，不当回事。
+    /// 还存着别的 Pupu 的凭据（比如被移出了这一个），换到那边，不回连接页。
     func rejected(_ rejected: Identity) {
         guard rejected == identity else { return }
+        // 不用 lazy.compactMap(...).first：lazy 集合取 first 会把 takeOut 跑两遍，第二遍已经取空了。
+        for org in stashedOrgs() {
+            guard let next = takeOut(org) else { continue }
+            activate(next, notice: "你已经不在刚才那个 Pupu 里了。")
+            return
+        }
         forget(notice: "这台手机的凭据失效了，可能是在别的设备上被吊销了。重新配对一次。")
+    }
+
+    // MARK: 一个账号在好几个 Pupu 里
+
+    /// 凭据前面带着它所在 Pupu 的 id，第一个 Pupu 的没有前缀（云端 directory.ts 的 `pupuOfCredential`）。
+    nonisolated static func org(of token: String) -> String {
+        guard let dot = token.firstIndex(of: "."), dot != token.startIndex else { return "me" }
+        return String(token[..<dot])
+    }
+
+    /// 现在连着的是哪个 Pupu。
+    var currentOrg: String? { identity?.endpoint.token.map(Self.org) }
+
+    private static let orgDevicesKey = "pupu.orgDevices"
+
+    private static func orgAccount(_ org: String) -> String { "org-token:\(org)" }
+
+    /// 切走时存下的别的 Pupu：id 到设备 id。凭据在钥匙串里，一个 Pupu 一条。
+    private var orgDevices: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: Self.orgDevicesKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Self.orgDevicesKey) }
+    }
+
+    private func stashedOrgs() -> [String] { orgDevices.keys.sorted() }
+
+    /// 把现在的身份收起来，切回来时不用再换一次凭据。
+    private func stash(_ identity: Identity?) {
+        guard let identity, let token = identity.endpoint.token, let device = identity.device else { return }
+        let org = Self.org(of: token)
+        Keychain.write(token, account: Self.orgAccount(org))
+        orgDevices[org] = device
+    }
+
+    /// 取出存着的一个 Pupu 的身份，取出就从存的里面删掉。
+    private func takeOut(_ org: String) -> Identity? {
+        let device = orgDevices[org]
+        orgDevices[org] = nil
+        let token = Keychain.read(Self.orgAccount(org))
+        Keychain.write(nil, account: Self.orgAccount(org))
+        guard let base = lastServer, let token, let device else { return nil }
+        return Identity(endpoint: Endpoint(base: base, token: token), device: device)
+    }
+
+    private func activate(_ next: Identity, notice: String?) {
+        UserDefaults.standard.set(next.device, forKey: Self.deviceKey)
+        Keychain.write(next.endpoint.token, account: Self.tokenAccount)
+        settle(next, notice: notice)
+    }
+
+    /// 某个 Pupu 的接口：现在连着的，或者切走时存着凭据的。推送上点「允许」时按推送带的 Pupu 挑。
+    func api(org: String?) -> API? {
+        guard let identity else { return nil }
+        guard let org, org != currentOrg else { return API(endpoint: identity.endpoint) }
+        guard let token = Keychain.read(Self.orgAccount(org)) else { return nil }
+        return API(endpoint: Endpoint(base: identity.endpoint.base, token: token))
+    }
+
+    /// 切到 `org`。存过它的凭据就直接换上；没有就让现在这个 Pupu 开一个码，用这台手机的 verifier 去换。
+    /// 那边已经有手机时要已有的手机点允许，`progress` 在等的时候调，和 Google 登录一样。
+    func switchTo(org: String, progress: @escaping (SignIn.Progress) -> Void) async throws {
+        guard let current = identity, org != currentOrg else { return }
+        if let saved = takeOut(org) {
+            stash(current)
+            activate(saved, notice: nil)
+            return
+        }
+        let verifier = SignIn.newVerifier()
+        let code = try await API(endpoint: current.endpoint).switchOrg(org, challenge: SignIn.challenge(for: verifier))
+        try await enter(code: code, verifier: verifier, progress: progress)
+    }
+
+    /// 用邀请码开自己的 Pupu，开好就切过去。
+    func openOwn(code invite: String, progress: @escaping (SignIn.Progress) -> Void) async throws {
+        guard let current = identity else { return }
+        let verifier = SignIn.newVerifier()
+        let code = try await API(endpoint: current.endpoint).openOwnOrg(code: invite, challenge: SignIn.challenge(for: verifier))
+        try await enter(code: code, verifier: verifier, progress: progress)
+    }
+
+    private func enter(code: String, verifier: String, progress: @escaping (SignIn.Progress) -> Void) async throws {
+        guard let base = identity?.endpoint.base else { return }
+        while true {
+            try Task.checkCancellation()
+            switch try await API.redeemSignIn(base: base, code: code, verifier: verifier, name: UIDevice.current.name) {
+            case .paired(let paired):
+                stash(identity)
+                activate(Identity(endpoint: Endpoint(base: base, token: paired.token), device: paired.id), notice: nil)
+                return
+            case .waiting(let expiresAt):
+                progress(.waiting(expiresAt: expiresAt))
+                try await Task.sleep(for: .seconds(2))
+            }
+        }
     }
 
     /// 忘掉凭据，回到连接页。地址留着，重新配对时不用再填。
