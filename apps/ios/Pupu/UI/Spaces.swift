@@ -235,6 +235,8 @@ final class SpaceSwitcherViewController: UIViewController {
     private let current: String?
     /// 现在在 Artifacts。
     private let docs: Bool
+    /// 没有私聊时不列「我的 Pupu」：那条就是全员，在空间里。
+    private let showsPupu: Bool
     private let pupuUnread: Bool
     private let everyoneUnread: Bool
     private let openPupu: () -> Void
@@ -247,9 +249,10 @@ final class SpaceSwitcherViewController: UIViewController {
     private var token: StoreToken?
 
     /// current：现在在的空间，在「我的 Pupu」和 Artifacts 时是 nil；docs：现在在 Artifacts。
-    init(current: String?, docs: Bool = false, pupuUnread: Bool, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void, openSettings: @escaping () -> Void) {
+    init(current: String?, docs: Bool = false, showsPupu: Bool = true, pupuUnread: Bool, everyoneUnread: Bool, openPupu: @escaping () -> Void, openDocs: @escaping () -> Void, open: @escaping (Project) -> Void, openChild: @escaping (Project, SpaceChild) -> Void, create: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.current = current
         self.docs = docs
+        self.showsPupu = showsPupu
         self.pupuUnread = pupuUnread
         self.everyoneUnread = everyoneUnread
         self.openPupu = openPupu
@@ -301,7 +304,7 @@ final class SpaceSwitcherViewController: UIViewController {
         let docsRow = SheetRow(leading: docsIcon, title: "Artifacts", trailing: [currentMark(docs)]) { [weak self] in
             self?.finish { $0.openDocs() }
         }
-        content.addArrangedSubview(SheetGroup([pupuRow, docsRow], separatorInset: 62))
+        content.addArrangedSubview(SheetGroup(showsPupu ? [pupuRow, docsRow] : [docsRow], separatorInset: 62))
 
         var config = UIButton.Configuration.plain()
         config.title = "新空间"

@@ -3,6 +3,7 @@ import test, { describe } from "node:test";
 import { mayOpen } from "../src/access.ts";
 import { childReport, mayCall, reportsWait, REPORT_LIMIT, SpaceSessionStore } from "../src/delegation.ts";
 import { createDelegationTools } from "../src/delegation.ts";
+import { parseNotice } from "../src/messages.ts";
 import { renderPrompt } from "../src/prompt.ts";
 import { EVERYONE_ID, ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { ReportStore } from "../src/reports.ts";
@@ -175,7 +176,9 @@ describe("回报", () => {
   });
 
   test("回报带子会话的名字，太长的截断", () => {
-    assert.match(childReport("排版", "改好了"), /子会话「排版」回报：\n改好了/);
+    assert.match(childReport("排版", "改好了"), /子会话「排版」回报了。\n改好了/);
+    // 界面上只放第一句：自己读得通，不以冒号结尾。
+    assert.equal(parseNotice(childReport("排版", "改好了"))?.split("\n")[0], "子会话「排版」回报了。");
     const long = childReport("排版", "字".repeat(REPORT_LIMIT + 50));
     assert.ok(long.includes("截断"));
     assert.ok(long.length < REPORT_LIMIT + 120);

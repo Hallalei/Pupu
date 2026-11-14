@@ -875,10 +875,26 @@ final class PageView: UIView, WKNavigationDelegate, WKUIDelegate {
         backgroundColor = .white
         addSubview(web)
         web.pin(to: self)
-        web.loadHTMLString(html, baseURL: nil)
+        web.loadHTMLString(Self.withViewport(html), baseURL: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 没写 viewport 的页面补一个设备宽的：WKWebView 不像网页里的 iframe，没有它就按 980 宽缩小显示，字很小。
+    /// 补在 `<head>` 后面，没有就在 `<html>` 或 doctype 后面：放到 doctype 前面页面会掉进怪异模式。
+    static func withViewport(_ html: String) -> String {
+        let options: String.CompareOptions = [.regularExpression, .caseInsensitive]
+        if html.range(of: #"<meta\b[^>]*\bname\s*=\s*["']?viewport["'\s/>]"#, options: options) != nil { return html }
+        let meta = #"<meta name="viewport" content="width=device-width, initial-scale=1">"#
+        for tag in [#"<head\b[^>]*>"#, #"<html\b[^>]*>"#, #"<!doctype\b[^>]*>"#] {
+            if let range = html.range(of: tag, options: options) {
+                var page = html
+                page.insert(contentsOf: meta, at: range.upperBound)
+                return page
+            }
+        }
+        return meta + html
+    }
 
     /// 和云端 docs.ts 的 looksLikePage 一样：以 <!doctype html> 或 <html 开头。
     static func looksLikePage(_ text: String) -> Bool {

@@ -115,14 +115,22 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     /// 正在看全员空间。
     private var inEveryone: Bool { place == .space(Project.everyoneId) }
 
+    /// 没有成员身份的手机（老组织的样子）没有私聊，「我的 Pupu」那条就是全员：顶栏、窗框、切换列表都照全员画，
+    /// 和输入栏的「在「全员」里说」对得上。拉到状态之前不知道有没有私聊，先照「我的 Pupu」。
+    private var ownSpace: Project? {
+        guard Store.shared.synced, Store.shared.chats.private == nil else { return nil }
+        return Store.shared.project(id: Project.everyoneId)
+    }
+
     private func go(_ next: Place) {
         place = next
         if next != .docs { docsView = nil }
         render()
     }
 
+    /// 全员就是自己那条时，打开全员回到那条，不另开一份。
     private func open(_ project: Project) {
-        go(.space(project.id))
+        go(project.isEveryone && ownSpace != nil ? .pupu : .space(project.id))
     }
 
     private func render() {
@@ -153,7 +161,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
 
     /// 换空间时窗框 0.3 秒换色（uikit.md「窗框」）。
     private func updateFrame() {
-        let project = currentProject
+        let project = currentProject ?? (place == .pupu ? ownSpace : nil)
         let key = project.map { Theme.SpaceColor(id: $0.color).rawValue } ?? "canvas"
         guard key != frameKey else { return }
         let first = frameKey == nil
@@ -170,7 +178,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         if place == .docs {
             placeTitle.showDocs()
             if navigationItem.rightBarButtonItem != nil { navigationItem.setRightBarButton(nil, animated: true) }
-        } else if let project = currentProject {
+        } else if let project = currentProject ?? (place == .pupu ? ownSpace : nil) {
             placeTitle.show(project)
             let tappable = project.isEveryone ? project.mayManage == true : project.ownerId != nil
             let item = members.show(project, tappable: tappable) ? membersItem : nil
@@ -211,15 +219,15 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
         let chats = Store.shared.chats
         let session = chats.own.session
         if let existing = ownChatView, existing.session == session { return existing }
-        // 老组织没有私聊：自己的那条就是全员，照全员的占位写，问候下面不写「只有你和我」。
+        // 老组织没有私聊：自己的那条就是全员，占位和空聊天都照全员空间写。
         let mine = chats.private != nil
-        let everyone = Store.shared.project(id: Project.everyoneId)?.name ?? "全员"
+        let everyone = Store.shared.project(id: Project.everyoneId)
         let chat = ChatViewController(
             identity: identity,
             session: session,
-            placeholder: mine ? ChatCopy.privateHint : ChatCopy.spaceHint(everyone),
+            placeholder: mine ? ChatCopy.privateHint : ChatCopy.spaceHint(everyone?.name ?? "全员"),
             projectTags: true,
-            opening: .intro(mine ? ChatCopy.privateIntro : ""),
+            opening: mine ? .intro(ChatCopy.privateIntro) : everyone.map { .project($0) } ?? .intro(""),
             openProject: { [weak self] id in
                 if let project = Store.shared.project(id: id) { self?.open(project) }
             }
@@ -304,11 +312,13 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
     /// 切换 sheet：「我的 Pupu」和 Artifacts，所有空间和它们正在做的子会话，最底下是设置。
     private func openSwitcher() {
         view.endEditing(true)
+        let own = ownSpace
         let switcher = SpaceSwitcherViewController(
-            current: currentProject?.id,
+            current: currentProject?.id ?? (place == .pupu ? own?.id : nil),
             docs: place == .docs,
+            showsPupu: own == nil,
             pupuUnread: ownUnread,
-            everyoneUnread: everyoneUnread,
+            everyoneUnread: own == nil ? everyoneUnread : ownUnread,
             openPupu: { [weak self] in self?.go(.pupu) },
             openDocs: { [weak self] in self?.openDocs() },
             open: { [weak self] project in self?.open(project) },
@@ -334,7 +344,7 @@ final class ShellViewController: UIViewController, UIGestureRecognizerDelegate {
 
     /// 成员胶囊：空间设置。全员只有组织创建者打得开；老项目没有主人，不弹。
     private func openSpaceSettings() {
-        guard let project = currentProject else { return }
+        guard let project = currentProject ?? (place == .pupu ? ownSpace : nil) else { return }
         guard project.isEveryone ? project.mayManage == true : project.ownerId != nil else { return }
         present(sheet(SpaceSettingsViewController(projectId: project.id)), animated: true)
     }
