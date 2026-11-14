@@ -6,24 +6,29 @@
     <title>连上 Pupu</title>
     <link rel="stylesheet" href="page.css" />
   </head>
-  <body class="pair">
+  <body>
     <div class="art" aria-hidden="true"><canvas id="art"></canvas></div>
-    <div class="side">
-      <form class="stack" id="form">
-        <h1 id="title">Pupu</h1>
-        <p id="lead"></p>
-        <button id="google" class="light" type="button" hidden></button>
+    <main class="column">
+      <div class="hero">
+        <h1>Pupu</h1>
+        <p>组织大脑，让智能在组织间流动。</p>
+      </div>
+      <form class="card" id="form" aria-label="连上 Pupu">
+        <p class="lead" id="notice" hidden>这个窗口的授权失效了，重新配对一次就好。</p>
+        <p class="message" id="message" hidden></p>
+        <button id="google" class="google" type="button" hidden>用 Google 登录</button>
         <div class="or" id="or" hidden>或</div>
         <input id="code" type="text" placeholder="配对码" aria-label="配对码" autocomplete="one-time-code" spellcheck="false" />
         <label class="check" id="adopt-row" hidden>
           <input id="adopt" type="checkbox" checked />
           <span id="adopt-label"></span>
         </label>
-        <button id="submit" type="submit">继续</button>
+        <button id="submit" type="submit" disabled>继续</button>
+        <button id="cancel" class="secondary" type="button" hidden>取消</button>
         <p class="error" id="error" role="alert" hidden></p>
       </form>
       <p class="hint" id="hint"></p>
-    </div>
+    </main>
     <script src="pair-art.js"></script>
     <script src="pair.js"></script>
   </body>

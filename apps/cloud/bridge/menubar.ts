@@ -8,7 +8,10 @@ const SOURCE = fileURLToPath(new URL("./menubar.swift", import.meta.url));
 /** 写给菜单栏程序的一行状态。字段和 menubar.swift 里的 MenubarState 一一对应。 */
 export type MenubarState = {
   readonly status: "offline" | "idle" | "busy" | "screen" | "waiting";
+  /** 状态词（规范 ThisComputer）：在线、在做事、在用屏幕、等你批准、没连上、授权被吊销。 */
   readonly title: string;
+  /** 状态词的补充，接在「 · 」后面：屏幕已授权、正在被远程控制、没连上的原因。没有就是 null。 */
+  readonly detail: string | null;
   readonly lines: readonly string[];
   readonly screenGrant: boolean;
   readonly jobs: number;
@@ -129,7 +132,11 @@ export function startMenubar(onAction: (action: MenubarAction) => void): Menubar
   };
 }
 
-/** 状态、标题和菜单里的几行，按优先级挑：没连上、等批准、操作屏幕、在跑命令、空闲。 */
+/**
+ * 状态词、补充和菜单里的几行（规范 ThisComputer）。同时有几样时按这个先后取一个：
+ * 授权被吊销、没连上、远程桌面、等你批准、在用屏幕、在做事、在线。
+ * 桥还没报状态时的「没连上 · 正在连接…」由电脑 App 自己补（apps/desktop/src/view.ts、tray-menu.ts）。
+ */
 export function menubarState(input: {
   readonly connected: boolean;
   readonly problem?: MenubarProblem | null;
@@ -146,33 +153,39 @@ export function menubarState(input: {
   const jobs = input.commands.length;
   let status: MenubarState["status"];
   let title: string;
+  let detail: string | null = null;
   if (!input.connected) {
     status = "offline";
-    title =
-      input.problem === "rejected"
-        ? "这台电脑的凭据被拒了，要重新配对"
-        : input.problem === "busy"
-          ? "这台电脑已经有别的桥连着"
-          : input.problem === "outdated"
-            ? "要更新 Pupu：这台电脑上的版本太旧，连不上"
+    if (input.problem === "rejected") {
+      title = "授权被吊销";
+    } else {
+      title = "没连上";
+      detail =
+        input.problem === "outdated"
+          ? "这台电脑上的 Pupu 太旧，更新后再连"
+          : input.problem === "busy"
+            ? "另一个 Pupu 已经连着这台电脑，先退出它"
             : jobs > 0
-            ? `没连上 Pupu，还有 ${jobs} 条命令在跑`
-            : "没连上 Pupu";
+              ? `还有 ${jobs} 条命令在跑`
+              : null;
+    }
   } else if (input.remote) {
     status = "screen";
-    title = input.remote === "controlling" ? "手机正在远程控制这台电脑" : "手机正在远程查看这台电脑";
+    title = "在用屏幕";
+    detail = input.remote === "controlling" ? "正在被远程控制" : "正在被远程查看";
   } else if (input.pending.length > 0) {
     status = "waiting";
-    title = `等你在手机或网页上批准（${input.pending.length} 件）`;
+    title = "等你批准";
   } else if (input.screenActive) {
     status = "screen";
-    title = "Pupu 正在操作屏幕";
+    title = "在用屏幕";
   } else if (jobs > 0) {
     status = "busy";
-    title = `Pupu 正在跑 ${jobs} 条命令`;
+    title = "在做事";
   } else {
     status = "idle";
-    title = input.screenGrant ? "已连上，屏幕已授权给 Pupu" : "已连上 Pupu";
+    title = "在线";
+    if (input.screenGrant) detail = "屏幕已授权";
   }
   const lines = [
     ...input.pending.map((item) => `等批准：${clip(item, 60)}`),
@@ -182,6 +195,7 @@ export function menubarState(input: {
   return {
     status,
     title,
+    detail,
     lines,
     screenGrant: input.screenGrant,
     jobs,

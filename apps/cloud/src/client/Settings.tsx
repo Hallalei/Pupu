@@ -21,7 +21,7 @@ import {
 import { ago } from "./ago";
 import { MemberAvatar, MyAvatarPage, PupuAvatar, PupuAvatarPage } from "./Avatar";
 import { api } from "./api";
-import { useDesktopComputer, type DesktopComputer } from "./desktop";
+import { useDesktopComputer } from "./desktop";
 import {
   CalendarIcon,
   CheckIcon,
@@ -57,7 +57,7 @@ import {
   TEXT_BUTTON,
   computerLabel
 } from "./settings-ui";
-import { ThisComputer } from "./ThisComputer";
+import { statusWord, ThisComputer } from "./ThisComputer";
 
 /** 什么时候先问你。和 iOS 的 Computer.Policy 一样的三档、一样的字。 */
 const POLICIES: readonly (readonly [ComputerPolicy, string])[] = [
@@ -108,14 +108,6 @@ function parentOf(page: SettingsPage): NamedPage {
   if (page === "avatar" || page === "passkeys" || page === "invites") return "accounts";
   return "root";
 }
-
-const THIS_COMPUTER: Record<DesktopComputer["status"], string> = {
-  offline: "没连上",
-  idle: "在线",
-  busy: "在做事",
-  screen: "在用屏幕",
-  waiting: "等你批准"
-};
 
 /**
  * 设置（规范 SettingsSheet）：自己、换一个 Pupu、这个 Pupu 的电脑、设备、成员、模型。
@@ -238,7 +230,7 @@ export function Settings({
             <LinkRow
               icon={<LaptopIcon />}
               title="这台电脑"
-              summary={thisComputer.paired ? THIS_COMPUTER[thisComputer.status] : "授权被吊销"}
+              summary={statusWord(thisComputer)}
               onPress={() => onPage("this")}
             />
           )}

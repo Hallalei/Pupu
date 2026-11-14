@@ -10,7 +10,10 @@ import AppKit
 
 struct MenubarState: Decodable {
   let status: String
+  /// 状态词：在线、在做事、在用屏幕、等你批准、没连上、授权被吊销。
   let title: String
+  /// 状态词的补充（屏幕已授权、没连上的原因），老的桥不报。
+  let detail: String?
   let lines: [String]
   let screenGrant: Bool
   let jobs: Int
@@ -66,8 +69,14 @@ final class StatusController: NSObject, NSMenuDelegate {
     // 系统里找不到这些 SF Symbol 时退回文字，免得图标是空的。
     button.title = image == nil ? "Pupu" : ""
     button.appearsDisabled = status == "offline"
-    button.toolTip = state.map { "Pupu · \($0.name)：\($0.title)" } ?? "Pupu：桥还没连上"
+    button.toolTip = state.map { "Pupu · \($0.name)：\(Self.statusLine($0))" } ?? "Pupu：没连上 · 正在连接…"
     rebuildMenu()
+  }
+
+  /// 状态词和补充用「 · 」接起来：在线 · 屏幕已授权。
+  private static func statusLine(_ state: MenubarState) -> String {
+    guard let detail = state.detail, !detail.isEmpty else { return state.title }
+    return "\(state.title) · \(detail)"
   }
 
   /// 菜单栏图标按惯例用模板图，跟着系统深浅色和高亮状态走。
@@ -93,20 +102,24 @@ final class StatusController: NSObject, NSMenuDelegate {
   private func rebuildMenu() {
     menu.removeAllItems()
     guard let state else {
-      menu.addItem(disabled("Pupu：桥还没连上"))
+      menu.addItem(disabled("没连上"))
+      menu.addItem(disabled("正在连接…"))
       return
     }
-    menu.addItem(disabled("Pupu · \(state.name)"))
-    menu.addItem(disabled(state.title))
+    // 和电脑 App 的托盘菜单一个说法（规范 ThisComputer）：第一行「mbpro · 在线」，有补充时下面再一行。
+    menu.addItem(disabled("\(state.name) · \(state.title)"))
+    if let detail = state.detail, !detail.isEmpty {
+      menu.addItem(disabled(detail))
+    }
     for line in state.lines.prefix(8) {
       menu.addItem(disabled("  \(line)"))
     }
     menu.addItem(.separator())
 
-    let takeback = action("收回屏幕控制", #selector(takeBack))
+    let takeback = action("收回屏幕", #selector(takeBack))
     takeback.isEnabled = state.screenGrant || state.status == "screen"
     menu.addItem(takeback)
-    let stop = action(state.jobs > 0 ? "停止正在跑的命令（\(state.jobs) 条）" : "停止正在跑的命令", #selector(stopJobs))
+    let stop = action(state.jobs > 0 ? "停止命令（\(state.jobs) 条）" : "停止命令", #selector(stopJobs))
     stop.isEnabled = state.jobs > 0
     menu.addItem(stop)
     menu.addItem(.separator())

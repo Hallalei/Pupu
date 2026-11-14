@@ -21,7 +21,9 @@ export function computerView(input: {
     computerId: computer?.id ?? null,
     name: computer?.name ?? input.fallbackName,
     status: live?.status ?? "offline",
-    title: !computer ? "这台电脑还没授权给 Pupu" : (live?.title ?? "桥正在启动"),
+    // 状态词照规范 ThisComputer。窗口在、这台电脑的凭据没了，就是被吊销了；桥还没报状态是刚启动或桥在重启。
+    title: !computer ? "授权被吊销" : (live?.title ?? "没连上"),
+    detail: !computer ? null : live ? live.detail : "正在连接…",
     lines: live?.lines ?? [],
     screenGrant: live?.screenGrant ?? false,
     jobs: live?.jobs ?? 0,

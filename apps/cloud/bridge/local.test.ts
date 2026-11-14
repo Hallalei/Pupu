@@ -51,6 +51,25 @@ describe("菜单栏状态", () => {
     assert.equal(menubarState(base).status, "idle");
   });
 
+  test("状态词和补充照「这台电脑」那一页的说法", () => {
+    const word = (input: Partial<Parameters<typeof menubarState>[0]>) => {
+      const state = menubarState({ ...base, ...input });
+      return [state.title, state.detail];
+    };
+    assert.deepEqual(word({}), ["在线", null]);
+    assert.deepEqual(word({ screenGrant: true }), ["在线", "屏幕已授权"]);
+    assert.deepEqual(word({ commands: ["npm test"] }), ["在做事", null]);
+    assert.deepEqual(word({ screenActive: true }), ["在用屏幕", null]);
+    assert.deepEqual(word({ pending: ["跑命令：git push"] }), ["等你批准", null]);
+    assert.deepEqual(word({ remote: "controlling", pending: ["跑命令：git push"] }), ["在用屏幕", "正在被远程控制"]);
+    assert.deepEqual(word({ remote: "viewing" }), ["在用屏幕", "正在被远程查看"]);
+    assert.deepEqual(word({ connected: false }), ["没连上", null]);
+    assert.deepEqual(word({ connected: false, commands: ["a", "b"] }), ["没连上", "还有 2 条命令在跑"]);
+    assert.deepEqual(word({ connected: false, problem: "outdated" }), ["没连上", "这台电脑上的 Pupu 太旧，更新后再连"]);
+    assert.deepEqual(word({ connected: false, problem: "busy" }), ["没连上", "另一个 Pupu 已经连着这台电脑，先退出它"]);
+    assert.deepEqual(word({ connected: false, problem: "rejected", commands: ["a"] }), ["授权被吊销", null]);
+  });
+
   test("在跑的命令最多列 5 条", () => {
     const state = menubarState({ ...base, commands: ["a", "b", "c", "d", "e", "f", "g"] });
     assert.equal(state.jobs, 7);

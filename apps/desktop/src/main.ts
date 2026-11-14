@@ -40,7 +40,7 @@ import { PairingRun, reasonOf, type PairingStatus } from "./pairing-state.ts";
 import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
-import type { TrayAction } from "./tray-menu.ts";
+import { trayPairing, type TrayAction, type TrayView } from "./tray-menu.ts";
 import { startUpdates } from "./updates.ts";
 import { readWithLegacy } from "./legacy-pairing.ts";
 import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, LEGACY_URLS, originOf, sameOrigin } from "./urls.ts";
@@ -736,8 +736,13 @@ function sendComputer(): void {
   if (contents && sameOrigin(contents.getURL(), origin)) contents.send("pupu:computer", currentComputer());
 }
 
+/** 托盘那一份：电脑名先用凭据里的，被吊销、还没配对时用这台电脑自己的名字。 */
+function trayView(): TrayView {
+  return { state: bridgeState, name: pairing.computer?.name ?? computerName(), pairing: trayPairing(pairing), update };
+}
+
 function render(): void {
-  tray?.render({ state: bridgeState, needsPairing: !pairing.desktop || !pairing.computer, update });
+  tray?.render(trayView());
   sendComputer();
 }
 
@@ -895,7 +900,8 @@ async function boot(): Promise<void> {
   setupMenu();
   setupWindowSession();
   registerIpc();
-  tray = new PupuTray(onTray);
+  // 凭据还没读出来：先当刚启动，「没连上 · 正在连接…」，读完马上 render()。
+  tray = new PupuTray(onTray, { state: null, name: computerName(), pairing: "ok", update: null });
   capture = new CaptureHost({
     preload: dist("capture-preload.cjs"),
     page: dist("capture.html"),

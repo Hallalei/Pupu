@@ -24,6 +24,20 @@ const DOT: Record<DesktopComputer["status"], string> = {
   offline: "bg-offline"
 };
 
+/** 状态词（规范 ThisComputer）。页面自己按状态写：老的电脑 App 报的 title 还是菜单栏的老说法。 */
+const WORD: Record<DesktopComputer["status"], string> = {
+  offline: "没连上",
+  idle: "在线",
+  busy: "在做事",
+  screen: "在用屏幕",
+  waiting: "等你批准"
+};
+
+/** 窗口还在、这台电脑的凭据没了，就是被吊销了。设置首页「这台电脑」那一行也用它。 */
+export function statusWord(computer: DesktopComputer): string {
+  return computer.paired ? WORD[computer.status] : "授权被吊销";
+}
+
 /** 这一页的行：高 44，左右 16，字 body；不能点的字用 ink-muted。 */
 const ROW =
   "flex min-h-11 w-full items-center px-4 py-2.5 text-left text-body text-ink enabled:pointer-fine:hover:bg-line disabled:text-ink-muted";
@@ -47,7 +61,8 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
     );
   }
 
-  const status = [computer.title, computer.detail].filter(Boolean).join(" · ");
+  // 补充（屏幕已授权、正在连接…、没连上的原因）只有新的电脑 App 报，接在状态词后面。
+  const status = [statusWord(computer), computer.detail].filter(Boolean).join(" · ");
   const missing = PERMISSIONS.some(([pane]) => !computer.permissions[pane]);
 
   return (

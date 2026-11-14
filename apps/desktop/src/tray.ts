@@ -42,14 +42,15 @@ export class PupuTray {
   readonly #tray: Tray;
   readonly #onAction: (action: TrayAction) => void;
 
-  constructor(onAction: (action: TrayAction) => void) {
+  constructor(onAction: (action: TrayAction) => void, view: TrayView) {
     this.#onAction = onAction;
     this.#tray = new Tray(icon("offline") ?? nativeImage.createEmpty());
-    this.render({ state: null, needsPairing: false, update: null });
+    this.render(view);
   }
 
+  /** 图标：在线 tray-idle，在做事、在用屏幕 tray-busy，等你批准 tray-waiting；没连上、被吊销、还没配对 tray-offline。 */
   render(view: TrayView): void {
-    const image = view.needsPairing ? icon("offline") : icon(view.state?.status ?? "offline");
+    const image = view.pairing === "ok" ? icon(view.state?.status ?? "offline") : icon("offline");
     this.#tray.setImage(image ?? nativeImage.createEmpty());
     // 找不到图标文件时退回文字，免得图标是空的。
     this.#tray.setTitle(image ? "" : "Pupu");

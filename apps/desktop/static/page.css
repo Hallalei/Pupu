@@ -1,103 +1,308 @@
-/* App 自带的几个本地页面（配对、没连上）。和网页的登录页一样是夜空，左边 Pupu 的大图，右边一列居中。 */
+/*
+ * App 自带的本地页面（配对窗口、主窗口连不上时那一页），照规范 SignIn 的宽屏版式：
+ * 左边 3D 场景卡片，右边一列居中，天空上只写 Pupu 和那句话，按钮、输入框、出错的字都在一张实色浮卡上。
+ * 天空、卡片、Google 按钮都跟着系统的浅色深色；只有 3D 场景总是夜里。
+ * 颜色和字号照 tokens 抄过来，用电脑档（网页那一份在 apps/cloud/src/client/styles.css 的 .login）。
+ */
 :root {
-  color-scheme: dark;
-  --sky: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
-  --ink: #f2f2f4;
-  --muted: rgb(255 255 255 / 0.6);
-  --field: rgb(255 255 255 / 0.08);
-  --line: rgb(255 255 255 / 0.16);
-  --action: #f2f2f4;
-  --on-action: #1c1b1f;
-  --danger: #ff6b6b;
+  color-scheme: light dark;
+  --family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --surface: #ffffff;
+  --surface-inset: #f4f4f2;
+  --line: #ebebe7;
+  --ink: #1b1b1a;
+  --ink-muted: #6f6f6a;
+  --action: #1b1b1a;
+  --on-action: #ffffff;
+  --action-off: #0000000d;
+  --danger-ink: #c4291c;
+  --ink-sky: #1c2634;
+  --ink-sky-muted: #1c2634bf;
+  --shadow-card: 0 0 0 0.5px #0000000f, 0 8px 30px #0000001a;
+  --sky: linear-gradient(180deg, #34557f 0%, #6f8fb3 28%, #b9cad9 52%, #e6e5df 76%, #d6d0c4 100%);
+  /* Google 按钮照 Google 的品牌规定，不用 token。 */
+  --google: #ffffff;
+  --google-ink: #1f1f1f;
+  --google-line: #747775;
+  --hover: brightness(0.96);
 }
-* { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #181818;
+    --surface-inset: #232322;
+    --line: #2b2b29;
+    --ink: #ececea;
+    --ink-muted: #9b9b96;
+    --action: #ececea;
+    --on-action: #121212;
+    --action-off: #ffffff12;
+    --danger-ink: #ff6b5e;
+    --ink-sky: #ffffffe6;
+    --ink-sky-muted: #ffffff80;
+    --shadow-card: 0 0 0 0.5px #ffffff14;
+    --sky: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
+    --google: #131314;
+    --google-ink: #e3e3e3;
+    --google-line: #8e918f;
+    --hover: brightness(1.2);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
 body {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  gap: 8px;
+  /* 离窗口边 8（frame-gap-pointer），上沿再让出标题栏 28，红绿灯落在天空上。 */
+  padding: 36px 8px 8px;
   background: var(--sky);
   color: var(--ink);
-  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font: 15px/22px var(--family);
   -webkit-font-smoothing: antialiased;
   -webkit-user-select: none;
   user-select: none;
   /* 窗口没有标题栏，整页都能拖；能点能填的除外。 */
   -webkit-app-region: drag;
 }
-button, input, label { -webkit-app-region: no-drag; }
-h1 { margin: 0; font-size: 20px; font-weight: 600; }
-p { margin: 0; color: var(--muted); }
-input[type="text"] {
+button,
+input,
+label {
+  -webkit-app-region: no-drag;
+}
+h1,
+h2,
+p {
+  margin: 0;
+}
+[hidden] {
+  display: none !important;
+}
+
+/* 3D 场景卡片：圆角 12，宽不超过高。没有 WebGL2 时露出背景里的头像静态图。 */
+.art {
+  position: relative;
+  flex: 1;
+  max-width: calc(100vh - 44px);
+  overflow: hidden;
+  border-radius: 12px;
+  background: #16181f url("pupu-avatar.png") bottom / 100% auto no-repeat;
+  image-rendering: pixelated;
+}
+.art canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--field);
-  color: var(--ink);
-  font: 600 17px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.12em;
+  height: 100%;
+}
+
+/* 右边一列：天空上的标题和那句话，下面一张 384 宽的浮卡，最下面一行小字。 */
+.column {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+.hero {
+  margin-bottom: 24px;
   text-align: center;
-  text-transform: uppercase;
-  -webkit-user-select: text;
-  user-select: text;
-  transition: border-color 0.15s;
+  color: var(--ink-sky);
 }
-input[type="text"]::placeholder {
-  color: var(--muted);
-  font: 400 15px/1.4 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  letter-spacing: 0;
-  text-transform: none;
+.hero h1 {
+  font: 600 24px/32px var(--family);
 }
-input[type="text"]:focus { outline: none; border-color: var(--action); }
-label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); }
-label.check input { margin-top: 3px; }
+.hero p {
+  margin-top: 8px;
+  font: 16px/26px var(--family);
+}
+.card {
+  display: flex;
+  width: min(384px, 100%);
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+.card h2 {
+  font: 600 15px/20px var(--family);
+}
+/* 卡片里的说明（窗口授权失效了、连不上哪里）：subheadline，ink-muted。 */
+.lead {
+  font: 13px/18px var(--family);
+  color: var(--ink-muted);
+}
+/* 卡片里只剩一句话的时候（等浏览器、整台电脑被吊销）：body，ink。 */
+.message {
+  font: 15px/22px var(--family);
+}
+.error {
+  font: 13px/18px var(--family);
+  color: var(--danger-ink);
+}
+/* 一列最下面的小字：在哪儿生成配对码、连的是哪个 Pupu。写在天空上，用 ink-sky-muted。 */
+.hint {
+  position: absolute;
+  inset: auto 16px 8px;
+  text-align: center;
+  font: 500 12px/16px var(--family);
+  color: var(--ink-sky-muted);
+}
+
+/* 按钮：高 32，胶囊，body 600。主操作 action 底；不能点时 action-off 底、ink-muted 字。 */
 button {
+  display: flex;
   width: 100%;
-  padding: 10px 14px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px;
   border: 0;
   border-radius: 999px;
   background: var(--action);
   color: var(--on-action);
-  font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font: 600 15px/22px var(--family);
   cursor: pointer;
-  transition: opacity 0.15s, scale 0.12s;
+  transition:
+    filter 0.15s,
+    scale 0.12s;
 }
-button:hover:not(:disabled) { opacity: 0.88; }
-button:active:not(:disabled) { scale: 0.98; }
-button:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
-button:disabled { opacity: 0.55; cursor: default; }
-.error { color: var(--danger); font-size: 13px; }
-.hint { font-size: 12px; text-align: center; }
-[hidden] { display: none !important; }
-button.secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+button:hover:not(:disabled) {
+  filter: var(--hover);
+}
+button:active:not(:disabled) {
+  scale: 0.96;
+}
+button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+button:disabled {
+  background: var(--action-off);
+  color: var(--ink-muted);
+  cursor: default;
+}
+/* 次要操作「取消」：surface-inset 底、ink 字。 */
+button.secondary {
+  background: var(--surface-inset);
+  color: var(--ink);
+}
+/* Google 按钮：浅色白底、#747775 内描边、#1f1f1f 字（500）；深色 #131314、#8e918f、#e3e3e3。四色 G 18，和字隔 12。 */
+button.google {
+  background: var(--google);
+  color: var(--google-ink);
+  box-shadow: inset 0 0 0 1px var(--google-line);
+  font-weight: 500;
+}
+button.google::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background: url("google.svg") center / contain no-repeat;
+}
+button.google:disabled {
+  background: var(--google);
+  color: var(--google-ink);
+  opacity: 0.5;
+}
+/* 正在配对：照样是主操作的颜色，前面一个转圈，不能再点。 */
+button.busy {
+  pointer-events: none;
+}
+button.busy::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
 
-/* 配对窗口和没连上：左边 Pupu 的大图，右边一列居中。和网页登录页同一个版式。 */
-body.pair { align-items: stretch; gap: 12px; padding: 40px 12px 12px; }
-.art {
-  flex: 0 0 46%;
-  border-radius: 24px;
-  background: #16181f url("pupu-avatar.png") bottom / 100% auto no-repeat;
-  image-rendering: pixelated;
-  position: relative;
-  overflow: hidden;
+/* 「或」：footnote，ink-muted，两边各一条 1pt line，和字隔 12。 */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 500 12px/16px var(--family);
+  color: var(--ink-muted);
 }
-.art canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.side { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 40px; }
-.stack { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
-.stack h1 { font-size: 40px; line-height: 48px; }
-.stack #lead { margin-bottom: 20px; }
-.stack button, .stack input[type="text"] { height: 48px; }
-.stack input[type="text"] { border: 0; border-radius: 999px; background: var(--field); }
-.stack input[type="text"]:focus { box-shadow: inset 0 0 0 1px var(--line); }
-button.light { display: flex; align-items: center; justify-content: center; gap: 8px; background: #fff; color: #1d1d1f; }
-button.light::before { content: ""; width: 18px; height: 18px; background: url("google.svg") center / contain no-repeat; }
-.or { display: flex; align-items: center; gap: 12px; margin: 8px 0; color: var(--muted); font-size: 12px; }
-.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.side .hint { position: absolute; inset: auto 24px 8px; }
-/* 主窗口能拖到很窄：放不下大图就只留右边那一列。 */
+.or::before,
+.or::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+
+/* 输入框：surface-inset，高 32，圆角 12，不描边，字居中。填进去的码用等宽字、字距 0.1em，自动转大写。 */
+input[type="text"] {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface-inset);
+  color: var(--ink);
+  font: 15px/22px var(--family);
+  text-align: center;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+input[type="text"]::placeholder {
+  color: var(--ink-muted);
+}
+input[type="text"]:not(:placeholder-shown) {
+  font-family: var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+input[type="text"]:disabled {
+  color: var(--ink-muted);
+}
+/* 沿用命令行桥的授权（规范没画）：照卡片里说明的字号，勾选框用墨色。 */
+label.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  font: 13px/18px var(--family);
+  color: var(--ink-muted);
+}
+label.check input {
+  margin: 2px 0 0;
+  accent-color: var(--ink);
+}
+
+/* 主窗口能拖到很窄：放不下 3D 场景就只留右边一列。 */
 @media (max-width: 719px) {
-  .art { display: none; }
-  .side { padding: 0 12px; }
+  .art {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button.busy::before {
+    animation-duration: 2.4s;
+  }
 }
