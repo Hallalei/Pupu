@@ -35,7 +35,7 @@ export function NewProject({
     <Modal>
       <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Modal.Container placement="center">
-          <Modal.Dialog className="w-[min(92vw,420px)] layer-sheet">
+          <Modal.Dialog className="w-[min(92vw,420px)] layer-dialog">
             <Modal.Header>
               <Modal.Heading className="text-title">新空间</Modal.Heading>
             </Modal.Header>

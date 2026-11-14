@@ -143,6 +143,7 @@ import {
   MAX_AVATAR_BYTES,
   PUPU_AVATAR_KEY,
   PUPU_AVATAR_META,
+  presetAvatarUrl,
   pupuAvatarUrl,
   type AvatarTarget,
   type StoredAvatar,
@@ -267,6 +268,8 @@ export type OrgList = {
     readonly members: number;
     readonly role: MemberRole;
     readonly current: boolean;
+    /** 那个 Pupu 换过的预设头像；没换过、或者换的是上传的图，是 null。老的云端没有这一项。 */
+    readonly avatar?: string | null;
   }[];
   /** 还没有自己的 Pupu、又开放了名额：能填邀请码开一个。 */
   readonly canOpenOwn: boolean;
@@ -279,6 +282,8 @@ export type OrgCard = {
   readonly members: number;
   /** 来看的人在这里的角色。不在名单上（被移除了、正在移除）是 null。 */
   readonly role: MemberRole | null;
+  /** 这个 Pupu 换过的预设头像，见 avatars.ts 的 `presetAvatarUrl`。 */
+  readonly avatar: string | null;
 };
 
 /** 切进一个 Pupu 的结果，见 `Pupu.switchIn`。 */
@@ -1248,7 +1253,12 @@ export class Pupu extends DurableObject<Env> {
   async orgCard(email: string): Promise<OrgCard> {
     const creator = this.members.creator();
     const member = this.members.byEmail(email);
-    return { creator: creator ? memberName(creator) : null, members: this.members.list().length, role: member?.role ?? null };
+    return {
+      creator: creator ? memberName(creator) : null,
+      members: this.members.list().length,
+      role: member?.role ?? null,
+      avatar: presetAvatarUrl(this.store.meta(PUPU_AVATAR_META) ?? null)
+    };
   }
 
   /** 发请求的设备是谁的、什么设备：切到别的 Pupu 时，那边按这个给同一个人发同一种设备。 */
@@ -2637,7 +2647,8 @@ async function orgList(env: Env, caller: Caller): Promise<OrgList> {
       creator: card.creator,
       members: card.members,
       role,
-      current: home.pupu === caller.name
+      current: home.pupu === caller.name,
+      avatar: card.avatar
     }))
     .sort((a, b) => Number(b.role === "creator") - Number(a.role === "creator"));
   return {

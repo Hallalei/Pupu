@@ -44,6 +44,20 @@ function isPixelArt(src: string): boolean {
   return src.startsWith("/avatars/") || src === PUPU_AVATAR;
 }
 
+/** Pupu 的头像：换过的图，没换过是自带的像素猫。`className` 管大小。 */
+export function PupuAvatar({ src, className }: { src: string | null; className: string }) {
+  const url = src ?? PUPU_AVATAR;
+  return (
+    <img
+      src={url}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className={`${className} shrink-0 rounded-full object-cover ${isPixelArt(url) ? "[image-rendering:pixelated]" : ""}`}
+    />
+  );
+}
+
 /** 设置里的「头像」页：自己的。 */
 export function MyAvatarPage({ me }: { me: MemberView }) {
   return (

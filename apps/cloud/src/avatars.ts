@@ -68,6 +68,14 @@ export function pupuAvatarUrl(value: string | null): string | null {
   return `/api/pupu/avatar?v=${choice.at}`;
 }
 
+/**
+ * 切换列表里别的 Pupu 的头像：预设的猫是公开的图，哪个 Pupu 都能显示；上传的图只有那个 Pupu 自己的地址给，这里是 null，客户端用自带的猫。
+ */
+export function presetAvatarUrl(value: string | null): string | null {
+  const choice = parseChoice(value);
+  return choice?.kind === "preset" ? `/avatars/${choice.id}.png` : null;
+}
+
 /** 认得的图片：看文件头，不信请求说的类型。 */
 export function imageInfo(bytes: Uint8Array): { type: AvatarType; width: number; height: number } | null {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

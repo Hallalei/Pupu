@@ -273,8 +273,9 @@
 
 /*
  * 三层结构的后两层（第一层窗框是 body 的底）。`layer-card`：浮在窗框上的白卡片，圆角和外面的窗口同心
- * （手机上 26/41，电脑上 12）。`layer-sheet`：sheet、弹窗、菜单，背后压 scrim，不加模糊。
- * 不叫 card：HeroUI 自己有 .card。
+ * （手机上 26/41，电脑上 12）。`layer-sheet`：从下面升起的 sheet，上角 32、下角 41，和手机一样，电脑上窗口窄也一样。
+ * `layer-dialog`：宽屏居中的弹窗，照规范 SettingsSheet「电脑上的弹窗」四角都是 32（里面 16 的组加 16 的边距，同心）。
+ * 背后都压 scrim，不加模糊。不叫 card：HeroUI 自己有 .card。
  */
 @utility layer-card {
   background: var(--surface);
@@ -293,9 +294,11 @@
   background: var(--color-surface-sheet);
   box-shadow: var(--shadow-card);
   border-radius: var(--radius-sheet-top) var(--radius-sheet-top) var(--radius-card) var(--radius-card);
-  @media (pointer: fine) {
-    border-radius: var(--radius-card-pointer);
-  }
+}
+@utility layer-dialog {
+  background: var(--color-surface-sheet);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-sheet-top);
 }
 
 /*

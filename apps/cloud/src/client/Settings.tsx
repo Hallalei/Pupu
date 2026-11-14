@@ -1,6 +1,6 @@
-import { Button, Drawer, Modal } from "@heroui/react";
+import { Spinner } from "@heroui/react";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/browser";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { encode } from "uqr";
 import type { ComputerPolicy } from "../bridge/policy";
 import type { ComputerView } from "../bridge/protocol";
@@ -19,33 +19,44 @@ import {
   type MemberView
 } from "../members";
 import { ago } from "./ago";
-import { MemberAvatar, MyAvatarPage, PUPU_AVATAR, PupuAvatarPage } from "./Avatar";
+import { MemberAvatar, MyAvatarPage, PupuAvatar, PupuAvatarPage } from "./Avatar";
 import { api } from "./api";
 import { useDesktopComputer, type DesktopComputer } from "./desktop";
 import {
   CalendarIcon,
   CheckIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
   ChevronRightIcon,
   CodeIcon,
   CursorIcon,
   ComputerIcon,
   FolderIcon,
-  InfoIcon,
-  KeyIcon,
   LaptopIcon,
   LinkIcon,
   MailIcon,
   PeopleIcon,
   PhoneIcon,
   PlusIcon,
-  SparkleIcon,
-  TicketIcon
+  SparkleIcon
 } from "./icons";
 import { openRemoteDesktop, useRemoteDesktop } from "./RemoteDesktop";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ModelSection, modelSummary } from "./ModelSettings";
+import { Sheet, SheetBack, SheetClose } from "./Sheet";
+import {
+  Dot,
+  Group,
+  Note,
+  PILL,
+  PILL_ACTION,
+  PILL_CANCEL,
+  PILL_DANGER,
+  PILL_ROW,
+  PILL_SECONDARY,
+  ROW_BUTTON,
+  TEXT_BUTTON,
+  computerLabel
+} from "./settings-ui";
 import { ThisComputer } from "./ThisComputer";
 
 /** 什么时候先问你。和 iOS 的 Computer.Policy 一样的三档、一样的字。 */
@@ -57,7 +68,10 @@ const POLICIES: readonly (readonly [ComputerPolicy, string])[] = [
 
 type PairingCode = { readonly code: string; readonly expiresAt: number };
 
-/** 设置里的一页。和 iOS 的设置同一套：首页是一张自己的卡片和两组入口，点进去是各自的一页。 */
+/**
+ * 设置里的一页。和规范 SettingsSheet 一样：首页是自己、换一个 Pupu、这个 Pupu 三组，点进去是各自的一页。
+ * 自己那一行进「账户」：头像、Google 账户、通行密钥、邀请码和连上的服务都在那里。
+ */
 export type SettingsPage =
   | "root"
   | "accounts"
@@ -70,10 +84,11 @@ export type SettingsPage =
   | "invites"
   | "devices"
   | "passkeys"
-  | "about"
   | { readonly computer: string };
 
-const TITLES: Record<Exclude<SettingsPage, object>, string> = {
+type NamedPage = Exclude<SettingsPage, object>;
+
+const TITLES: Record<NamedPage, string> = {
   root: "设置",
   accounts: "账户",
   model: "模型",
@@ -84,13 +99,14 @@ const TITLES: Record<Exclude<SettingsPage, object>, string> = {
   pupuAvatar: "Pupu 的头像",
   invites: "邀请码",
   devices: "设备",
-  passkeys: "通行密钥",
-  about: "关于"
+  passkeys: "通行密钥"
 };
 
-/** 返回到哪一页：电脑详情回到电脑列表，别的回首页。 */
-function parentOf(page: SettingsPage): SettingsPage {
-  return typeof page === "object" ? "computers" : "root";
+/** 返回到哪一页：电脑详情回电脑列表；头像、通行密钥、邀请码回「账户」；别的回首页。 */
+function parentOf(page: SettingsPage): NamedPage {
+  if (typeof page === "object") return "computers";
+  if (page === "avatar" || page === "passkeys" || page === "invites") return "accounts";
+  return "root";
 }
 
 const THIS_COMPUTER: Record<DesktopComputer["status"], string> = {
@@ -101,16 +117,9 @@ const THIS_COMPUTER: Record<DesktopComputer["status"], string> = {
   waiting: "等你批准"
 };
 
-function computerLabel(computer: ComputerView): string {
-  if (computer.online) return computer.inUse ? "在线 · 有人在用" : "在线";
-  if (computer.stale) return "心跳中断";
-  if (computer.lastSeenAt) return `离线 · ${ago(computer.lastSeenAt)}`;
-  return "离线";
-}
-
 /**
- * 设置：连给 Pupu 的账号、已经连上的电脑和它们的权限分级、成员、邀请码、手机浏览器和电脑 App、通行密钥、连的是哪个 Pupu。
- * 电脑上是居中的弹窗，窄窗口是从右边滑出的抽屉；里面都是一页一页往里点，左上角返回，Esc 退一层。
+ * 设置（规范 SettingsSheet）：自己、换一个 Pupu、这个 Pupu 的电脑、设备、成员、模型。
+ * 宽屏是居中的弹窗，宽 560、最高 640；窄窗口照手机从下面升起。里面一页一页往里点，左上角返回，Esc 退一层。
  */
 export function Settings({
   page,
@@ -166,7 +175,6 @@ export function Settings({
   const thisComputer = useDesktopComputer();
   /** 电脑页右上角的「配对」点开了。 */
   const [pairing, setPairing] = useState(false);
-  const wide = useWide();
   const invites = useInvites(isOpen && mayManageInvites(actor));
   // 关的时候弹窗还要淡出一会儿，这期间留着原来那页，不闪回首页。
   const lastPage = useRef<SettingsPage>("root");
@@ -185,69 +193,47 @@ export function Settings({
     if (isOpen && node && !node.closest("[role=dialog]")?.contains(document.activeElement)) node.focus({ preventScroll: true });
   }, [isOpen, pageKey]);
 
-  const emails = new Map(members.map((member) => [member.id, member.email]));
+  const names = new Map(members.map((member) => [member.id, member.name]));
+  const me = members.find((member) => member.current);
   const showPasskeys = passkeys !== null && (confirmBy === "passkey" || confirmBy === "browser");
   const pairNew = <PairNew origin={window.location.origin} connected={[...devices, ...computers]} onCreate={onCreatePairingCode} />;
   const computer = typeof shown === "object" ? computers.find((item) => item.id === shown.computer) : undefined;
   const title = typeof shown === "object" ? (computer?.name ?? "电脑") : TITLES[shown];
+  const panel = (item: ComputerView, afterRevoke?: () => void) => (
+    <ComputerPanel
+      key={item.id}
+      computer={item}
+      here={item.id === thisComputer?.computerId}
+      owner={item.ownerId ? (names.get(item.ownerId) ?? null) : null}
+      actor={actor}
+      onRevoke={async () => {
+        await onRevoke(item.id);
+        afterRevoke?.();
+      }}
+      onSetPolicy={(policy) => onSetPolicy(item.id, policy)}
+      onSetRemoteConfirm={(level) => onSetRemoteConfirm(item.id, level)}
+      canConfirm={remoteConfirmable(confirmBy, passkeys)}
+      onClose={() => onPage(null)}
+    />
+  );
 
   let body: ReactNode;
   if (shown === "root") {
-    const me = members.find((member) => member.current);
     const here = devices.find((device) => device.current);
-    const host = window.location.host;
     const online = computers.filter((item) => item.online).length;
     body = (
       <>
-        <Profile
-          me={me}
-          onPress={me ? () => onPage("avatar") : undefined}
-          name={me?.email ?? here?.name ?? host}
-          detail={[me ? (me.role === "creator" ? "创建者" : "成员") : here ? null : "本机开发", host]
-            .filter((part) => part && part !== (me?.email ?? here?.name ?? host))
-            .join(" · ")}
-        />
-        {me && <Orgs open={isOpen} />}
-        <Group>
+        <Group label="自己">
+          <SelfRow name={me?.name ?? here?.name ?? window.location.host} avatar={me?.avatar ?? null} onPress={() => onPage("accounts")} />
+        </Group>
+        {me && <Orgs open={isOpen} pupuAvatar={pupuAvatar} />}
+        <Group label="这个 Pupu" inset="icon">
           <LinkRow
             icon={<ComputerIcon />}
             title="电脑"
             summary={computers.length === 0 ? "还没有" : `${computers.length} 台 · ${online} 台在线`}
             onPress={() => onPage("computers")}
           />
-          {actor?.role === "creator" && (
-            <LinkRow
-              icon={
-                <img
-                  src={pupuAvatar ?? PUPU_AVATAR}
-                  alt=""
-                  className={`size-6 rounded-full ${pupuAvatar?.startsWith("/api/") ? "" : "[image-rendering:pixelated]"}`}
-                />
-              }
-              title="Pupu 的头像"
-              onPress={() => onPage("pupuAvatar")}
-            />
-          )}
-          <LinkRow
-            icon={<LinkIcon />}
-            title="账户"
-            summary={
-              connectors.accounts.length > 0
-                ? `${connectors.accounts.length} 个`
-                : connectors.enabled
-                  ? "未连接"
-                  : "未开启"
-            }
-            onPress={() => onPage("accounts")}
-          />
-          {model && (
-            <LinkRow
-              icon={<SparkleIcon />}
-              title="模型"
-              summary={modelSummary(model.current, computers)}
-              onPress={() => onPage("model")}
-            />
-          )}
           {thisComputer && (
             <LinkRow
               icon={<LaptopIcon />}
@@ -256,74 +242,84 @@ export function Settings({
               onPress={() => onPage("this")}
             />
           )}
-          {members.length > 0 && (
-            <LinkRow icon={<PeopleIcon />} title="成员" summary={`${members.length} 人`} onPress={() => onPage("members")} />
-          )}
-          {invites.list && (
-            <LinkRow
-              icon={<TicketIcon />}
-              title="邀请码"
-              summary={`还能生成 ${invites.list.left} 个`}
-              onPress={() => onPage("invites")}
-            />
-          )}
-        </Group>
-        <Group>
           <LinkRow
             icon={<PhoneIcon />}
             title="设备"
             summary={devices.length > 0 ? `${devices.length} 台` : undefined}
             onPress={() => onPage("devices")}
           />
+          {members.length > 0 && (
+            <LinkRow icon={<PeopleIcon />} title="成员" summary={`${members.length} 人`} onPress={() => onPage("members")} />
+          )}
+          {model && (
+            <LinkRow
+              icon={<SparkleIcon />}
+              title="模型"
+              summary={modelSummary(model.current, computers)}
+              onPress={() => onPage("model")}
+            />
+          )}
+          {actor?.role === "creator" && (
+            <LinkRow
+              icon={<PupuAvatar src={pupuAvatar} className="size-5" />}
+              title="Pupu 的头像"
+              onPress={() => onPage("pupuAvatar")}
+            />
+          )}
+        </Group>
+      </>
+    );
+  } else if (shown === "accounts") {
+    body = (
+      <>
+        <Group label="自己">
+          {me && (
+            <LinkRow
+              title="头像"
+              trailing={<MemberAvatar name={me.name} src={me.avatar} className="size-7 bg-surface text-footnote font-semibold" />}
+              onPress={() => onPage("avatar")}
+            />
+          )}
+          {me && <ValueRow title="Google 账户" value={me.email} />}
           {showPasskeys && (
             <LinkRow
-              icon={<KeyIcon />}
               title="通行密钥"
               summary={passkeys.keys.length > 0 ? `${passkeys.keys.length} 把` : "还没加"}
               onPress={() => onPage("passkeys")}
             />
           )}
-          <LinkRow icon={<InfoIcon />} title="关于" onPress={() => onPage("about")} />
+          {invites.list && (
+            <LinkRow title="邀请码" summary={`还能生成 ${invites.list.left} 个`} onPress={() => onPage("invites")} />
+          )}
+        </Group>
+        <Accounts connectors={connectors} members={members} actor={actor} onRemove={onRemoveConnector} />
+        <Group title="连接的 Pupu">
+          <div className="flex min-h-13 items-center px-4 py-2.5 text-body break-all pointer-fine:min-h-11">{window.location.origin}</div>
         </Group>
       </>
     );
-  } else if (shown === "accounts") {
-    body = <Accounts connectors={connectors} members={members} actor={actor} onRemove={onRemoveConnector} />;
   } else if (shown === "model") {
     body = model ? <ModelSection model={model} computers={computers} onSaved={onModelSaved} /> : <Note>这个 Pupu 还不能换模型。</Note>;
   } else if (shown === "this") {
     body = thisComputer ? <ThisComputer computer={thisComputer} /> : <Note>只有电脑 App 的窗口里有这一页。</Note>;
   } else if (shown === "computers") {
-    // 照原型：自己的这台（没有就第一台在线的）摊开在最上面，别的每台一行，点进去是同样的一页。配对在右上角。
-    const featured =
-      computers.find((item) => item.id === thisComputer?.computerId) ?? computers.find((item) => item.online) ?? computers[0];
-    const others = computers.filter((item) => item !== featured);
+    // 规范 ComputerRow：在线的每台一块，电脑 App 眼前这台摊在最上面；离线的一台一行，点进去是同样的一块。配对在右上角。
+    const here = computers.find((item) => item.id === thisComputer?.computerId);
+    const blocks = [...(here ? [here] : []), ...computers.filter((item) => item !== here && item.online)];
+    const offline = computers.filter((item) => item !== here && !item.online);
     body = (
       <>
         {(pairing || computers.length === 0) && <Group title="连接新设备">{pairNew}</Group>}
-        {featured && (
-          <ComputerPanel
-            key={featured.id}
-            computer={featured}
-            here={featured.id === thisComputer?.computerId}
-            owner={featured.ownerId ? (emails.get(featured.ownerId) ?? null) : null}
-            actor={actor}
-            onRevoke={() => onRevoke(featured.id)}
-            onSetPolicy={(policy) => onSetPolicy(featured.id, policy)}
-            onSetRemoteConfirm={(level) => onSetRemoteConfirm(featured.id, level)}
-            canConfirm={remoteConfirmable(confirmBy, passkeys)}
-            onClose={() => onPage(null)}
-          />
-        )}
-        {others.length > 0 && (
-          <Group>
-            {others.map((item) => (
+        {blocks.map((item) => panel(item))}
+        {offline.length > 0 && (
+          <Group label="离线的电脑" inset="icon">
+            {offline.map((item) => (
               <LinkRow
                 key={item.id}
                 icon={<ComputerIcon />}
                 title={item.name}
-                detail={[computerLabel(item), item.ownerId ? emails.get(item.ownerId) : null].filter(Boolean).join(" · ")}
-                dot={item.online}
+                detail={computerLabel(item)}
+                dot={false}
                 onPress={() => onPage({ computer: item.id })}
               />
             ))}
@@ -332,25 +328,7 @@ export function Settings({
       </>
     );
   } else if (typeof shown === "object") {
-    body = computer ? (
-      <ComputerPanel
-        key={computer.id}
-        computer={computer}
-        here={computer.id === thisComputer?.computerId}
-        owner={computer.ownerId ? (emails.get(computer.ownerId) ?? null) : null}
-        actor={actor}
-        onRevoke={async () => {
-          await onRevoke(computer.id);
-          onPage("computers");
-        }}
-        onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
-        onSetRemoteConfirm={(level) => onSetRemoteConfirm(computer.id, level)}
-        canConfirm={remoteConfirmable(confirmBy, passkeys)}
-        onClose={() => onPage(null)}
-      />
-    ) : (
-      <Note>这台电脑已经吊销了。</Note>
-    );
+    body = computer ? panel(computer, () => onPage("computers")) : <Note>这台电脑已经吊销了。</Note>;
   } else if (shown === "members") {
     body = (
       <Members
@@ -363,7 +341,6 @@ export function Settings({
       />
     );
   } else if (shown === "avatar") {
-    const me = members.find((member) => member.current);
     body = me ? <MyAvatarPage me={me} /> : <Note>用 Google 登录之后才能换头像。</Note>;
   } else if (shown === "pupuAvatar") {
     body =
@@ -385,91 +362,53 @@ export function Settings({
         <Group title="连接新设备">{pairNew}</Group>
       </>
     );
-  } else if (shown === "passkeys") {
+  } else {
     body =
       passkeys && (confirmBy === "passkey" || confirmBy === "browser") ? (
         <PasskeyList passkeys={passkeys} confirmBy={confirmBy} onChanged={onPasskeysChanged} />
       ) : (
         <Note>这台设备不用通行密钥。</Note>
       );
-  } else {
-    body = (
-      <Group title="连接的 Pupu">
-        <div className="flex min-h-control items-center px-4 py-2.5 text-body break-all">{window.location.origin}</div>
-      </Group>
-    );
   }
 
-  const backButton = back && (
-    <button
-      type="button"
-      aria-label={`返回${TITLES[typeof shown === "object" ? "computers" : "root"]}`}
-      onClick={back}
-      className="grid size-control-sm shrink-0 place-items-center rounded-full bg-surface text-[16px] hover:bg-surface-secondary"
-    >
-      <ChevronLeftIcon />
-    </button>
-  );
-  // 首页不写标题，和 iOS 一样第一眼是自己的卡片；读屏照样念「设置」。
-  const heading = shown === "root" ? "sr-only" : "min-w-0 flex-1 truncate text-greeting";
+  // 电脑页右上角的「配对」：surface-inset 胶囊，展开或收起列表上面的「连接新设备」。
   const action = shown === "computers" && computers.length > 0 && (
     <button
       type="button"
       aria-expanded={pairing}
       onClick={() => setPairing((open) => !open)}
-      className="tap flex h-control-sm shrink-0 items-center gap-1 rounded-full bg-surface px-3.5 text-subheadline font-semibold hover:bg-surface-secondary"
+      className="tap flex h-control-sm shrink-0 items-center gap-1 rounded-full bg-surface-inset px-3.5 text-subheadline font-semibold text-ink"
     >
       <PlusIcon className="text-[13px]" />
       配对
     </button>
   );
-  const content = (
-    <div key={pageKey} ref={pageRef} tabIndex={-1} className="fade-in flex flex-col gap-6 outline-none">
-      {body}
-    </div>
-  );
-  const onOpenChange = (open: boolean) => {
-    if (!open) onPage(null);
-  };
 
-  if (wide) {
-    return (
-      <Modal>
-        <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
-          <Modal.Container placement="center" scroll="inside">
-            <Modal.Dialog className="h-[min(85dvh,640px)] w-[min(92vw,520px)] layer-sheet">
-              <Modal.CloseTrigger aria-label="关闭" />
-              <Modal.Header className="flex min-h-control-sm flex-col items-start gap-3">
-                {backButton}
-                <div className="flex w-full items-center gap-3 pr-10">
-                  <Modal.Heading className={heading}>{title}</Modal.Heading>
-                  {action}
-                </div>
-              </Modal.Header>
-              <Modal.Body className="pt-3 pb-2 text-body text-ink">{content}</Modal.Body>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
-    );
-  }
   return (
-    <Drawer>
-      <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
-        <Drawer.Content placement="right">
-          <Drawer.Dialog className="w-[min(88vw,380px)] bg-surface-sheet">
-            <Drawer.Header className="flex flex-col items-start gap-3">
-              {backButton}
-              <div className="flex w-full items-center gap-3">
-                <Drawer.Heading className={heading}>{title}</Drawer.Heading>
-                {action}
-              </div>
-            </Drawer.Header>
-            <Drawer.Body className="text-body text-ink">{content}</Drawer.Body>
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
-    </Drawer>
+    <Sheet
+      isOpen={isOpen}
+      onClose={() => onPage(null)}
+      label="设置"
+      width="w-[min(calc(100vw-12px),560px)]"
+      className="h-[min(85dvh,640px)] max-lg:h-full"
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-8.5 shrink-0 items-center gap-3 px-3.5 pt-2 pb-3.5 pointer-fine:min-h-control-sm lg:px-4 lg:pt-4 lg:pb-4">
+          {back && <SheetBack label={`返回${TITLES[parentOf(shown)]}`} onBack={back} />}
+          <h2 className="m-0 min-w-0 flex-1 truncate text-title">{title}</h2>
+          {action}
+          <SheetClose onClose={() => onPage(null)} />
+        </div>
+        <div
+          key={pageKey}
+          ref={pageRef}
+          tabIndex={-1}
+          className="fade-in flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3.5 pb-6 text-body text-ink outline-none lg:px-4 lg:pb-4"
+        >
+          {body}
+        </div>
+      </div>
+    </Sheet>
   );
 }
 
@@ -490,7 +429,7 @@ function useEscapeBack(back: (() => void) | null) {
   }, [back]);
 }
 
-/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，list 一直是 null，首页就没有这一行。 */
+/** 发给新用户开 Pupu 的码。别的 Pupu 的创建者，接口回 403，list 一直是 null，「账户」里就没有这一行。 */
 function useInvites(enabled: boolean) {
   const [list, setList] = useState<InviteList | null>(null);
   const load = useCallback(() => api.invites().then(setList), []);
@@ -500,68 +439,32 @@ function useInvites(enabled: boolean) {
   return { list, load };
 }
 
-/** 首页最上面：自己是谁，连的是哪个 Pupu。 */
-function Profile({
-  me,
-  name,
-  detail,
-  onPress
-}: {
-  me: MemberView | undefined;
-  name: string;
-  detail: string;
-  /** 是成员时点进去换头像。 */
-  onPress?: () => void;
-}) {
-  const content = (
-    <>
-      <MemberAvatar name={name} src={me?.avatar ?? null} className="size-10 bg-action text-headline text-on-action" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-title">{name}</span>
-        {detail && <span className="block truncate text-subheadline text-ink-muted">{detail}</span>}
-      </span>
-    </>
-  );
-  if (!onPress) return <div className="flex items-center gap-3 rounded-row bg-surface px-4 py-3">{content}</div>;
+/** 首页最上面自己那一行：头像 42、名字，下面「账户、连上的服务」，行高 64。 */
+function SelfRow({ name, avatar, onPress }: { name: string; avatar: string | null; onPress: () => void }) {
   return (
     <button
       type="button"
-      aria-label="换头像"
       onClick={onPress}
-      className="flex w-full items-center gap-3 rounded-row bg-surface px-4 py-3 text-left hover:bg-surface-secondary"
+      className="flex min-h-16 w-full items-center gap-3 px-4 py-2.5 text-left pointer-fine:hover:bg-line"
     >
-      {content}
-      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
+      <MemberAvatar name={name} src={avatar} className="size-10.5 bg-surface text-headline" />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-headline">{name}</span>
+        <span className="truncate text-subheadline text-ink-muted">账户、连上的服务</span>
+      </span>
+      <ChevronRightIcon className="shrink-0 text-[12px] text-ink-faint" />
     </button>
   );
 }
 
-/** 一组行，白底圆角，行和行之间一条细线；上面可以有个小标题，下面可以有一句说明。 */
-function Group({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-1.5">
-      {title && <h3 className="m-0 px-4 text-footnote text-ink-muted">{title}</h3>}
-      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">{children}</div>
-      {note && <p className="m-0 px-4 text-footnote font-normal text-ink-muted">{note}</p>}
-    </section>
-  );
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return <p className="m-0 px-4 text-subheadline text-ink-muted">{children}</p>;
-}
-
-function Dot({ online }: { online: boolean }) {
-  return <span className={`size-2 rounded-full ${online ? "bg-online" : "bg-offline"}`} aria-hidden="true" />;
-}
-
-/** 点进下一页的一行：图标、名字、右边一句摘要和 ›。 */
+/** 点进下一页的一行：图标 20、名字，右边一句摘要（或别的东西）和 ›。行高 52，电脑档 44。 */
 function LinkRow({
   icon,
   title,
   detail,
   dot,
   summary,
+  trailing,
   onPress
 }: {
   icon?: ReactNode;
@@ -570,17 +473,19 @@ function LinkRow({
   /** 在不在线：给了就在 detail 前面画一个点。 */
   dot?: boolean;
   summary?: string;
+  /** 摘要换成别的，比如头像。 */
+  trailing?: ReactNode;
   onPress: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onPress}
-      className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-ink/4"
+      className="flex min-h-13 w-full items-center gap-3 px-4 py-2 text-left pointer-fine:min-h-11 pointer-fine:hover:bg-line"
     >
-      {icon && <span className="grid size-5 shrink-0 place-items-center text-[18px]">{icon}</span>}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-body">{title}</span>
+      {icon && <span className="grid size-5 shrink-0 place-items-center text-[20px]">{icon}</span>}
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-body">{title}</span>
         {detail && (
           <span className="flex items-center gap-1.5 text-subheadline text-ink-muted">
             {dot !== undefined && <Dot online={dot} />}
@@ -588,23 +493,20 @@ function LinkRow({
           </span>
         )}
       </span>
-      {summary && <span className="shrink-0 text-body text-ink-muted">{summary}</span>}
-      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
+      {summary && <span className="shrink-0 text-subheadline text-ink-muted">{summary}</span>}
+      {trailing}
+      <ChevronRightIcon className="shrink-0 text-[12px] text-ink-faint" />
     </button>
   );
 }
 
-const WIDE = "(min-width: 1024px)";
-
-/** 窗口够不够宽，跟着窗口大小变。 */
-function useWide(): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(WIDE);
-      query.addEventListener("change", onChange);
-      return () => query.removeEventListener("change", onChange);
-    },
-    () => window.matchMedia(WIDE).matches
+/** 只给人看的一行：名字，右边一句（subheadline、ink-muted）。 */
+function ValueRow({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="flex min-h-13 items-center gap-3 px-4 py-2 pointer-fine:min-h-11">
+      <span className="shrink-0 text-body">{title}</span>
+      <span className="min-w-0 flex-1 truncate text-right text-subheadline text-ink-muted">{value}</span>
+    </div>
   );
 }
 
@@ -645,7 +547,7 @@ function useRowAction() {
   };
 }
 
-/** 吊销、移除前的那一句确认，和两个按钮。 */
+/** 吊销、移除前的那一句确认，和两个按钮：网页和电脑 App 不弹窗，展开在这一行下面。 */
 function ConfirmPanel({
   text,
   label,
@@ -663,12 +565,13 @@ function ConfirmPanel({
     <div className="flex flex-col gap-2">
       <p className="m-0 text-subheadline text-ink-muted">{text}</p>
       <div className="flex justify-end gap-2">
-        <Button size="sm" variant="tertiary" onPress={onCancel}>
+        <button type="button" disabled={sending} onClick={onCancel} className={PILL_CANCEL}>
           取消
-        </Button>
-        <Button size="sm" variant="danger" isPending={sending} onPress={onConfirm}>
+        </button>
+        <button type="button" disabled={sending} onClick={onConfirm} className={PILL_DANGER}>
+          {sending && <Spinner size="sm" color="current" aria-label="正在处理" className="size-3.5" />}
           {label}
-        </Button>
+        </button>
       </div>
     </div>
   );
@@ -769,7 +672,7 @@ function AccountRow({
           <button
             type="button"
             aria-label={`断开${label}`}
-            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+            className={`${TEXT_BUTTON} text-danger-ink`}
             onClick={row.confirm}
           >
             断开
@@ -816,9 +719,10 @@ function ServiceRow({ service, connectable }: { service: ConnectorService; conne
           <div className="text-subheadline text-ink-muted">{service.detail}</div>
         </div>
         {connectable && (
-          <Button size="sm" variant="secondary" isPending={row.sending} onPress={connect}>
+          <button type="button" disabled={row.sending} onClick={connect} className={PILL_ROW}>
+            {row.sending && <Spinner size="sm" color="current" aria-label="正在打开" className="size-3.5" />}
             连接
-          </Button>
+          </button>
         )}
       </div>
       <RowError error={row.error} />
@@ -826,38 +730,47 @@ function ServiceRow({ service, connectable }: { service: ConnectorService; conne
   );
 }
 
-/** 分级的下拉：系统自带的选择框，样子是一颗小胶囊。别人的电脑只能往严里改，放宽的那几项灰掉。 */
-function PolicySelect({
-  computer,
-  actor,
-  sending,
+/**
+ * 电脑那一块里能改的一行（规范 ComputerRow）：名字在左，当前那一档写在右边（subheadline、ink-muted）。
+ * 点哪里都打开系统自带的选择框：它盖满整行、看不见，读屏和键盘照常用它。不能选的档灰掉。
+ */
+function SelectRow<T extends string>({
+  label,
+  ariaLabel,
+  value,
+  options,
+  disabled,
   onChange
 }: {
-  computer: ComputerView;
-  actor: Actor | null | undefined;
-  sending: boolean;
-  onChange: (policy: ComputerPolicy) => void;
+  label: string;
+  ariaLabel: string;
+  value: T;
+  options: readonly { readonly value: T; readonly name: string; readonly disabled: boolean }[];
+  disabled: boolean;
+  onChange: (next: T) => void;
 }) {
   return (
-    <span className="relative shrink-0">
+    <label className="relative flex min-h-13 items-center gap-2 px-4 py-2 pointer-fine:min-h-11 has-enabled:pointer-fine:hover:bg-line has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-ink">
+      <span className="min-w-0 flex-1 text-body">{label}</span>
+      <span className="shrink-0 text-subheadline text-ink-muted">{options.find((option) => option.value === value)?.name}</span>
+      <ChevronDownIcon className="shrink-0 text-[11px] text-ink-faint" />
       <select
-        aria-label={`「${computer.name}」上什么时候先问你`}
-        value={computer.policy}
-        disabled={sending}
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
         onChange={(event) => {
-          const next = event.target.value as ComputerPolicy;
-          if (next !== computer.policy) onChange(next);
+          const next = event.target.value as T;
+          if (next !== value) onChange(next);
         }}
-        className="tap h-8 appearance-none rounded-full bg-surface-inset py-0 pr-7 pl-3 text-subheadline text-ink"
+        className="absolute inset-0 cursor-pointer appearance-none opacity-0 disabled:cursor-default"
       >
-        {POLICIES.map(([policy, name]) => (
-          <option key={policy} value={policy} disabled={!mayChangePolicy(computer.policy, policy, actor, computer.ownerId)}>
-            {name}
+        {options.map((option) => (
+          <option key={option.value} value={option.value} disabled={option.disabled}>
+            {option.name}
           </option>
         ))}
       </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
-    </span>
+    </label>
   );
 }
 
@@ -868,52 +781,10 @@ function remoteConfirmable(confirmBy: ConfirmWhere, passkeys: Passkeys | null): 
   return passkeys && passkeys.keys.length > 0 ? null : "要远程控制前确认，先加一把通行密钥。";
 }
 
-/** 远程控制前要不要确认：和分级一样的小胶囊。这里按不了确认，要确认的两档灰掉；放宽只有主人。 */
-function RemoteConfirmSelect({
-  computer,
-  actor,
-  canConfirm,
-  sending,
-  onChange
-}: {
-  computer: ComputerView;
-  actor: Actor | null | undefined;
-  canConfirm: boolean;
-  sending: boolean;
-  onChange: (level: RemoteConfirm) => void;
-}) {
-  return (
-    <span className="relative shrink-0">
-      <select
-        aria-label={`远程控制「${computer.name}」前要不要确认`}
-        value={computer.remoteConfirm}
-        disabled={sending}
-        onChange={(event) => {
-          const next = event.target.value as RemoteConfirm;
-          if (next !== computer.remoteConfirm) onChange(next);
-        }}
-        className="tap h-8 appearance-none rounded-full bg-surface-inset py-0 pr-7 pl-3 text-subheadline text-ink"
-      >
-        {REMOTE_CONFIRMS.map(([level, name]) => (
-          <option
-            key={level}
-            value={level}
-            disabled={
-              (level !== "none" && !canConfirm) || !mayChangeRemoteConfirm(computer.remoteConfirm, level, actor, computer.ownerId)
-            }
-          >
-            {name}
-          </option>
-        ))}
-      </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
-    </span>
-  );
-}
-
 /**
- * 一台电脑：名字和在不在线、什么时候先问你、吊销，一组排下来。电脑页最上面那台和点进去的那一页都是它。
- * 主人自己的电脑多一行「远程控制前」确认几档，见 ../bridge/remote-confirm.ts。
+ * 一台电脑（规范 ComputerRow）：一块 surface-inset，头一行是电脑图标、名字和状态词，下面是「远程控制」，
+ * 再往下是「Pupu 用它之前问我」、主人自己的「远程控制前」和「吊销」。电脑页上在线的每台一块，离线的点进去也是它。
+ * 规范里在线时还有一张屏幕缩略图，云端现在没有这份数据，先不画（见 restyle 记录）。
  */
 function ComputerPanel({
   computer,
@@ -929,7 +800,7 @@ function ComputerPanel({
   computer: ComputerView;
   /** 就是眼前这台电脑（电脑 App 里）。 */
   here: boolean;
-  /** 主人的邮箱。 */
+  /** 主人的名字。 */
   owner: string | null;
   actor: Actor | null | undefined;
   onRevoke: () => Promise<void>;
@@ -944,89 +815,99 @@ function ComputerPanel({
   const policy = useRowAction();
   const remoteConfirm = useRowAction();
   const remote = useRemoteDesktop(computer.id);
-  // 和 iOS 一样只给主人自己的电脑；离线的放一行灰的说明。
+  // 和 iOS 一样只给主人自己的电脑；离线的放一颗灰的胶囊。
   const mine = !here && computer.ownerId !== null && computer.ownerId === actor?.memberId;
+  const ownerRow = actor === null || (computer.ownerId !== null && computer.ownerId === actor?.memberId);
+  // 「在线 · 林夏的」；电脑 App 里眼前这台写「在线 · 这台电脑」，屏幕授权给了 Pupu 时接「屏幕已授权」。
+  const status = [computerLabel(computer), here ? "这台电脑" : owner ? `${owner}的` : null, here && computer.screen ? "屏幕已授权" : null]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <section className="flex flex-col gap-1.5" data-computer={computer.id}>
-      {remote && remote !== "phone" ? (
-        <button
-          type="button"
-          onClick={() => {
-            openRemoteDesktop(computer.id, remote);
-            if (remote !== "browser") onClose();
-          }}
-          className="tap mb-2 flex h-control w-full items-center justify-center gap-2 rounded-full bg-action text-body font-semibold text-on-action"
-        >
-          <CursorIcon />
-          {remote === "browser" ? "在浏览器里远程控制" : "远程控制"}
-        </button>
-      ) : remote === "phone" ? (
-        <div className="mb-2"><Note>在手机 App 上远程控制这台电脑。</Note></div>
-      ) : mine && !computer.online ? (
-        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-action-off text-body font-semibold text-ink-muted">
-          离线，连上才能远程控制
-        </div>
-      ) : null}
-      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <ComputerIcon className="shrink-0 text-[26px]" />
+    <Group
+      label={computer.name}
+      note={canConfirm !== null && ownerRow ? canConfirm : undefined}
+      error={policy.error ?? remoteConfirm.error ?? row.error}
+    >
+      <div className="flex flex-col gap-3 p-4" data-computer={computer.id}>
+        <div className="flex items-center gap-3">
+          <ComputerIcon className="shrink-0 text-[28px]" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="truncate text-body font-semibold">{computer.name}</span>
+            <span className="truncate text-headline">{computer.name}</span>
             <span className="flex items-center gap-1.5 text-subheadline text-ink-muted">
               <Dot online={computer.online} />
-              <span className="truncate">
-                {[computerLabel(computer), here ? "这台电脑" : owner, computer.screen ? "屏幕已授权" : null]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
+              <span className="truncate">{status}</span>
             </span>
           </span>
         </div>
-        <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
-          <span className="min-w-0 flex-1 text-body">Pupu 用它之前问我</span>
-          <PolicySelect
-            computer={computer}
-            actor={actor}
-            sending={policy.sending}
-            onChange={(next) => void policy.run(() => onSetPolicy(next))}
-          />
-        </div>
-        {(actor === null || (computer.ownerId !== null && computer.ownerId === actor?.memberId)) && (
-          <div className="flex min-h-control items-center gap-3 py-2.5 pr-3 pl-4">
-            <span className="min-w-0 flex-1 text-body">远程控制前</span>
-            <RemoteConfirmSelect
-              computer={computer}
-              actor={actor}
-              canConfirm={canConfirm === null}
-              sending={remoteConfirm.sending}
-              onChange={(next) => void remoteConfirm.run(() => onSetRemoteConfirm(next))}
+        {remote && remote !== "phone" ? (
+          <button
+            type="button"
+            onClick={() => {
+              openRemoteDesktop(computer.id, remote);
+              if (remote !== "browser") onClose();
+            }}
+            className={`${PILL_ACTION} w-full`}
+          >
+            <CursorIcon />
+            {remote === "browser" ? "在浏览器里远程控制" : "远程控制"}
+          </button>
+        ) : remote === "phone" ? (
+          <p className="m-0 text-subheadline text-ink-muted">在手机 App 上远程控制这台电脑。</p>
+        ) : mine && !computer.online ? (
+          <div className="flex h-control w-full items-center justify-center rounded-full bg-action-off text-body font-semibold text-ink-muted">
+            离线，连上才能远程控制
+          </div>
+        ) : null}
+      </div>
+      <SelectRow
+        label="Pupu 用它之前问我"
+        ariaLabel={`「${computer.name}」上什么时候先问你`}
+        value={computer.policy}
+        options={POLICIES.map(([value, name]) => ({
+          value,
+          name,
+          disabled: !mayChangePolicy(computer.policy, value, actor, computer.ownerId)
+        }))}
+        disabled={policy.sending}
+        onChange={(next) => void policy.run(() => onSetPolicy(next))}
+      />
+      {ownerRow && (
+        <SelectRow
+          label="远程控制前"
+          ariaLabel={`远程控制「${computer.name}」前要不要确认`}
+          value={computer.remoteConfirm}
+          options={REMOTE_CONFIRMS.map(([value, name]) => ({
+            value,
+            name,
+            disabled:
+              (value !== "none" && canConfirm !== null) ||
+              !mayChangeRemoteConfirm(computer.remoteConfirm, value, actor, computer.ownerId)
+          }))}
+          disabled={remoteConfirm.sending}
+          onChange={(next) => void remoteConfirm.run(() => onSetRemoteConfirm(next))}
+        />
+      )}
+      {mayRevoke(actor, computer.ownerId) &&
+        (row.confirming ? (
+          <div className="px-4 py-3">
+            <ConfirmPanel
+              text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
+              label="吊销"
+              sending={row.sending}
+              onCancel={row.cancel}
+              onConfirm={() => void row.run(onRevoke)}
             />
           </div>
-        )}
-        {mayRevoke(actor, computer.ownerId) &&
-          (row.confirming ? (
-            <div className="px-4 py-3">
-              <ConfirmPanel
-                text={`吊销后「${computer.name}」会断开。要再用，就在那台电脑上重新配对。`}
-                label="吊销"
-                sending={row.sending}
-                onCancel={row.cancel}
-                onConfirm={() => void row.run(onRevoke)}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={row.confirm}
-              className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body text-danger-ink hover:bg-ink/4"
-            >
-              吊销
-            </button>
-          ))}
-      </div>
-      {canConfirm !== null && (actor === null || computer.ownerId === actor?.memberId) && <Note>{canConfirm}</Note>}
-      <RowError error={policy.error ?? remoteConfirm.error ?? row.error} />
-    </section>
+        ) : (
+          <button
+            type="button"
+            onClick={row.confirm}
+            className="flex min-h-13 w-full items-center px-4 py-2 text-left text-body text-danger-ink pointer-fine:min-h-11 pointer-fine:hover:bg-line"
+          >
+            吊销
+          </button>
+        ))}
+    </Group>
   );
 }
 
@@ -1041,23 +922,26 @@ function DeviceRow({
 }) {
   const row = useRowAction();
   return (
-    <div className="flex flex-col gap-2 px-4 py-2.5">
+    <div className="flex min-h-13 flex-col justify-center gap-2 px-4 py-2.5 pointer-fine:min-h-11">
       <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-body">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="text-body [overflow-wrap:anywhere]">
             {device.name}
             {device.current && (
               <span className="text-ink-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
             )}
           </div>
-          <div className="truncate text-subheadline text-ink-muted">{deviceLabel(device)}</div>
+          <div className="text-subheadline text-ink-muted">
+            {deviceParts(device).map((part, index, parts) => (
+              <Fragment key={index}>
+                <span className="whitespace-nowrap">{index < parts.length - 1 ? `${part} ·` : part}</span>
+                {index < parts.length - 1 && " "}
+              </Fragment>
+            ))}
+          </div>
         </div>
         {!row.confirming && mayRevoke(actor, device.memberId) && (
-          <button
-            type="button"
-            className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
-            onClick={row.confirm}
-          >
+          <button type="button" className={`${TEXT_BUTTON} text-danger-ink`} onClick={row.confirm}>
             吊销
           </button>
         )}
@@ -1095,7 +979,7 @@ function MemberRow({
   return (
     <div className="flex flex-col gap-2 px-4 py-2.5">
       <div className="flex items-center gap-3">
-        <MemberAvatar name={member.name} src={member.avatar} className="size-8 bg-surface-inset text-footnote" />
+        <MemberAvatar name={member.name} src={member.avatar} className="size-8 bg-surface text-footnote font-semibold" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-body">
             {member.email}
@@ -1106,7 +990,7 @@ function MemberRow({
           </div>
         </div>
         {!row.confirming && mayRemoveMember(actor, member) && (
-          <button type="button" className="shrink-0 text-subheadline text-danger-ink hover:opacity-75" onClick={row.confirm}>
+          <button type="button" className={`${TEXT_BUTTON} text-danger-ink`} onClick={row.confirm}>
             移除
           </button>
         )}
@@ -1191,20 +1075,21 @@ function Members({
             placeholder="要邀请的 Google 邮箱"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="min-w-0 flex-1 rounded-full bg-surface px-4 py-1.5 text-body"
+            className="field flex-1"
           />
-          <Button type="submit" isPending={inviting} isDisabled={!email.trim()}>
+          <button type="submit" disabled={inviting || !email.trim()} className={PILL_ACTION}>
+            {inviting && <Spinner size="sm" color="current" aria-label="正在邀请" className="size-4" />}
             邀请
-          </Button>
+          </button>
         </form>
       ) : how === "browser" ? (
-        <Button variant="secondary" className="self-start" onPress={openInBrowser}>
+        <button type="button" onClick={openInBrowser} className={`${PILL_SECONDARY} self-start`}>
           在浏览器里邀请
-        </Button>
+        </button>
       ) : (
         actor?.role === "creator" && <Note>邀请成员要在手机 App 的设置里做。</Note>
       )}
-      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
+      {error && <p className="m-0 px-1 text-subheadline text-danger-ink">{error}</p>}
     </>
   );
 }
@@ -1236,7 +1121,7 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
       {list.invites.length > 0 && (
         <Group>
           {list.invites.map((invite) => (
-            <div key={invite.code} className="flex min-h-control items-center gap-3 px-4 py-2.5">
+            <div key={invite.code} className="flex min-h-13 items-center gap-3 px-4 py-2.5 pointer-fine:min-h-11">
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-body">{invite.code}</div>
                 {invite.usedBy && <div className="truncate text-subheadline text-ink-muted">{invite.usedBy}</div>}
@@ -1245,7 +1130,7 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
                 <>
                   <button
                     type="button"
-                    className="shrink-0 text-subheadline hover:opacity-75"
+                    className={`${TEXT_BUTTON} text-ink`}
                     onClick={() => {
                       void navigator.clipboard?.writeText(invite.code);
                       setCopied(invite.code);
@@ -1255,7 +1140,7 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 text-subheadline text-danger-ink hover:opacity-75"
+                    className={`${TEXT_BUTTON} text-danger-ink`}
                     onClick={() => void change(() => api.revokeInvite(invite.code))}
                   >
                     作废
@@ -1266,17 +1151,16 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
           ))}
         </Group>
       )}
-      <Group note={`还能生成 ${list.left} 个。新用户填码就能开自己的 Pupu。`}>
+      <Group note={`还能生成 ${list.left} 个。新用户填码就能开自己的 Pupu。`} error={error}>
         <button
           type="button"
           disabled={creating || list.left === 0}
           onClick={() => void create()}
-          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-ink/4 disabled:text-ink-muted"
+          className={ROW_BUTTON}
         >
           {creating ? "正在生成…" : "生成邀请码"}
         </button>
       </Group>
-      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
     </>
   );
 }
@@ -1308,7 +1192,7 @@ function PasskeyList({
       {passkeys.keys.length > 0 && (
         <Group>
           {passkeys.keys.map((key) => (
-            <div key={key.id} className="flex flex-col px-4 py-2.5">
+            <div key={key.id} className="flex min-h-13 flex-col justify-center gap-0.5 px-4 py-2.5 pointer-fine:min-h-11">
               <div className="truncate text-body">{key.name}</div>
               <div className="truncate text-subheadline text-ink-muted">
                 {key.lastUsedAt ? `${ago(key.lastUsedAt)}用过` : `${ago(key.createdAt)}加的`}
@@ -1317,31 +1201,25 @@ function PasskeyList({
           ))}
         </Group>
       )}
-      <Group note="没有手机时，允许 Pupu 的请示、放宽电脑权限、邀请成员，都用通行密钥确认：按指纹或输电脑密码。">
-        <button
-          type="button"
-          disabled={row.sending}
-          onClick={add}
-          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-ink/4 disabled:text-ink-muted"
-        >
+      <Group note="没有手机时，允许 Pupu 的请示、放宽电脑权限、邀请成员，都用通行密钥确认：按指纹或输电脑密码。" error={row.error}>
+        <button type="button" disabled={row.sending} onClick={add} className={ROW_BUTTON}>
           {confirmBy === "browser" ? "在浏览器里加" : row.sending ? "正在加…" : "加一把通行密钥"}
         </button>
       </Group>
-      <RowError error={row.error} />
     </>
   );
 }
 
-/** 比如「手机 · a@gmail.com · 3 分钟前用过」。邮箱是这台设备属于的成员。 */
-function deviceLabel(device: DeviceView): string {
+/** 比如「手机 · a@gmail.com · 3 分钟前用过」，一段一段给，放不下在「·」处折行。邮箱是这台设备属于的成员。 */
+function deviceParts(device: DeviceView): string[] {
   const seen = device.lastSeenAt ? `${ago(device.lastSeenAt)}用过` : null;
-  return [DEVICE_KINDS[device.kind], device.member, seen].filter(Boolean).join(" · ");
+  return [DEVICE_KINDS[device.kind], device.member, seen].filter((part): part is string => Boolean(part));
 }
 
 /**
- * 连接新设备：生成一个配对码，手机扫二维码或者填码，浏览器和电脑 App 填码。
+ * 连接新设备（规范 Devices）：生成一个配对码，手机扫二维码或者填码，浏览器和电脑 App 填码。
  * 连过手机以后，网页生成的码配不了新手机（见 `mayPair`），要在旧手机上生成。
- * 用这个码的设备连上了，或者码过期了，就收起来。放在一组里，和 iOS 一样是一行「生成配对码」。
+ * 用这个码的设备连上了，或者码过期了，就自己收起来。「收起」只是收起来，码在用掉或过期之前仍然有效，照样等它连上。
  */
 function PairNew({
   origin,
@@ -1354,6 +1232,7 @@ function PairNew({
   onCreate: () => Promise<PairingCode>;
 }) {
   const [pairing, setPairing] = useState<(PairingCode & { known: ReadonlySet<string> }) | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
   const [joined, setJoined] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1361,7 +1240,11 @@ function PairNew({
 
   useEffect(() => {
     if (!pairing) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      const at = Date.now();
+      setNow(at);
+      if (at >= pairing.expiresAt) window.clearInterval(timer);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [pairing]);
 
@@ -1381,6 +1264,7 @@ function PairNew({
     try {
       const code = await onCreate();
       setPairing({ ...code, known: new Set(connected.map((item) => item.id)) });
+      setCollapsed(false);
       setNow(Date.now());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1394,13 +1278,13 @@ function PairNew({
     ? `pupu://pair?server=${encodeURIComponent(origin)}&code=${encodeURIComponent(pairing.code)}`
     : "";
 
-  if (pairing && left > 0) {
+  if (pairing && left > 0 && !collapsed) {
     return (
       <div className="flex flex-col gap-3 px-4 py-3">
         <div className="flex items-center gap-3">
           <QrCode text={link} label="配对二维码，用 iPhone 相机扫" />
           <div className="flex min-w-0 flex-col gap-1">
-            <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
+            <div className="font-mono text-title font-semibold tracking-[0.05em]" aria-label="配对码">
               {pairing.code}
             </div>
             <div className="text-subheadline text-ink-muted" aria-live="polite">
@@ -1412,36 +1296,37 @@ function PairNew({
           手机扫码或在 App 里填码，浏览器和电脑 App 填码。连过手机的，新手机要用旧手机设置里生成的码。
         </p>
         <div className="flex justify-end">
-          <Button size="sm" variant="tertiary" onPress={() => setPairing(null)}>
-            不用了
-          </Button>
+          <button type="button" onClick={() => setCollapsed(true)} className={`${PILL} h-8 px-3.5 text-ink pointer-fine:hover:bg-line`}>
+            收起
+          </button>
         </div>
       </div>
     );
   }
+  const expired = pairing !== null && left === 0;
   return (
     <button
       type="button"
       disabled={busy}
       onClick={() => void create()}
-      className="flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left enabled:hover:bg-ink/4"
+      className="flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left enabled:pointer-fine:hover:bg-line"
     >
-      <span className="text-body font-semibold">
-        {busy ? "正在生成…" : joined || pairing ? "再生成一个配对码" : "生成配对码"}
+      <span className="text-body font-semibold text-ink">
+        {busy ? "正在生成…" : joined || expired ? "再生成一个配对码" : "生成配对码"}
       </span>
       <span className={`text-subheadline ${error ? "text-danger-ink" : "text-ink-muted"}`}>
         {error ??
           (joined
             ? `「${joined}」连上了。`
-            : pairing
-              ? "配对码过期了。"
+            : expired
+              ? "配对码已过期。"
               : "新手机、浏览器和电脑都用配对码连上。码 10 分钟内有效，用一次就作废。")}
       </span>
     </button>
   );
 }
 
-/** 白底黑块，深色模式下也一样，相机才认得出来。 */
+/** 二维码：两种主题都是白底 #ffffff、黑块 #000000，相机才认得出来（规范 Devices 写明的例外，不换成 token）。 */
 function QrCode({ text, label }: { text: string; label: string }) {
   const { size, path } = useMemo(() => {
     const qr = encode(text, { ecc: "M", border: 0 });
@@ -1469,10 +1354,11 @@ function QrCode({ text, label }: { text: string; label: string }) {
 }
 
 /**
- * 这个账号在的几个 Pupu，点一下切过去（docs/协作方案.md 第 1 节：人人有自己的，能进别人的）。
+ * 这个账号在的几个 Pupu，点一下切过去（docs/协作方案.md 第 1 节：人人有自己的，能进别人的）。规范 SettingsSheet「换一个 Pupu」：
+ * 每个 Pupu 一行，那个 Pupu 的头像 28、名字、右边「N 人」，当前的打勾；最后一行「开自己的 Pupu」，在行里填邀请码。
  * 只有一个、也开不了自己的时候不显示。切完重新载入：网页的凭据和连接都跟着 Pupu 走。
  */
-function Orgs({ open }: { open: boolean }) {
+function Orgs({ open, pupuAvatar }: { open: boolean; pupuAvatar: string | null }) {
   const [list, setList] = useState<OrgList | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1504,59 +1390,58 @@ function Orgs({ open }: { open: boolean }) {
   }
 
   if (!list || (list.orgs.length < 2 && !list.canOpenOwn)) return null;
+  const row = "flex min-h-13 w-full items-center gap-3 px-4 py-2 text-left pointer-fine:min-h-11";
   return (
-    <>
-      <Group>
-        {list.orgs.map((org) => (
-          <button
-            key={org.id}
-            type="button"
-            disabled={busy !== null}
-            aria-current={org.current ? "true" : undefined}
-            onClick={() => !org.current && void go(org.id, () => api.switchOrg(org.id))}
-            className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-ink/4"
+    <Group label="换一个 Pupu" inset="org" error={error}>
+      {list.orgs.map((org) => (
+        <button
+          key={org.id}
+          type="button"
+          disabled={busy !== null}
+          aria-current={org.current ? "true" : undefined}
+          onClick={() => !org.current && void go(org.id, () => api.switchOrg(org.id))}
+          className={`${row} enabled:pointer-fine:hover:bg-line`}
+        >
+          {/* 自己这个 Pupu 的头像在 state 里；别的 Pupu 只知道预设的猫，上传的图先用自带的猫。 */}
+          <PupuAvatar src={org.current ? pupuAvatar : (org.avatar ?? null)} className="size-7" />
+          <span className="min-w-0 flex-1 truncate text-body">{org.name}</span>
+          <span className="shrink-0 text-subheadline text-ink-muted">{busy === org.id ? "正在切换…" : `${org.members} 人`}</span>
+          <CheckIcon className={`shrink-0 text-[16px] ${org.current ? "" : "invisible"}`} aria-label={org.current ? "当前" : undefined} />
+        </button>
+      ))}
+      {list.canOpenOwn &&
+        (opening ? (
+          <form
+            className={row}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void go("own", () => api.openOwnOrg(code));
+            }}
           >
-            <MemberAvatar name={org.creator ?? org.name} src={null} className="size-6 bg-action text-footnote text-on-action" />
-            <span className="min-w-0 flex-1 truncate text-body">{org.name}</span>
-            <span className="shrink-0 text-body text-ink-muted">{busy === org.id ? "正在切换…" : `${org.members} 人`}</span>
-            <CheckIcon className={`shrink-0 text-[16px] ${org.current ? "" : "invisible"}`} aria-label={org.current ? "当前" : undefined} />
+            <span className="grid size-7 shrink-0 place-items-center text-[16px]">
+              <PlusIcon />
+            </span>
+            <input
+              autoFocus
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="邀请码"
+              aria-label="邀请码"
+              className="min-w-0 flex-1 bg-transparent font-mono text-body outline-none placeholder:text-ink-muted"
+            />
+            <button type="submit" disabled={busy !== null || code.trim().length < 8} className={`${PILL} h-8 bg-action px-3.5 text-on-action disabled:bg-action-off disabled:text-ink-muted disabled:opacity-100`}>
+              {busy === "own" && <Spinner size="sm" color="current" aria-label="正在开" className="size-3.5" />}
+              开
+            </button>
+          </form>
+        ) : (
+          <button type="button" onClick={() => setOpening(true)} className={`${row} pointer-fine:hover:bg-line`}>
+            <span className="grid size-7 shrink-0 place-items-center text-[16px]">
+              <PlusIcon />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-body">开自己的 Pupu</span>
           </button>
         ))}
-        {list.canOpenOwn &&
-          (opening ? (
-            <form
-              className="flex items-center gap-2 px-4 py-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void go("own", () => api.openOwnOrg(code));
-              }}
-            >
-              <input
-                autoFocus
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="邀请码"
-                aria-label="邀请码"
-                className="min-w-0 flex-1 bg-transparent font-mono text-body outline-none"
-              />
-              <Button size="sm" type="submit" isPending={busy === "own"} isDisabled={code.trim().length < 8}>
-                开
-              </Button>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setOpening(true)}
-              className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-ink/4"
-            >
-              <span className="grid size-6 shrink-0 place-items-center text-[18px]">
-                <PlusIcon />
-              </span>
-              开自己的 Pupu
-            </button>
-          ))}
-      </Group>
-      {error && <p className="m-0 px-4 text-subheadline text-danger-ink">{error}</p>}
-    </>
+    </Group>
   );
 }
