@@ -137,7 +137,7 @@ function AvatarPage({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex justify-center pt-2">
-        <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-foreground text-[40px] text-background" />
+        <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-action text-[40px] text-on-action" />
       </div>
       <div className="grid grid-cols-4 gap-3 rounded-row bg-surface p-4" role="radiogroup" aria-label="预设头像">
         {presets.map((preset) => {
@@ -153,7 +153,7 @@ function AvatarPage({
               disabled={busy !== null}
               onClick={() => void run(preset.id, () => onPreset(preset.id))}
               className={`aspect-square overflow-hidden rounded-full ring-offset-2 ring-offset-surface transition hover:opacity-85 ${
-                selected ? "ring-2 ring-foreground" : ""
+                selected ? "ring-2 ring-ink" : ""
               } ${busy === preset.id ? "animate-pulse" : ""}`}
             >
               <img src={url} alt="" draggable={false} className="size-full [image-rendering:pixelated]" />
@@ -161,12 +161,12 @@ function AvatarPage({
           );
         })}
       </div>
-      <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">
+      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">
         <button
           type="button"
           disabled={busy !== null}
           onClick={() => input.current?.click()}
-          className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-foreground/4"
+          className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-ink/4"
         >
           上传照片
         </button>
@@ -175,7 +175,7 @@ function AvatarPage({
             type="button"
             disabled={busy !== null}
             onClick={() => void run("reset", () => onPreset(null))}
-            className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-foreground/4"
+            className="flex min-h-control items-center px-4 py-2.5 text-left text-body hover:bg-ink/4"
           >
             {resetLabel}
           </button>

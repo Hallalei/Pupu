@@ -46,17 +46,17 @@ export function Docs({ version, open, onOpen }: { version: unknown; open: string
           <Button
             variant="ghost"
             onPress={() => setUploading(true)}
-            className="glass lift tap h-control rounded-full px-4 text-body font-semibold text-foreground"
+            className="bg-surface-inset tap h-control rounded-full px-4 text-body font-semibold text-ink"
           >
             <PlusIcon />
             上传
           </Button>
         </div>
-        {groups.length === 0 && <div className="pt-16 text-center text-message text-ink-sky">还没有资料</div>}
+        {groups.length === 0 && <div className="pt-16 text-center text-message text-ink">还没有资料</div>}
         {groups.map(({ place, docs }) => (
           <section key={place.id ?? "org"} className="flex flex-col gap-1">
-            <h2 className="px-1 text-footnote font-medium text-muted">{place.name}</h2>
-            <div className="strong flex flex-col overflow-hidden rounded-panel">
+            <h2 className="px-1 text-footnote font-medium text-ink-muted">{place.name}</h2>
+            <div className="bg-surface-inset flex flex-col overflow-hidden rounded-row">
               {docs.map((doc) => (
                 <DocRow key={doc.id} doc={doc} onOpen={() => onOpen(doc.id)} />
               ))}
@@ -82,15 +82,15 @@ function DocRow({ doc, onOpen }: { doc: DocMeta; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="tap flex min-h-13 w-full items-center gap-3 border-b border-separator px-4 py-2.5 text-left last:border-b-0 hover:bg-foreground/4"
+      className="tap flex min-h-13 w-full items-center gap-3 border-b border-line px-4 py-2.5 text-left last:border-b-0 hover:bg-ink/4"
     >
-      <FileIcon className="shrink-0 text-[18px] text-muted" />
+      <FileIcon className="shrink-0 text-[18px] text-ink-muted" />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
-          <span className="truncate text-body font-medium text-foreground">{doc.title}</span>
-          {doc.kind === "skill" && <span className="shrink-0 rounded-full bg-foreground/8 px-2 text-caption text-muted">skill</span>}
+          <span className="truncate text-body font-medium text-ink">{doc.title}</span>
+          {doc.kind === "skill" && <span className="shrink-0 rounded-full bg-ink/8 px-2 text-caption text-ink-muted">skill</span>}
         </span>
-        {doc.summary && <span className="truncate text-subheadline text-muted">{doc.summary}</span>}
+        {doc.summary && <span className="truncate text-subheadline text-ink-muted">{doc.summary}</span>}
       </span>
     </button>
   );
@@ -126,7 +126,7 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
             type="button"
             aria-label="回到资料"
             onClick={onBack}
-            className="glass lift tap grid size-bar place-items-center rounded-full text-[20px]"
+            className="bg-surface-inset tap grid size-control place-items-center rounded-full text-[20px]"
           >
             <ChevronLeftIcon />
           </button>
@@ -136,7 +136,7 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
               aria-label="删除"
               isPending={deleting}
               onPress={() => void remove()}
-              className="glass lift tap size-bar min-w-0 rounded-full p-0 text-[19px] text-danger-ink"
+              className="bg-surface-inset tap size-control min-w-0 rounded-full p-0 text-[19px] text-danger-ink"
             >
               <TrashIcon />
             </Button>
@@ -144,11 +144,11 @@ function DocPage({ id, onBack, onDeleted }: { id: string; onBack: () => void; on
         </div>
         {error && <div className="text-subheadline text-danger-ink">{error}</div>}
         {doc === undefined && <Spinner size="sm" aria-label="正在打开" />}
-        {doc === null && <div className="text-message text-ink-sky">没有这份资料</div>}
+        {doc === null && <div className="text-message text-ink">没有这份资料</div>}
         {doc && (
-          <div className="strong flex flex-col gap-2 rounded-panel px-5 py-4">
-            <h1 className="text-title font-semibold text-foreground">{doc.title}</h1>
-            {doc.summary && <div className="text-subheadline text-muted">{doc.summary}</div>}
+          <div className="bg-surface-inset flex flex-col gap-2 rounded-row px-5 py-4">
+            <h1 className="text-title font-semibold text-ink">{doc.title}</h1>
+            {doc.summary && <div className="text-subheadline text-ink-muted">{doc.summary}</div>}
             <Streamdown className="sd-theme text-message" controls={false}>
               {doc.body}
             </Streamdown>
@@ -218,7 +218,7 @@ function Upload({
     <Modal>
       <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Modal.Container placement="center">
-          <Modal.Dialog className="w-[min(92vw,520px)] rounded-panel">
+          <Modal.Dialog className="w-[min(92vw,520px)] layer-sheet">
             <Modal.Header>
               <Modal.Heading className="text-title">上传资料</Modal.Heading>
             </Modal.Header>
@@ -247,7 +247,7 @@ function Upload({
                     aria-label="放在哪"
                     value={place}
                     onChange={(event) => setPlace(event.target.value)}
-                    className="tap h-8 appearance-none rounded-full border border-separator bg-surface py-0 pr-7 pl-3 text-subheadline text-foreground"
+                    className="tap h-8 appearance-none rounded-full bg-surface-inset py-0 pr-7 pl-3 text-subheadline text-ink"
                   >
                     {places.map((item) => (
                       <option key={item.id ?? "org"} value={item.id ?? "org"}>
@@ -255,7 +255,7 @@ function Upload({
                       </option>
                     ))}
                   </select>
-                  <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-muted" />
+                  <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
                 </span>
               </div>
               <Switch isSelected={skill} onChange={setSkill}>

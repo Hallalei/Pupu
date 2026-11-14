@@ -59,11 +59,11 @@ export function BrowserCard({
   if (finished && !frame) {
     return (
       <div className="flex flex-col gap-1.5" data-browser-card={task.state}>
-        <div className="soft flex w-fit max-w-[85%] items-center gap-2 rounded-row px-3 py-2">
+        <div className="bg-surface-inset flex w-fit max-w-[85%] items-center gap-2 rounded-row px-3 py-2">
           <ResultMark state={task.state} />
           <span className="text-subheadline break-words">{resultLine}</span>
           {task.plan.length > 0 && (
-            <button type="button" onClick={() => setPlan(!plan)} className="tap shrink-0 text-footnote text-muted">
+            <button type="button" onClick={() => setPlan(!plan)} className="tap shrink-0 text-footnote text-ink-muted">
               计划
             </button>
           )}
@@ -80,7 +80,7 @@ export function BrowserCard({
           type="button"
           aria-expanded={plan}
           onClick={() => setPlan(!plan)}
-          className="tap flex h-8 shrink-0 items-center gap-1 rounded-full bg-black/70 px-3 text-footnote font-medium whitespace-nowrap text-white backdrop-blur"
+          className="tap flex h-8 shrink-0 items-center gap-1 rounded-full bg-island-fill px-3 text-footnote font-medium whitespace-nowrap text-on-island"
         >
           <SparkleIcon className="text-[13px]" />
           计划
@@ -90,7 +90,7 @@ export function BrowserCard({
         type="button"
         aria-label="放大"
         onClick={() => setLarge(true)}
-        className="tap grid size-8 place-items-center rounded-full bg-black/70 text-[14px] text-white backdrop-blur"
+        className="tap grid size-8 place-items-center rounded-full bg-island-fill text-[14px] text-on-island"
       >
         <ExpandIcon />
       </button>
@@ -108,7 +108,7 @@ export function BrowserCard({
           type="button"
           aria-label="停止"
           onClick={onStop}
-          className="tap grid size-8 place-items-center rounded-full bg-black/70 text-[14px] text-white backdrop-blur"
+          className="tap grid size-8 place-items-center rounded-full bg-island-fill text-[14px] text-on-island"
         >
           <CloseIcon />
         </button>
@@ -118,7 +118,7 @@ export function BrowserCard({
 
   return (
     <div className="flex flex-col items-start gap-1.5" data-browser-card={task.state}>
-      <div className="relative w-full max-w-[420px] overflow-hidden rounded-bubble bg-[#111] shadow-lg">
+      <div className="relative w-full max-w-[420px] overflow-hidden rounded-bubble bg-island shadow-raised">
         <div style={{ aspectRatio: ratio }} className="relative max-h-[22rem] w-full">
           {frame ? (
             <img
@@ -137,7 +137,7 @@ export function BrowserCard({
         )}
         {finished ? (
           <div className="absolute inset-x-2.5 bottom-2.5 flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-footnote text-white backdrop-blur">
+            <div className="flex min-w-0 items-center gap-2 rounded-full bg-island-fill px-3 py-1.5 text-footnote text-on-island">
               <ResultMark state={task.state} light />
               <span className="truncate">{resultLine}</span>
             </div>
@@ -153,7 +153,7 @@ export function BrowserCard({
         )}
       </div>
       {(active || holding) && (
-        <span className="soft rounded-full px-3 py-1 text-footnote text-muted" role="status">
+        <span className="bg-surface-inset rounded-full px-3 py-1 text-footnote text-ink-muted" role="status">
           {task.status}
         </span>
       )}
@@ -196,12 +196,12 @@ function LargeView({
     <div
       role="dialog"
       aria-label="浏览器画面"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/40 p-4 backdrop-blur-xl"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-scrim p-4"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-bubble bg-[#111] shadow-2xl">
+      <div className="relative w-full max-w-5xl overflow-hidden rounded-bubble bg-island shadow-card">
         {frame ? (
           <img
             src={`data:image/jpeg;base64,${frame.jpeg}`}
@@ -222,17 +222,17 @@ function LargeView({
           <button
             type="button"
             onClick={() => setPlan(!plan)}
-            className="glass tap flex h-10 items-center gap-1.5 rounded-full px-4 text-subheadline"
+            className="bg-surface-inset tap flex h-10 items-center gap-1.5 rounded-full px-4 text-subheadline"
           >
             <SparkleIcon />
             计划
           </button>
         )}
-        <button type="button" aria-label="收起" onClick={onClose} className="glass tap grid size-10 place-items-center rounded-full">
+        <button type="button" aria-label="收起" onClick={onClose} className="bg-surface-inset tap grid size-10 place-items-center rounded-full">
           <CollapseIcon />
         </button>
         {onTakeOver && (
-          <button type="button" onClick={onTakeOver} className="glass tap h-10 rounded-full px-4 text-subheadline">
+          <button type="button" onClick={onTakeOver} className="bg-surface-inset tap h-10 rounded-full px-4 text-subheadline">
             在电脑上接手
           </button>
         )}
@@ -243,7 +243,7 @@ function LargeView({
               onStop();
               onClose();
             }}
-            className="glass tap h-10 rounded-full px-4 text-subheadline"
+            className="bg-surface-inset tap h-10 rounded-full px-4 text-subheadline"
           >
             取消任务
           </button>
@@ -259,14 +259,14 @@ function PlanList({ steps, dark = false }: { steps: readonly BrowserPlanStep[]; 
     <ol
       aria-label="计划"
       className={`flex flex-col gap-1.5 rounded-row px-3 py-2.5 text-footnote ${
-        dark ? "bg-black/80 text-white backdrop-blur" : "soft"
+        dark ? "bg-island-fill text-on-island" : "bg-surface-inset"
       }`}
     >
       {steps.map((step, index) => (
         <li key={`${index}:${step.text}`} className="flex items-start gap-2">
           <span
             className={`mt-px grid size-4 shrink-0 place-items-center rounded-full border text-[10px] ${
-              step.done ? "border-transparent bg-success text-white" : dark ? "border-white/50" : "border-muted"
+              step.done ? "border-transparent bg-online text-white" : dark ? "border-white/50" : "border-ink-muted"
             }`}
           >
             {step.done && <CheckIcon />}
@@ -279,6 +279,6 @@ function PlanList({ steps, dark = false }: { steps: readonly BrowserPlanStep[]; 
 }
 
 function ResultMark({ state, light = false }: { state: BrowserTask["state"]; light?: boolean }) {
-  if (state === "done") return <CheckIcon className={`shrink-0 ${light ? "text-[#5ad17a]" : "text-success"}`} />;
-  return <span className={`shrink-0 ${light ? "text-white/70" : "text-muted"}`}>•</span>;
+  if (state === "done") return <CheckIcon className={`shrink-0 ${light ? "text-[#5ad17a]" : "text-online"}`} />;
+  return <span className={`shrink-0 ${light ? "text-white/70" : "text-ink-muted"}`}>•</span>;
 }

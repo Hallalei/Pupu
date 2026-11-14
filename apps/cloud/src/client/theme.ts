@@ -1,4 +1,7 @@
-/** HeroUI 靠 html 上的 dark 类切深色。系统是深色，或者在私聊里，都用深色那组。 */
+/**
+ * HeroUI 和样式表都靠 html 上的 dark 类切深色，跟着系统走。
+ * 登录页是品牌层，铺的是夜空，`setNight` 让它也用深色那组。
+ */
 const system = window.matchMedia("(prefers-color-scheme: dark)");
 let night = false;
 
@@ -16,4 +19,10 @@ export function followSystemTheme() {
 export function setNight(on: boolean) {
   night = on;
   apply();
+}
+
+/** 窗框换成这个空间的颜色；不在空间里（「我的 Pupu」、资料、设置）用 canvas。 */
+export function setFrame(color: string | null) {
+  if (color) document.documentElement.dataset.frame = color;
+  else delete document.documentElement.dataset.frame;
 }

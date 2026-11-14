@@ -31,9 +31,9 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
     }
   }
 
-  const group = "flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface";
+  const group = "flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface";
   const action =
-    "flex min-h-control w-full items-center px-4 py-2.5 text-left text-body enabled:hover:bg-foreground/4 disabled:text-muted";
+    "flex min-h-control w-full items-center px-4 py-2.5 text-left text-body enabled:hover:bg-ink/4 disabled:text-ink-muted";
   const missing = PERMISSIONS.some(([pane]) => !computer.permissions[pane]);
 
   return (
@@ -47,11 +47,11 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             />
             <div className="min-w-0 flex-1">
               <div className="truncate text-body">{computer.name}</div>
-              <div className="truncate text-subheadline text-muted">{computer.title}</div>
+              <div className="truncate text-subheadline text-ink-muted">{computer.title}</div>
             </div>
           </div>
           {computer.lines.length > 0 && (
-            <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-caption text-muted">
+            <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-caption text-ink-muted">
               {computer.lines.slice(0, 6).map((line) => (
                 <li key={line} className="truncate font-mono">
                   {line}
@@ -62,7 +62,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
         </div>
         {!computer.paired ? (
           <div className="flex flex-col items-start gap-2 px-4 py-3">
-            <p className="m-0 text-subheadline text-muted">这台电脑的授权被吊销了，Pupu 现在用不了它。</p>
+            <p className="m-0 text-subheadline text-ink-muted">这台电脑的授权被吊销了，Pupu 现在用不了它。</p>
             <Button size="sm" variant="secondary" onPress={() => void run(() => app.repair())}>
               重新授权
             </Button>
@@ -99,7 +99,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
             <Switch.Content className="flex w-full items-center gap-3">
               <span className="min-w-0 flex-1">
                 <Label className="block text-body font-normal">{label}</Label>
-                <span className="block text-subheadline text-muted">{hint}</span>
+                <span className="block text-subheadline text-ink-muted">{hint}</span>
               </span>
               <Switch.Control className="shrink-0">
                 <Switch.Thumb />
@@ -109,13 +109,13 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
         ))}
       </div>
       <section className="flex flex-col gap-1.5">
-        <h3 className="m-0 px-4 text-footnote text-muted">系统授权</h3>
+        <h3 className="m-0 px-4 text-footnote text-ink-muted">系统授权</h3>
         <div className={group}>
           {PERMISSIONS.map(([pane, label]) => (
             <div key={pane} className="flex min-h-control items-center gap-3 px-4 py-2.5 text-body">
               <span className="flex-1">{label}</span>
               {computer.permissions[pane] ? (
-                <span className="text-muted">已允许</span>
+                <span className="text-ink-muted">已允许</span>
               ) : (
                 <button
                   type="button"
@@ -129,7 +129,7 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
           ))}
         </div>
         {missing && (
-          <p className="m-0 px-4 text-footnote font-normal text-muted">
+          <p className="m-0 px-4 text-footnote font-normal text-ink-muted">
             在系统设置里给「Pupu」打开，然后从菜单栏退出 Pupu 再打开。
           </p>
         )}
@@ -177,7 +177,7 @@ function ChromeImportRow({ group }: { group: string }) {
 
   return (
     <section className="flex flex-col gap-1.5" data-chrome-import>
-      <h3 className="m-0 px-4 text-footnote text-muted">浏览器</h3>
+      <h3 className="m-0 px-4 text-footnote text-ink-muted">浏览器</h3>
       <div className={group}>
         <div className="flex min-h-control items-center gap-3 px-4 py-2.5 text-body">
           <span className="flex-1">Pupu 浏览器的登录状态</span>
@@ -200,7 +200,7 @@ function ChromeImportRow({ group }: { group: string }) {
           </div>
         )}
       </div>
-      <p className="m-0 px-4 text-footnote font-normal text-muted">{note ?? "只存在这台电脑上，不上传。"}</p>
+      <p className="m-0 px-4 text-footnote font-normal text-ink-muted">{note ?? "只存在这台电脑上，不上传。"}</p>
     </section>
   );
 }

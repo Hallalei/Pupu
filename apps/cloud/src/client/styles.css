@@ -4,15 +4,71 @@
 @source "../../node_modules/streamdown/dist/*.js";
 
 /*
- * 尺寸按「Pupu 设计规范」和 2026-11-02 定的界面方案：1 pt = 1 CSS px。
- * 间距直接用 Tailwind 刻度（数字 × 4 = pt）；字号、圆角、控件尺寸在这里定成 token。
- * 下面是手机档（iOS 默认字号「大」）；电脑档在文件后面的 pointer: fine 里改写。
- * 正文色和次要色用 HeroUI 的 foreground、muted，和规范的 ink、ink-muted 是同一个值。
+ * 颜色、字号、圆角、间距、尺寸照「Pupu 设计规范」的 tokens.json，名字也一样：
+ * `bg-surface-inset`、`text-ink-muted`、`rounded-bubble`、`h-control`。1 pt = 1 CSS px。
+ * 这里写浅色和手机档；深色在 `.dark` 里改写，电脑档（鼠标指针）在后面的 pointer: fine 里改写。
+ * `surface`、`warning`、`danger` 和 HeroUI 同名，值写在下面 HeroUI 的变量里；其余 HeroUI 变量也接到这套值上。
  */
-@theme {
-  --text-display: 40px;
-  --text-display--line-height: 48px;
-  --text-display--font-weight: 600;
+@theme static {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI",
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-canvas: #f3f3f1;
+  --color-surface-sheet: #ffffff;
+  --color-surface-inset: #f4f4f2;
+  --color-bubble-user: #f0f0ed;
+  --color-line: #ebebe7;
+  --color-selected: #ffffffd9;
+  --color-scrim: #0000002e;
+  --color-ink: #1b1b1a;
+  --color-ink-muted: #6f6f6a;
+  --color-ink-faint: #a3a39e;
+  --color-action: var(--color-ink);
+  --color-on-action: #ffffff;
+  --color-action-off: #0000000d;
+  --color-online: #178a4b;
+  --color-offline: #18181b40;
+  --color-on-warning: #18181b;
+  --color-danger-ink: #c4291c;
+  --color-island: #000000;
+  --color-on-island: #ffffff;
+  --color-island-fill: #292929;
+
+  /* 空间色：原色只给计算，窗框是默认强度 30% 的结果，标记方块就是原色、两种主题一样。 */
+  --color-space-mist: #b9d3f0;
+  --color-space-sage: #c4dcc2;
+  --color-space-apricot: #f4cfae;
+  --color-space-lilac: #d9cbf3;
+  --color-space-lemon: #ecebab;
+  --color-space-graphite: #cfcfd3;
+  --color-frame-mist: #e2e9f1;
+  --color-frame-sage: #e5ece3;
+  --color-frame-apricot: #f3e8dd;
+  --color-frame-lilac: #ebe7f2;
+  --color-frame-lemon: #f1f1dc;
+  --color-frame-graphite: #e8e8e8;
+  --color-mark-mist: var(--color-space-mist);
+  --color-mark-sage: var(--color-space-sage);
+  --color-mark-apricot: var(--color-space-apricot);
+  --color-mark-lilac: var(--color-space-lilac);
+  --color-mark-lemon: var(--color-space-lemon);
+  --color-mark-graphite: var(--color-space-graphite);
+  --color-on-mark: #1b1b1a;
+  /* 当前的窗框：「我的 Pupu」和资料是 canvas，空间里由 html 上的 data-frame 换成那个空间的颜色。 */
+  --color-frame: var(--color-canvas);
+
+  /* 品牌层，只给登录页。App 里登录之后不用。 */
+  --color-sky-1: #34557f;
+  --color-sky-2: #6f8fb3;
+  --color-sky-3: #b9cad9;
+  --color-sky-4: #e6e5df;
+  --color-sky-5: #d6d0c4;
+  --color-ink-sky: #1c2634;
+  --color-ink-sky-muted: #1c2634bf;
+  --color-on-sky-strong: #ffffffeb;
+
   --text-greeting: 28px;
   --text-greeting--line-height: 34px;
   --text-greeting--font-weight: 600;
@@ -23,7 +79,7 @@
   --text-headline--line-height: 22px;
   --text-headline--font-weight: 600;
   --text-message: 17px;
-  --text-message--line-height: 26px;
+  --text-message--line-height: 27px;
   --text-body: 17px;
   --text-body--line-height: 22px;
   --text-subheadline: 15px;
@@ -36,34 +92,32 @@
   --text-code: 13px;
   --text-code--line-height: 18px;
 
-  --radius-tag: 12px;
+  --radius-tag: 8px;
+  --radius-mark: 6px;
+  --radius-mark-lg: 12px;
   --radius-row: 16px;
-  --radius-bubble: 24px;
-  --radius-composer: 26px;
-  --radius-panel: 28px;
+  --radius-bubble: 20px;
+  --radius-composer: 25px;
+  --radius-card-top: 26px;
+  --radius-card: 41px;
+  --radius-sheet-top: 32px;
+  --radius-card-pointer: 12px;
+  --radius-selected-pointer: 8px;
 
-  /* 最小点击区、圆形图标按钮。 */
+  /* 控件和版心。电脑档的 control、control-sm、frame-gap 在 pointer: fine 里换成 -pointer 的值。 */
   --spacing-control: 44px;
   --spacing-control-sm: 36px;
-  /* 顶栏：两段切换、≡ 和「我」的高度，`bar-inner` 是切换里每一段的高度。 */
-  --spacing-bar: 44px;
-  --spacing-bar-inner: 36px;
-
-  --color-surface-glass: #ffffff9e;
-  --color-surface-strong: #ffffffd1;
-  --color-surface-inset: oklch(94% 0.001 286.375);
-  --color-nav-current: #ffffffd1;
-  --color-bubble-user: #d6e0ecb8;
-  --color-line-glass: #ffffff8c;
-  --color-ink-sky: #1c2634;
-  --color-ink-sky-muted: #1c2634bf;
-  --color-on-sky-strong: #ffffffeb;
-  --color-danger-ink: #c01c22;
-  --color-online: #059669;
-  --color-offline: #18181b40;
+  --spacing-frame-gap: 6px;
+  --spacing-mark: 20px;
+  --spacing-mark-lg: 40px;
+  --spacing-avatar-sm: 22px;
+  --spacing-sidebar: 244px;
+  --spacing-panel-sub: 400px;
+  --container-column: 700px;
+  --container-bubble: 85%;
 }
 
-/* 电脑档：电脑 App 和电脑浏览器用鼠标，字号每档降一级，控件小一号。 */
+/* 电脑档：电脑 App 和电脑浏览器用鼠标，每个字号降一档（message 只降一号），控件小一号。 */
 @media (pointer: fine) {
   :root {
     --text-greeting: 24px;
@@ -72,8 +126,8 @@
     --text-title--line-height: 24px;
     --text-headline: 15px;
     --text-headline--line-height: 20px;
-    --text-message: 15px;
-    --text-message--line-height: 24px;
+    --text-message: 16px;
+    --text-message--line-height: 26px;
     --text-body: 15px;
     --text-body--line-height: 22px;
     --text-subheadline: 13px;
@@ -84,43 +138,156 @@
     --text-caption--line-height: 14px;
     --text-code: 12px;
     --text-code--line-height: 18px;
-    --radius-panel: 24px;
     --spacing-control: 32px;
     --spacing-control-sm: 28px;
-    --spacing-bar: 36px;
-    --spacing-bar-inner: 28px;
+    --spacing-frame-gap: 8px;
   }
 }
 
-:root {
-  --glass-fill: #ffffff59;
-  --glass-rim: #0f172a24;
-  --glass-highlight: #ffffffcc;
-}
-
 .dark {
-  --color-surface-glass: #282c349e;
-  --color-surface-strong: #24262cdb;
-  --color-surface-inset: oklch(27.4% 0.006 286.033);
-  --color-nav-current: #ffffff1f;
-  --color-bubble-user: #ffffff1f;
-  --color-line-glass: #ffffff14;
+  --color-canvas: #0d0d0d;
+  --color-surface-sheet: #1c1c1b;
+  --color-surface-inset: #232322;
+  --color-bubble-user: #2a2a28;
+  --color-line: #2b2b29;
+  --color-selected: #ffffff17;
+  --color-scrim: #00000066;
+  --color-ink: #ececea;
+  --color-ink-muted: #9b9b96;
+  --color-ink-faint: #6a6a66;
+  --color-on-action: #121212;
+  --color-action-off: #ffffff12;
+  --color-online: #34c178;
+  --color-offline: #fcfcfc40;
+  --color-danger-ink: #ff6b5e;
+  --color-frame-mist: #1d1f22;
+  --color-frame-sage: #1e201e;
+  --color-frame-apricot: #231f1b;
+  --color-frame-lilac: #201e23;
+  --color-frame-lemon: #22221b;
+  --color-frame-graphite: #1f1f1f;
+  --color-sky-1: #0c1420;
+  --color-sky-2: #15233a;
+  --color-sky-3: #1d2633;
+  --color-sky-4: #1c1b1f;
+  --color-sky-5: #1c1b1f;
   --color-ink-sky: #ffffffe6;
   --color-ink-sky-muted: #ffffff80;
   --color-on-sky-strong: #ffffffe6;
-  --color-danger-ink: #ff6b6b;
-  --color-offline: #fcfcfc40;
-  --glass-fill: #ffffff1a;
-  --glass-rim: #00000080;
-  --glass-highlight: #ffffff40;
 }
 
-/* 规范：主操作是墨色，不用品牌色。HeroUI 的主按钮、开关、链接、焦点环都跟着走。 */
-:root,
+/* 打开「增强对比度」：次要文字换成墨色，卡片外描一圈 line（见 layer-card）。 */
+@media (prefers-contrast: more) {
+  :root,
+  .dark {
+    --color-ink-muted: var(--color-ink);
+  }
+}
+
+:root[data-frame="mist"] {
+  --color-frame: var(--color-frame-mist);
+}
+:root[data-frame="sage"] {
+  --color-frame: var(--color-frame-sage);
+}
+:root[data-frame="apricot"] {
+  --color-frame: var(--color-frame-apricot);
+}
+:root[data-frame="lilac"] {
+  --color-frame: var(--color-frame-lilac);
+}
+:root[data-frame="lemon"] {
+  --color-frame: var(--color-frame-lemon);
+}
+:root[data-frame="graphite"] {
+  --color-frame: var(--color-frame-graphite);
+}
+
+/*
+ * HeroUI 的变量接到规范上，它自己的组件（开关、菜单、弹窗、输入框）也是这套颜色。
+ * 主操作是墨色，没有品牌色：accent、focus、link 都是 ink。
+ */
+:root {
+  --surface: #ffffff;
+  --warning: oklch(0.7819 0.1585 72.33);
+  --danger: oklch(0.6532 0.2328 25.74);
+  --background: var(--color-canvas);
+  --foreground: var(--color-ink);
+  --muted: var(--color-ink-muted);
+  --surface-foreground: var(--color-ink);
+  --surface-secondary: var(--color-surface-inset);
+  --surface-secondary-foreground: var(--color-ink);
+  --surface-tertiary: var(--color-surface-inset);
+  --surface-tertiary-foreground: var(--color-ink);
+  --overlay: var(--color-surface-sheet);
+  --overlay-foreground: var(--color-ink);
+  --default: var(--color-surface-inset);
+  --default-foreground: var(--color-ink);
+  --accent: var(--color-action);
+  --accent-foreground: var(--color-on-action);
+  --success: var(--color-online);
+  --success-foreground: var(--color-on-action);
+  --warning-foreground: var(--color-on-warning);
+  --danger-foreground: #ffffff;
+  --segment: var(--surface);
+  --segment-foreground: var(--color-ink);
+  --border: var(--color-line);
+  --separator: var(--color-line);
+  --focus: var(--color-ink);
+  --link: var(--color-ink);
+  --backdrop: var(--color-scrim);
+  --field-background: var(--color-surface-inset);
+  --field-foreground: var(--color-ink);
+  --field-placeholder: var(--color-ink-muted);
+
+  /* 阴影：一圈 0.5pt 的边加一层很淡的投影。深色主题卡片只留白边。 */
+  --shadow-card: 0 0 0 0.5px #0000000f, 0 8px 30px #0000001a;
+  --shadow-selected: 0 0 0 0.5px #0000000f, 0 1px 3px #00000014;
+  --shadow-raised: 0 1px 2px #0000000f;
+}
 .dark {
-  --accent: var(--foreground);
-  --accent-foreground: var(--background);
-  --focus: var(--foreground);
+  --surface: #181818;
+  --warning: oklch(0.8203 0.1388 76.34);
+  --danger: oklch(0.594 0.1967 24.63);
+  --shadow-card: 0 0 0 0.5px #ffffff14;
+}
+
+/* Tailwind 把 @theme 里的阴影写死进类名，深色改不了，所以阴影单独做成类。 */
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+@utility shadow-selected {
+  box-shadow: var(--shadow-selected);
+}
+@utility shadow-raised {
+  box-shadow: var(--shadow-raised);
+}
+
+/*
+ * 三层结构的后两层（第一层窗框是 body 的底）。`layer-card`：浮在窗框上的白卡片，圆角和外面的窗口同心
+ * （手机上 26/41，电脑上 12）。`layer-sheet`：sheet、弹窗、菜单，背后压 scrim，不加模糊。
+ * 不叫 card：HeroUI 自己有 .card。
+ */
+@utility layer-card {
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-card-top) var(--radius-card-top) var(--radius-card) var(--radius-card);
+  @media (pointer: fine) {
+    border-radius: var(--radius-card-pointer);
+  }
+  @media (prefers-contrast: more) {
+    box-shadow:
+      var(--shadow-card),
+      inset 0 0 0 1px var(--color-line);
+  }
+}
+@utility layer-sheet {
+  background: var(--color-surface-sheet);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-sheet-top) var(--radius-sheet-top) var(--radius-card) var(--radius-card);
+  @media (pointer: fine) {
+    border-radius: var(--radius-card-pointer);
+  }
 }
 
 html,
@@ -130,36 +297,38 @@ body,
   margin: 0;
 }
 
+/* 窗框铺满窗口，切换空间时换色 0.3 秒。 */
 body {
-  color: var(--foreground);
-  background: #6f8fb3;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", "Segoe UI", sans-serif;
+  color: var(--color-ink);
+  background: var(--color-frame);
+  transition: background-color 0.3s;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
-/*
- * 天空背景单独铺一层固定的，iOS 上 background-attachment: fixed 不可靠。
- * 夜空叠在上面，切到私聊时淡入；渐变本身不能过渡。
- */
+/* 品牌层的天空，只铺在登录页后面。iOS 上 background-attachment: fixed 不可靠，单独铺一层固定的。 */
 .sky {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(180deg, #34557f 0%, #6f8fb3 28%, #b9cad9 52%, #e6e5df 76%, #d6d0c4 100%);
+  background: linear-gradient(
+    180deg,
+    var(--color-sky-1) 0%,
+    var(--color-sky-2) 28%,
+    var(--color-sky-3) 52%,
+    var(--color-sky-4) 76%,
+    var(--color-sky-5) 100%
+  );
 }
-.sky::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, #0c1420 0%, #15233a 35%, #1d2633 70%, #1c1b1f 100%);
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-.dark .sky::after {
-  opacity: 1;
+.dark .sky {
+  background: linear-gradient(
+    180deg,
+    var(--color-sky-1) 0%,
+    var(--color-sky-2) 35%,
+    var(--color-sky-3) 70%,
+    var(--color-sky-4) 100%
+  );
 }
 
 /*
@@ -197,7 +366,7 @@ body {
   padding-top: calc(var(--spacing) * 2 + var(--titlebar));
 }
 
-/* 对话从顶栏下面开始，上沿模糊淡出。 */
+/* 对话在卡片里滚，上沿淡出：内容滚到卡片顶上时渐隐，不模糊。 */
 :root {
   --chat-top: calc(var(--spacing) * 2);
 }
@@ -209,28 +378,21 @@ body {
   padding-top: calc(var(--spacing) * 10);
 }
 .scroll-fade {
-  position: absolute;
-  inset: 0 0 auto;
-  z-index: 5;
-  height: var(--chat-top);
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  mask-image: linear-gradient(to bottom, #000 30%, transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--chat-top));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--chat-top));
 }
 
 /*
- * 登录页左边的 3D 场景（pupu-art.ts）。背景的静态头像是没有 WebGL2 时的退路。
+ * 登录页（品牌层）左边的 3D 场景（pupu-art.ts）。背景的静态头像是没有 WebGL2 时的退路。
  * 窗口再宽也不超过高度。
  */
 .login {
-  padding: calc(var(--spacing) * 3);
-  padding-top: calc(var(--spacing) * 3 + var(--titlebar));
+  padding: var(--spacing-frame-gap);
+  padding-top: calc(var(--spacing-frame-gap) + var(--titlebar));
 }
 .login-art {
-  max-width: calc(100dvh - var(--spacing) * 6 - var(--titlebar));
-  border-radius: var(--radius-panel);
+  max-width: calc(100dvh - var(--spacing-frame-gap) * 2 - var(--titlebar));
+  border-radius: var(--radius-card-pointer);
   background: #16181f url("/pupu-avatar.png") bottom / 100% auto no-repeat;
   image-rendering: pixelated;
   position: relative;
@@ -252,53 +414,7 @@ body {
   animation: fade-in 0.2s;
 }
 
-/*
- * 三种材质的 1px 边用往里收的 outline 画，不占尺寸：内边距、高度和规范上的数字一致。
- */
-
-/* 内容层：面板、开场建议、引用条、转来的事。 */
-.soft {
-  background: var(--color-surface-glass);
-  outline: 1px solid var(--color-line-glass);
-  outline-offset: -1px;
-  backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
-}
-
-/* 内容层更实的底：Pupu 的消息、行、步骤卡、审批卡。 */
-.strong {
-  background: var(--color-surface-strong);
-  outline: 1px solid var(--color-line-glass);
-  outline-offset: -1px;
-  backdrop-filter: blur(28px) saturate(1.5);
-  -webkit-backdrop-filter: blur(28px) saturate(1.5);
-}
-
-/* 控件层：两段切换、顶栏按钮、输入栏、回到底部。近似 iOS 的 Liquid Glass。 */
-.glass {
-  background: var(--glass-fill);
-  outline: 1px solid var(--glass-rim);
-  outline-offset: -1px;
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(10px) saturate(1.8);
-  -webkit-backdrop-filter: blur(10px) saturate(1.8);
-}
-
-/* 输入栏聚焦时边变实，不用再画一圈。 */
-.composer {
-  transition: outline-color 0.15s;
-}
-.composer:focus-within {
-  outline-color: color-mix(in srgb, var(--foreground) 35%, transparent);
-}
-
-.bubble {
-  box-shadow:
-    0 1px 2px rgb(15 23 42 / 0.06),
-    0 6px 20px rgb(15 23 42 / 0.06);
-}
-
-/* 能点的东西：鼠标放上去有反馈，键盘走到时有焦点环。 */
+/* 能点的东西：鼠标放上去略微变深，按下缩一点，键盘走到时有焦点环。 */
 button,
 [role="tab"] {
   transition:
@@ -309,7 +425,7 @@ button,
     scale 0.12s;
 }
 button:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
 }
 @media (pointer: fine) {
@@ -318,16 +434,16 @@ button:focus-visible {
   [role="menuitem"] {
     cursor: pointer;
   }
-  .lift:hover {
-    filter: brightness(1.04);
+  .tap:hover:not(:disabled) {
+    filter: brightness(0.96);
   }
-  .dark .lift:hover {
-    filter: brightness(1.25);
+  .dark .tap:hover:not(:disabled) {
+    filter: brightness(1.2);
   }
   /* 鼠标用户的滚动条常驻，收细一点，不抢内容。 */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-offline) transparent;
+    scrollbar-color: var(--color-ink-faint) transparent;
   }
 }
 .tap:active:not(:disabled) {
@@ -343,16 +459,16 @@ button:focus-visible {
   }
 }
 
-/* Streamdown 用 shadcn 风格的变量，这里接到 HeroUI 的配色上。 */
+/* Streamdown 用 shadcn 风格的变量，这里接到规范的颜色上。代码块和表格都是 surface-inset 的平块。 */
 .sd-theme {
-  --color-primary: var(--accent);
-  --color-primary-foreground: var(--accent-foreground);
-  --color-foreground: var(--foreground);
+  --color-primary: var(--color-action);
+  --color-primary-foreground: var(--color-on-action);
+  --color-foreground: var(--color-ink);
   --color-background: transparent;
   --color-sidebar: transparent;
   --color-muted: var(--color-surface-inset);
-  --color-muted-foreground: var(--muted);
-  --color-border: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --color-muted-foreground: var(--color-ink-muted);
+  --color-border: var(--color-line);
   overflow-wrap: break-word;
   word-break: break-word;
 }
@@ -365,14 +481,18 @@ button:focus-visible {
 .sd-theme > :last-child {
   margin-bottom: 0;
 }
+.sd-theme a {
+  color: var(--color-ink);
+  text-decoration: underline;
+}
 .sd-theme code {
+  font-family: var(--font-mono);
   font-size: 0.92em;
 }
-/* 行内代码：Streamdown 的 bg-muted 被 HeroUI 解析成次要文字的灰，字看不清，换成 surface-inset。 */
 .sd-theme :not(pre) > code {
   background: var(--color-surface-inset);
 }
-/* 表格和代码块在气泡里只要一层：Streamdown 默认是外框套内框，再加语言名和行号。 */
+/* 表格和代码块只要一层：Streamdown 默认是外框套内框，再加语言名和行号。 */
 .sd-theme [data-streamdown="table-wrapper"],
 .sd-theme [data-streamdown="code-block"] {
   gap: 0;

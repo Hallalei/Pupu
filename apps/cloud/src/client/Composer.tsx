@@ -56,7 +56,7 @@ export function Composer({
 
   return (
     <form
-      className="glass composer flex min-h-11 items-end gap-2 rounded-composer p-1 pl-4"
+      className="bg-surface-inset flex min-h-11 items-end gap-2 rounded-composer p-1 pl-4"
       onSubmit={(event) => {
         event.preventDefault();
         onSend();
@@ -80,14 +80,14 @@ export function Composer({
             onSend();
           }
         }}
-        className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-[7px] text-body text-foreground outline-none placeholder:text-muted"
+        className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-[7px] text-body text-ink outline-none placeholder:text-ink-muted"
       />
       {onStop ? (
         <Button
           isIconOnly
           aria-label="停止"
           onPress={onStop}
-          className="tap size-9 min-w-9 rounded-full bg-foreground text-background"
+          className="tap size-9 min-w-9 rounded-full bg-action text-on-action"
         >
           <StopIcon />
         </Button>
@@ -97,7 +97,7 @@ export function Composer({
           type="submit"
           aria-label={sendLabel}
           isDisabled={!canSend}
-          className="tap size-9 min-w-9 rounded-full bg-foreground text-base text-background disabled:bg-foreground/10 disabled:text-muted disabled:opacity-100"
+          className="tap size-9 min-w-9 rounded-full bg-action text-base text-on-action disabled:bg-action-off disabled:text-ink-faint disabled:opacity-100"
         >
           <ArrowUpIcon />
         </Button>

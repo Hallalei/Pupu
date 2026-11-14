@@ -45,7 +45,7 @@ function Shell({ lead, children }: { lead: string; children: ReactNode }) {
       <Art />
       <div className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6">
         <div className="flex w-full max-w-sm flex-col gap-3 py-6 text-center">
-          <h1 className="m-0 text-display text-ink-sky">Pupu</h1>
+          <h1 className="m-0 text-greeting text-ink-sky">Pupu</h1>
           <p className="m-0 mb-5 text-message text-ink-sky-muted">{lead}</p>
           {children}
         </div>
@@ -133,15 +133,15 @@ export function Login() {
               setGoogle("leaving");
               window.location.assign("/api/auth/google/start?client=browser");
             }}
-            className={`${PILL} lift bg-white text-[#1d1d1f]`}
+            className={`${PILL} bg-white text-[#1d1d1f]`}
           >
             <GoogleMark />
             通过 Google 继续
           </Button>
           <div className="my-2 flex items-center gap-3 text-footnote text-ink-sky-muted">
-            <span className="h-px flex-1 bg-foreground/15" />
+            <span className="h-px flex-1 bg-ink-sky/15" />
             或
-            <span className="h-px flex-1 bg-foreground/15" />
+            <span className="h-px flex-1 bg-ink-sky/15" />
           </div>
         </>
       )}
@@ -162,7 +162,7 @@ export function Login() {
             autoFocus
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            className="h-12 rounded-full bg-foreground/8 text-center text-body shadow-none"
+            className="h-12 rounded-full bg-ink-sky/8 text-center text-body shadow-none"
           />
         ) : (
           <Input
@@ -175,7 +175,7 @@ export function Login() {
             spellCheck={false}
             value={value}
             onChange={(event) => setValue(event.target.value.toUpperCase())}
-            className="h-12 rounded-full bg-foreground/8 text-center text-body tracking-widest shadow-none placeholder:tracking-normal"
+            className="h-12 rounded-full bg-ink-sky/8 text-center text-body tracking-widest shadow-none placeholder:tracking-normal"
           />
         )}
         <Button type="submit" isPending={busy} isDisabled={!value.trim()} className={PILL}>

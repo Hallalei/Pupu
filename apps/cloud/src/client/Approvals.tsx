@@ -8,7 +8,7 @@ import { Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } f
 
 export function WaitingChip() {
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+    <span className="flex shrink-0 items-center gap-1 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">
       <HandIcon className="text-[1.1em]" />
       等你批准
     </span>
@@ -94,15 +94,15 @@ export function Approvals({
     <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
       <section
         aria-label={`等你批准，${approval.title}`}
-        className="strong bubble flex flex-col gap-3 rounded-panel p-4"
+        className="bg-surface-inset flex flex-col gap-3 rounded-row p-4"
       >
         <div className="flex items-center gap-2">
           <WaitingChip />
-          <span className="min-w-0 flex-1 truncate text-caption text-muted">
+          <span className="min-w-0 flex-1 truncate text-caption text-ink-muted">
             {[approval.computerName, ago(approval.createdAt)].filter(Boolean).join(" · ")}
           </span>
           {visible.length > 1 && (
-            <span className="shrink-0 text-caption text-muted">还有 {visible.length - 1} 条</span>
+            <span className="shrink-0 text-caption text-ink-muted">还有 {visible.length - 1} 条</span>
           )}
         </div>
         <div className="text-headline">{approval.title}</div>
@@ -114,9 +114,9 @@ export function Approvals({
             {approval.detail}
           </pre>
         )}
-        <p className="m-0 text-subheadline text-muted">{whyText(approval.reason, approval.expiresAt, now)}</p>
+        <p className="m-0 text-subheadline text-ink-muted">{whyText(approval.reason, approval.expiresAt, now)}</p>
         {how === "phone" && !phonePaired && (
-          <p className="m-0 text-subheadline text-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
+          <p className="m-0 text-subheadline text-ink-muted">还没连手机：在设置里生成配对码，用手机 App 扫码。</p>
         )}
         <div className="grid grid-cols-2 gap-2">
           <Button
@@ -124,7 +124,7 @@ export function Approvals({
             isPending={pending === "deny"}
             isDisabled={pending !== null}
             onPress={() => void decide(approval.id, "deny")}
-            className="glass lift tap h-bar w-full rounded-full text-body font-semibold text-foreground"
+            className="bg-surface-inset tap h-control w-full rounded-full text-body font-semibold text-ink"
           >
             拒绝
           </Button>
@@ -133,19 +133,19 @@ export function Approvals({
               isPending={pending === "allow"}
               isDisabled={pending !== null}
               onPress={() => void decide(approval.id, "allow")}
-              className="tap h-bar w-full rounded-full bg-foreground text-body font-semibold text-background"
+              className="tap h-control w-full rounded-full bg-action text-body font-semibold text-on-action"
             >
               允许
             </Button>
           ) : how === "browser" ? (
             <Button
               onPress={openInBrowser}
-              className="tap h-bar w-full rounded-full bg-foreground text-body font-semibold text-background"
+              className="tap h-control w-full rounded-full bg-action text-body font-semibold text-on-action"
             >
               在浏览器里允许
             </Button>
           ) : (
-            <div className="flex h-bar items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-muted">
+            <div className="flex h-control items-center justify-center gap-1.5 rounded-full bg-surface-inset text-body font-semibold text-ink-muted">
               <PhoneIcon />
               去手机上批准
             </div>
@@ -153,7 +153,7 @@ export function Approvals({
         </div>
       </section>
       {current?.status === "failed" && (
-        <div className="strong mx-auto rounded-full px-3 py-1 text-caption text-danger-ink">{current.error}</div>
+        <div className="bg-surface-sheet shadow-card mx-auto rounded-full px-3 py-1 text-caption text-danger-ink">{current.error}</div>
       )}
     </div>
   );

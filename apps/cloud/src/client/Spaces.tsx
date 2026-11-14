@@ -43,7 +43,7 @@ export function childLabel(child: ChildView): string {
 }
 
 export function ChildDot({ child, className = "" }: { child: ChildView; className?: string }) {
-  const color = { waiting: "bg-warning", working: "bg-foreground", done: "bg-online", idle: "bg-offline" }[childState(child)];
+  const color = { waiting: "bg-warning", working: "bg-action", done: "bg-online", idle: "bg-offline" }[childState(child)];
   return <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${color} ${className}`} />;
 }
 
@@ -57,7 +57,7 @@ export function AvatarStack({ ids, members, size = "size-5.5" }: { ids: readonly
           key={member.id}
           name={member.name}
           src={member.avatar}
-          className={`${size} strong text-[11px] font-semibold outline-2 -outline-offset-1 outline-surface-strong ${index > 0 ? "-ml-1.5" : ""}`}
+          className={`${size} bg-surface-inset text-[11px] font-semibold outline-2 -outline-offset-1 outline-surface ${index > 0 ? "-ml-1.5" : ""}`}
         />
       ))}
     </span>
@@ -66,7 +66,7 @@ export function AvatarStack({ ids, members, size = "size-5.5" }: { ids: readonly
 
 /** 一行空间后面的记号：全组织的是楼，其余是成员头像。 */
 function SpaceMark({ space, members }: { space: ProjectView; members: readonly MemberView[] }) {
-  if (isOpenLevel(space.level)) return <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[18px] text-muted" />;
+  if (isOpenLevel(space.level)) return <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[18px] text-ink-muted" />;
   return <AvatarStack ids={space.members} members={members} />;
 }
 
@@ -109,8 +109,8 @@ export function SpaceList({
 }) {
   const row = wide
     ? "flex min-h-control w-full shrink-0 items-center gap-2 rounded-tag px-2.5 text-left text-body"
-    : "flex min-h-13 w-full items-center gap-3 px-4 text-left text-body text-foreground active:bg-foreground/10";
-  const hover = wide ? "hover:bg-foreground/6" : "";
+    : "flex min-h-13 w-full items-center gap-3 px-4 text-left text-body text-ink active:bg-ink/10";
+  const hover = wide ? "hover:bg-ink/6" : "";
   return (
     <nav aria-label="空间" className="flex flex-col gap-0.5">
       <button type="button" onClick={onPupu} className={`${row} ${hover} font-semibold`}>
@@ -121,18 +121,18 @@ export function SpaceList({
         type="button"
         onClick={onDocs}
         aria-current={docs ? "page" : undefined}
-        className={`${row} ${docs ? (wide ? "bg-nav-current font-semibold" : "font-semibold") : hover}`}
+        className={`${row} ${docs ? (wide ? "bg-selected shadow-selected font-semibold" : "font-semibold") : hover}`}
       >
-        <FileIcon className="shrink-0 text-[16px] text-muted" />
+        <FileIcon className="shrink-0 text-[16px] text-ink-muted" />
         资料
       </button>
       <div className={`mt-3 flex items-center justify-between ${wide ? "px-2.5" : "px-4"}`}>
-        <span className="text-footnote font-medium text-muted">空间</span>
+        <span className="text-footnote font-medium text-ink-muted">空间</span>
         <button
           type="button"
           aria-label="新空间"
           onClick={onCreate}
-          className="tap grid size-8 place-items-center rounded-full text-[16px] hover:bg-foreground/6"
+          className="tap grid size-8 place-items-center rounded-full text-[16px] hover:bg-ink/6"
         >
           <PlusIcon />
         </button>
@@ -147,12 +147,12 @@ export function SpaceList({
               onClick={() => onOpen(space.id)}
               aria-current={selected && !currentChild ? "page" : undefined}
               aria-label={all && everyoneUnread ? `${space.name}，有新消息` : undefined}
-              className={`${row} ${selected ? (wide ? "bg-nav-current font-semibold" : "font-semibold") : hover}`}
+              className={`${row} ${selected ? (wide ? "bg-selected shadow-selected font-semibold" : "font-semibold") : hover}`}
             >
               {all ? (
-                <BuildingIcon className="shrink-0 text-[16px] text-muted" />
+                <BuildingIcon className="shrink-0 text-[16px] text-ink-muted" />
               ) : (
-                <FolderIcon className="shrink-0 text-[16px] text-muted" />
+                <FolderIcon className="shrink-0 text-[16px] text-ink-muted" />
               )}
               <span className="min-w-0 flex-1 truncate">{space.name}</span>
               {all && everyoneUnread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-danger" />}
@@ -166,11 +166,11 @@ export function SpaceList({
                   type="button"
                   onClick={() => onOpenChild(space.id, child.session)}
                   aria-current={child.session === currentChild ? "page" : undefined}
-                  className={`flex min-h-8 w-full items-center gap-2 rounded-tag pr-2.5 text-left text-subheadline ${wide ? "pl-8" : "pl-12"} ${child.session === currentChild ? "bg-nav-current font-semibold" : hover}`}
+                  className={`flex min-h-8 w-full items-center gap-2 rounded-tag pr-2.5 text-left text-subheadline ${wide ? "pl-8" : "pl-12"} ${child.session === currentChild ? "bg-selected shadow-selected font-semibold" : hover}`}
                 >
                   <ChildDot child={child} />
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                  <span className="shrink-0 text-caption text-muted">{childLabel(child)}</span>
+                  <span className="shrink-0 text-caption text-ink-muted">{childLabel(child)}</span>
                 </button>
               ))}
           </div>
@@ -194,19 +194,19 @@ export function SpaceHeader({
 }) {
   const managed = space.ownerId !== null;
   return (
-    <span className="glass pointer-events-auto flex h-8 max-w-full items-center gap-2 rounded-full pr-1 pl-3 text-footnote text-foreground">
+    <span className="bg-surface-inset pointer-events-auto flex h-8 max-w-full items-center gap-2 rounded-full pr-1 pl-3 text-footnote text-ink">
       <span className="truncate font-semibold">{space.name}</span>
       {managed && !isOpenLevel(space.level) && (
         <button type="button" aria-label="成员" onClick={onMembers} className="tap flex rounded-full">
           <AvatarStack ids={space.members} members={members} />
         </button>
       )}
-      {managed && isOpenLevel(space.level) && <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[16px] text-muted" />}
+      {managed && isOpenLevel(space.level) && <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[16px] text-ink-muted" />}
       {mine ? (
         <button
           type="button"
           onClick={onMembers}
-          className="tap h-6 rounded-full bg-foreground/8 px-2.5 text-caption font-semibold hover:bg-foreground/12"
+          className="tap h-6 rounded-full bg-ink/8 px-2.5 text-caption font-semibold hover:bg-ink/12"
         >
           邀请
         </button>
@@ -220,14 +220,14 @@ export function SpaceHeader({
 /** 全员顶上的胶囊：名字和楼。组织创建者点楼打开设置。 */
 export function EveryoneHeader({ space, mayManage, onSettings }: { space: ProjectView; mayManage: boolean; onSettings: () => void }) {
   return (
-    <span className="glass pointer-events-auto flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-foreground">
+    <span className="bg-surface-inset pointer-events-auto flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-ink">
       <span className="truncate font-semibold">{space.name}</span>
       {mayManage ? (
-        <button type="button" aria-label="设置" onClick={onSettings} className="tap -mr-1 grid size-6 place-items-center rounded-full hover:bg-foreground/8">
-          <BuildingIcon className="text-[16px] text-muted" />
+        <button type="button" aria-label="设置" onClick={onSettings} className="tap -mr-1 grid size-6 place-items-center rounded-full hover:bg-ink/8">
+          <BuildingIcon className="text-[16px] text-ink-muted" />
         </button>
       ) : (
-        <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[16px] text-muted" />
+        <BuildingIcon role="img" aria-label="全组织" className="shrink-0 text-[16px] text-ink-muted" />
       )}
     </span>
   );
@@ -241,7 +241,7 @@ function ModeSwitch({ mode, busy, detail, onChange }: { mode: SpaceMode; busy: b
         <Switch.Content className="flex w-full items-center gap-3">
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <Label className="text-body">只派活</Label>
-            <span className="text-subheadline text-muted">{detail}</span>
+            <span className="text-subheadline text-ink-muted">{detail}</span>
           </span>
           <Switch.Control className="shrink-0">
             <Switch.Thumb />
@@ -279,7 +279,7 @@ export function EveryoneSheet({
     <Modal>
       <Modal.Backdrop isOpen={space !== undefined} onOpenChange={(open) => !open && onClose()}>
         <Modal.Container placement="center">
-          <Modal.Dialog aria-label="全员设置" className="w-[min(92vw,420px)] rounded-panel">
+          <Modal.Dialog aria-label="全员设置" className="w-[min(92vw,420px)] layer-sheet">
             <Modal.Header className="flex flex-row items-center justify-between">
               <Modal.Heading className="text-title">{space?.name}</Modal.Heading>
               <button type="button" aria-label="关闭" onClick={onClose} className="tap grid size-9 place-items-center rounded-full bg-surface-inset">
@@ -350,7 +350,7 @@ export function InviteSheet({
     <Modal>
       <Modal.Backdrop isOpen={space !== undefined} onOpenChange={(open) => !open && onClose()}>
         <Modal.Container placement="center">
-          <Modal.Dialog aria-label="邀请" className="w-[min(92vw,420px)] rounded-panel">
+          <Modal.Dialog aria-label="邀请" className="w-[min(92vw,420px)] layer-sheet">
             <Modal.Header className="flex flex-row items-center justify-between">
               <Modal.Heading className="text-title">{space?.name}</Modal.Heading>
               <button type="button" aria-label="关闭" onClick={onClose} className="tap grid size-9 place-items-center rounded-full bg-surface-inset">
@@ -373,17 +373,17 @@ export function InviteSheet({
                   const owner = member.id === space?.ownerId;
                   const joined = inSpace.has(member.id);
                   return (
-                    <li key={member.id} className="flex min-h-14 items-center gap-3 border-b border-black/5 px-4 last:border-0">
-                      <MemberAvatar name={member.name} src={member.avatar} className="strong size-8 text-footnote font-semibold" />
+                    <li key={member.id} className="flex min-h-14 items-center gap-3 border-b border-line px-4 last:border-0">
+                      <MemberAvatar name={member.name} src={member.avatar} className="bg-surface-inset size-8 text-footnote font-semibold" />
                       <span className="min-w-0 flex-1 truncate text-body">{member.name}</span>
                       {owner ? (
-                        <span className="text-subheadline text-muted">建的人</span>
+                        <span className="text-subheadline text-ink-muted">建的人</span>
                       ) : !mine ? null : joined ? (
                         <button
                           type="button"
                           disabled={busy !== null}
                           onClick={() => void run(member.id, { kind: "remove", memberId: member.id })}
-                          className={`${chip} text-muted hover:bg-foreground/6`}
+                          className={`${chip} text-ink-muted hover:bg-ink/6`}
                         >
                           移出
                         </button>
@@ -392,7 +392,7 @@ export function InviteSheet({
                           type="button"
                           disabled={busy !== null}
                           onClick={() => void run(member.id, { kind: "add", memberId: member.id })}
-                          className={`${chip} bg-foreground text-background`}
+                          className={`${chip} bg-action text-on-action`}
                         >
                           邀请
                         </button>
@@ -403,10 +403,10 @@ export function InviteSheet({
               </ul>
               {mine && space && (
                 <fieldset className="flex flex-col gap-2">
-                  <legend className="mb-2 px-1 text-footnote font-medium text-muted">谁看得到</legend>
+                  <legend className="mb-2 px-1 text-footnote font-medium text-ink-muted">谁看得到</legend>
                   <div className="flex flex-col overflow-hidden rounded-row bg-surface-inset">
                     {LEVEL_OPTIONS.map((option) => (
-                      <label key={option.level} className="flex min-h-14 cursor-pointer items-center gap-3 border-b border-black/5 px-4 py-2 last:border-0">
+                      <label key={option.level} className="flex min-h-14 cursor-pointer items-center gap-3 border-b border-line px-4 py-2 last:border-0">
                         <input
                           type="radio"
                           name="level"
@@ -417,7 +417,7 @@ export function InviteSheet({
                         />
                         <span className="flex flex-col gap-0.5">
                           <span className="text-body">{option.name}</span>
-                          <span className="text-subheadline text-muted">{option.detail}</span>
+                          <span className="text-subheadline text-ink-muted">{option.detail}</span>
                         </span>
                       </label>
                     ))}
@@ -452,14 +452,14 @@ export function TaskCard({ title, child, onOpen }: { title: string; child: Child
       type="button"
       disabled={!child || !onOpen}
       onClick={onOpen}
-      className="strong lift flex w-full max-w-[85%] items-center gap-3 rounded-row px-4 py-3 text-left sm:max-w-120"
+      className="bg-surface-inset flex w-full max-w-[85%] items-center gap-3 rounded-row px-4 py-3 text-left sm:max-w-120"
     >
       {child ? <ChildDot child={child} /> : <span className="size-2 shrink-0 rounded-full bg-offline" />}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-body font-semibold">{title}</span>
-        <span className="truncate text-subheadline text-muted">{detail}</span>
+        <span className="truncate text-subheadline text-ink-muted">{detail}</span>
       </span>
-      <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
+      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
     </button>
   );
 }

@@ -11,7 +11,7 @@ type Fields = { baseUrl: string; model: string; apiKey: string; contextWindow: s
 
 const EMPTY: Fields = { baseUrl: "", model: "", apiKey: "", contextWindow: "32000", vision: false };
 
-const INPUT = "min-w-0 rounded-tag bg-foreground/6 px-3 py-1.5 text-subheadline";
+const INPUT = "min-w-0 rounded-tag bg-surface-inset px-3 py-1.5 text-subheadline";
 
 function ModelFields({
   fields,
@@ -57,7 +57,7 @@ function ModelFields({
       />
       <div className="flex items-center gap-3">
         <label className="flex min-w-0 flex-1 items-center gap-2 text-subheadline">
-          <span className="shrink-0 text-muted">上下文</span>
+          <span className="shrink-0 text-ink-muted">上下文</span>
           <input
             aria-label="上下文长度"
             inputMode="numeric"
@@ -176,11 +176,11 @@ export function ModelSection({
                 aria-checked={selected}
                 disabled={!model.mayEdit || sending || (option.disabled && !selected)}
                 onClick={() => pick(option.source)}
-                className="flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-foreground/6 disabled:cursor-default"
+                className="flex min-h-control items-center gap-2 rounded-tag px-2 py-1 text-left enabled:hover:bg-ink/6 disabled:cursor-default"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-subheadline font-medium">{option.label}</span>
-                  {option.detail && <span className="block truncate text-caption text-muted">{option.detail}</span>}
+                  {option.detail && <span className="block truncate text-caption text-ink-muted">{option.detail}</span>}
                 </span>
                 {selected && <CheckIcon className="shrink-0 text-[14px]" />}
               </button>
@@ -203,7 +203,7 @@ export function ModelSection({
         )}
         {model.mayEdit && picked === "key" && (
           <form
-            className="flex flex-col gap-2 border-t border-foreground/10 pt-3"
+            className="flex flex-col gap-2 border-t border-line pt-3"
             onSubmit={(event) => {
               event.preventDefault();
               void save({ source: "key", ...payload(fields) });
@@ -222,7 +222,7 @@ export function ModelSection({
         )}
         {error && <p className="m-0 text-subheadline text-danger-ink">{error}</p>}
       </div>
-      {!model.mayEdit && <p className="m-0 px-4 text-footnote font-normal text-muted">只有创建者能换。</p>}
+      {!model.mayEdit && <p className="m-0 px-4 text-footnote font-normal text-ink-muted">只有创建者能换。</p>}
     </section>
   );
 }
@@ -288,7 +288,7 @@ export function LocalModelForm() {
 
   return (
     <section className="flex flex-col gap-1.5">
-      <h3 className="m-0 px-4 text-footnote text-muted">这台电脑上的模型</h3>
+      <h3 className="m-0 px-4 text-footnote text-ink-muted">这台电脑上的模型</h3>
       <form
         className="flex flex-col gap-2 rounded-row bg-surface px-4 py-3"
         onSubmit={(event) => {

@@ -437,7 +437,7 @@ export function Settings({
       <Modal>
         <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
           <Modal.Container placement="center" scroll="inside">
-            <Modal.Dialog className="h-[min(85dvh,640px)] w-[min(92vw,520px)] rounded-panel bg-background">
+            <Modal.Dialog className="h-[min(85dvh,640px)] w-[min(92vw,520px)] layer-sheet">
               <Modal.CloseTrigger aria-label="关闭" />
               <Modal.Header className="flex min-h-control-sm flex-col items-start gap-3">
                 {backButton}
@@ -446,7 +446,7 @@ export function Settings({
                   {action}
                 </div>
               </Modal.Header>
-              <Modal.Body className="pt-3 pb-2 text-body text-foreground">{content}</Modal.Body>
+              <Modal.Body className="pt-3 pb-2 text-body text-ink">{content}</Modal.Body>
             </Modal.Dialog>
           </Modal.Container>
         </Modal.Backdrop>
@@ -457,7 +457,7 @@ export function Settings({
     <Drawer>
       <Drawer.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
         <Drawer.Content placement="right">
-          <Drawer.Dialog className="w-[min(88vw,380px)] bg-background">
+          <Drawer.Dialog className="w-[min(88vw,380px)] bg-surface-sheet">
             <Drawer.Header className="flex flex-col items-start gap-3">
               {backButton}
               <div className="flex w-full items-center gap-3">
@@ -465,7 +465,7 @@ export function Settings({
                 {action}
               </div>
             </Drawer.Header>
-            <Drawer.Body className="text-body text-foreground">{content}</Drawer.Body>
+            <Drawer.Body className="text-body text-ink">{content}</Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
@@ -515,10 +515,10 @@ function Profile({
 }) {
   const content = (
     <>
-      <MemberAvatar name={name} src={me?.avatar ?? null} className="size-10 bg-foreground text-headline text-background" />
+      <MemberAvatar name={name} src={me?.avatar ?? null} className="size-10 bg-action text-headline text-on-action" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-title">{name}</span>
-        {detail && <span className="block truncate text-subheadline text-muted">{detail}</span>}
+        {detail && <span className="block truncate text-subheadline text-ink-muted">{detail}</span>}
       </span>
     </>
   );
@@ -531,7 +531,7 @@ function Profile({
       className="flex w-full items-center gap-3 rounded-row bg-surface px-4 py-3 text-left hover:bg-surface-secondary"
     >
       {content}
-      <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
+      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
     </button>
   );
 }
@@ -540,15 +540,15 @@ function Profile({
 function Group({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-1.5">
-      {title && <h3 className="m-0 px-4 text-footnote text-muted">{title}</h3>}
-      <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">{children}</div>
-      {note && <p className="m-0 px-4 text-footnote font-normal text-muted">{note}</p>}
+      {title && <h3 className="m-0 px-4 text-footnote text-ink-muted">{title}</h3>}
+      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">{children}</div>
+      {note && <p className="m-0 px-4 text-footnote font-normal text-ink-muted">{note}</p>}
     </section>
   );
 }
 
 function Note({ children }: { children: ReactNode }) {
-  return <p className="m-0 px-4 text-subheadline text-muted">{children}</p>;
+  return <p className="m-0 px-4 text-subheadline text-ink-muted">{children}</p>;
 }
 
 function Dot({ online }: { online: boolean }) {
@@ -576,20 +576,20 @@ function LinkRow({
     <button
       type="button"
       onClick={onPress}
-      className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-foreground/4"
+      className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-ink/4"
     >
       {icon && <span className="grid size-5 shrink-0 place-items-center text-[18px]">{icon}</span>}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body">{title}</span>
         {detail && (
-          <span className="flex items-center gap-1.5 text-subheadline text-muted">
+          <span className="flex items-center gap-1.5 text-subheadline text-ink-muted">
             {dot !== undefined && <Dot online={dot} />}
             <span className="truncate">{detail}</span>
           </span>
         )}
       </span>
-      {summary && <span className="shrink-0 text-body text-muted">{summary}</span>}
-      <ChevronRightIcon className="shrink-0 text-[14px] text-muted" />
+      {summary && <span className="shrink-0 text-body text-ink-muted">{summary}</span>}
+      <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted" />
     </button>
   );
 }
@@ -661,7 +661,7 @@ function ConfirmPanel({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <p className="m-0 text-subheadline text-muted">{text}</p>
+      <p className="m-0 text-subheadline text-ink-muted">{text}</p>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="tertiary" onPress={onCancel}>
           取消
@@ -763,7 +763,7 @@ function AccountRow({
         <ServiceIcon service={account.service} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-body">{account.name}</div>
-          {detail && <div className="truncate text-subheadline text-muted">{detail}</div>}
+          {detail && <div className="truncate text-subheadline text-ink-muted">{detail}</div>}
         </div>
         {!row.confirming && account.removable && (
           <button
@@ -813,7 +813,7 @@ function ServiceRow({ service, connectable }: { service: ConnectorService; conne
         <ServiceIcon service={service.id} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-body">{service.name}</div>
-          <div className="text-subheadline text-muted">{service.detail}</div>
+          <div className="text-subheadline text-ink-muted">{service.detail}</div>
         </div>
         {connectable && (
           <Button size="sm" variant="secondary" isPending={row.sending} onPress={connect}>
@@ -848,7 +848,7 @@ function PolicySelect({
           const next = event.target.value as ComputerPolicy;
           if (next !== computer.policy) onChange(next);
         }}
-        className="tap h-8 appearance-none rounded-full border border-separator bg-surface py-0 pr-7 pl-3 text-subheadline text-foreground"
+        className="tap h-8 appearance-none rounded-full bg-surface-inset py-0 pr-7 pl-3 text-subheadline text-ink"
       >
         {POLICIES.map(([policy, name]) => (
           <option key={policy} value={policy} disabled={!mayChangePolicy(computer.policy, policy, actor, computer.ownerId)}>
@@ -856,7 +856,7 @@ function PolicySelect({
           </option>
         ))}
       </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-muted" />
+      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
     </span>
   );
 }
@@ -892,7 +892,7 @@ function RemoteConfirmSelect({
           const next = event.target.value as RemoteConfirm;
           if (next !== computer.remoteConfirm) onChange(next);
         }}
-        className="tap h-8 appearance-none rounded-full border border-separator bg-surface py-0 pr-7 pl-3 text-subheadline text-foreground"
+        className="tap h-8 appearance-none rounded-full bg-surface-inset py-0 pr-7 pl-3 text-subheadline text-ink"
       >
         {REMOTE_CONFIRMS.map(([level, name]) => (
           <option
@@ -906,7 +906,7 @@ function RemoteConfirmSelect({
           </option>
         ))}
       </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-muted" />
+      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-ink-muted" />
     </span>
   );
 }
@@ -955,7 +955,7 @@ function ComputerPanel({
             openRemoteDesktop(computer.id, remote);
             if (remote !== "browser") onClose();
           }}
-          className="tap mb-2 flex h-control w-full items-center justify-center gap-2 rounded-full bg-foreground text-body font-semibold text-background"
+          className="tap mb-2 flex h-control w-full items-center justify-center gap-2 rounded-full bg-action text-body font-semibold text-on-action"
         >
           <CursorIcon />
           {remote === "browser" ? "在浏览器里远程控制" : "远程控制"}
@@ -963,16 +963,16 @@ function ComputerPanel({
       ) : remote === "phone" ? (
         <div className="mb-2"><Note>在手机 App 上远程控制这台电脑。</Note></div>
       ) : mine && !computer.online ? (
-        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-foreground/35 text-body font-semibold text-background">
+        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-action-off text-body font-semibold text-ink-faint">
           离线，连上才能远程控制
         </div>
       ) : null}
-      <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">
+      <div className="flex flex-col divide-y divide-line overflow-hidden rounded-row bg-surface">
         <div className="flex items-center gap-3 px-4 py-3.5">
           <ComputerIcon className="shrink-0 text-[26px]" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="truncate text-body font-semibold">{computer.name}</span>
-            <span className="flex items-center gap-1.5 text-subheadline text-muted">
+            <span className="flex items-center gap-1.5 text-subheadline text-ink-muted">
               <Dot online={computer.online} />
               <span className="truncate">
                 {[computerLabel(computer), here ? "这台电脑" : owner, computer.screen ? "屏幕已授权" : null]
@@ -1018,7 +1018,7 @@ function ComputerPanel({
             <button
               type="button"
               onClick={row.confirm}
-              className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body text-danger-ink hover:bg-foreground/4"
+              className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body text-danger-ink hover:bg-ink/4"
             >
               吊销
             </button>
@@ -1047,10 +1047,10 @@ function DeviceRow({
           <div className="truncate text-body">
             {device.name}
             {device.current && (
-              <span className="text-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
+              <span className="text-ink-muted">{device.kind === "desktop" ? " · 这个窗口" : " · 这个浏览器"}</span>
             )}
           </div>
-          <div className="truncate text-subheadline text-muted">{deviceLabel(device)}</div>
+          <div className="truncate text-subheadline text-ink-muted">{deviceLabel(device)}</div>
         </div>
         {!row.confirming && mayRevoke(actor, device.memberId) && (
           <button
@@ -1095,13 +1095,13 @@ function MemberRow({
   return (
     <div className="flex flex-col gap-2 px-4 py-2.5">
       <div className="flex items-center gap-3">
-        <MemberAvatar name={member.name} src={member.avatar} className="size-8 strong text-footnote" />
+        <MemberAvatar name={member.name} src={member.avatar} className="size-8 bg-surface-inset text-footnote" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-body">
             {member.email}
-            {member.current && <span className="text-muted"> · 你</span>}
+            {member.current && <span className="text-ink-muted"> · 你</span>}
           </div>
-          <div className="text-subheadline text-muted">
+          <div className="text-subheadline text-ink-muted">
             {member.role === "creator" ? "创建者" : member.joinedAt ? "成员" : "成员 · 还没登录过"}
           </div>
         </div>
@@ -1239,7 +1239,7 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
             <div key={invite.code} className="flex min-h-control items-center gap-3 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-body">{invite.code}</div>
-                {invite.usedBy && <div className="truncate text-subheadline text-muted">{invite.usedBy}</div>}
+                {invite.usedBy && <div className="truncate text-subheadline text-ink-muted">{invite.usedBy}</div>}
               </div>
               {!invite.usedBy && (
                 <>
@@ -1271,7 +1271,7 @@ function Invites({ list, onChanged }: { list: InviteList; onChanged: () => Promi
           type="button"
           disabled={creating || list.left === 0}
           onClick={() => void create()}
-          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-foreground/4 disabled:text-muted"
+          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-ink/4 disabled:text-ink-muted"
         >
           {creating ? "正在生成…" : "生成邀请码"}
         </button>
@@ -1310,7 +1310,7 @@ function PasskeyList({
           {passkeys.keys.map((key) => (
             <div key={key.id} className="flex flex-col px-4 py-2.5">
               <div className="truncate text-body">{key.name}</div>
-              <div className="truncate text-subheadline text-muted">
+              <div className="truncate text-subheadline text-ink-muted">
                 {key.lastUsedAt ? `${ago(key.lastUsedAt)}用过` : `${ago(key.createdAt)}加的`}
               </div>
             </div>
@@ -1322,7 +1322,7 @@ function PasskeyList({
           type="button"
           disabled={row.sending}
           onClick={add}
-          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-foreground/4 disabled:text-muted"
+          className="flex min-h-control w-full items-center px-4 py-2.5 text-left text-body font-semibold enabled:hover:bg-ink/4 disabled:text-ink-muted"
         >
           {confirmBy === "browser" ? "在浏览器里加" : row.sending ? "正在加…" : "加一把通行密钥"}
         </button>
@@ -1403,12 +1403,12 @@ function PairNew({
             <div className="font-mono text-xl font-semibold tracking-wider" aria-label="配对码">
               {pairing.code}
             </div>
-            <div className="text-subheadline text-muted" aria-live="polite">
+            <div className="text-subheadline text-ink-muted" aria-live="polite">
               {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 后过期
             </div>
           </div>
         </div>
-        <p className="m-0 text-subheadline text-muted">
+        <p className="m-0 text-subheadline text-ink-muted">
           手机扫码或在 App 里填码，浏览器和电脑 App 填码。连过手机的，新手机要用旧手机设置里生成的码。
         </p>
         <div className="flex justify-end">
@@ -1424,12 +1424,12 @@ function PairNew({
       type="button"
       disabled={busy}
       onClick={() => void create()}
-      className="flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left enabled:hover:bg-foreground/4"
+      className="flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left enabled:hover:bg-ink/4"
     >
       <span className="text-body font-semibold">
         {busy ? "正在生成…" : joined || pairing ? "再生成一个配对码" : "生成配对码"}
       </span>
-      <span className={`text-subheadline ${error ? "text-danger-ink" : "text-muted"}`}>
+      <span className={`text-subheadline ${error ? "text-danger-ink" : "text-ink-muted"}`}>
         {error ??
           (joined
             ? `「${joined}」连上了。`
@@ -1514,11 +1514,11 @@ function Orgs({ open }: { open: boolean }) {
             disabled={busy !== null}
             aria-current={org.current ? "true" : undefined}
             onClick={() => !org.current && void go(org.id, () => api.switchOrg(org.id))}
-            className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-foreground/4"
+            className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-ink/4"
           >
-            <MemberAvatar name={org.creator ?? org.name} src={null} className="size-6 bg-foreground text-footnote text-background" />
+            <MemberAvatar name={org.creator ?? org.name} src={null} className="size-6 bg-action text-footnote text-on-action" />
             <span className="min-w-0 flex-1 truncate text-body">{org.name}</span>
-            <span className="shrink-0 text-body text-muted">{busy === org.id ? "正在切换…" : `${org.members} 人`}</span>
+            <span className="shrink-0 text-body text-ink-muted">{busy === org.id ? "正在切换…" : `${org.members} 人`}</span>
             <CheckIcon className={`shrink-0 text-[16px] ${org.current ? "" : "invisible"}`} aria-label={org.current ? "当前" : undefined} />
           </button>
         ))}
@@ -1547,7 +1547,7 @@ function Orgs({ open }: { open: boolean }) {
             <button
               type="button"
               onClick={() => setOpening(true)}
-              className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-foreground/4"
+              className="flex min-h-control w-full items-center gap-3 px-4 py-2.5 text-left text-body hover:bg-ink/4"
             >
               <span className="grid size-6 shrink-0 place-items-center text-[18px]">
                 <PlusIcon />

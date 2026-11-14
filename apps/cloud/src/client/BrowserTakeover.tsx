@@ -100,11 +100,11 @@ function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
       role="dialog"
       aria-label="在电脑上接手"
       data-browser-takeover
-      className="fixed inset-0 z-[60] flex flex-col gap-3 bg-black/40 p-4 pt-12 backdrop-blur-xl"
+      className="fixed inset-0 z-[60] flex flex-col gap-3 bg-scrim p-4 pt-12"
     >
-      <div ref={slot} data-browser-slot className="min-h-0 flex-1 overflow-hidden rounded-bubble bg-white shadow-2xl" />
+      <div ref={slot} data-browser-slot className="min-h-0 flex-1 overflow-hidden rounded-bubble bg-white shadow-card" />
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <button type="button" aria-label="收起" onClick={close} className="glass tap grid size-10 place-items-center rounded-full">
+        <button type="button" aria-label="收起" onClick={close} className="bg-surface-inset tap grid size-10 place-items-center rounded-full">
           <CollapseIcon />
         </button>
         {cancel && (
@@ -114,7 +114,7 @@ function TakeoverView({ cancel }: { cancel: (() => void) | null }) {
               cancel();
               void desktop()?.detachBrowser?.(false);
             }}
-            className="glass tap h-10 rounded-full px-4 text-subheadline"
+            className="bg-surface-inset tap h-10 rounded-full px-4 text-subheadline"
           >
             取消任务
           </button>

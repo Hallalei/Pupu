@@ -250,7 +250,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
                         key={starter}
                         type="button"
                         onClick={() => void send(starter)}
-                        className="soft lift tap rounded-full px-3.5 py-2 text-subheadline"
+                        className="bg-surface-inset tap rounded-full px-3.5 py-2 text-subheadline"
                       >
                         {starter}
                       </button>
@@ -272,7 +272,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
               type="button"
               aria-label="回到底部"
               onClick={toBottom}
-              className="glass lift tap pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
+              className="bg-surface-inset tap pointer-events-auto grid size-9 place-items-center rounded-full text-[18px]"
             >
               <ChevronDownIcon />
             </button>
@@ -286,7 +286,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
           type="button"
           aria-label="取消回复"
           onClick={() => setQuote(null)}
-          className="absolute inset-0 z-20 bg-black/5 backdrop-blur-md"
+          className="absolute inset-0 z-20 bg-scrim backdrop-blur-md"
         />
       )}
 
@@ -294,7 +294,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 pb-3 lg:px-6">
           {quote !== null && (
             <div className="flex items-start gap-2">
-              <div className="strong bubble max-w-[85%] rounded-bubble px-4 py-2.5 text-message">
+              <div className="bg-surface-inset max-w-[85%] rounded-bubble px-4 py-2.5 text-message">
                 <div className="line-clamp-4 whitespace-pre-wrap">{quote}</div>
               </div>
               <Button
@@ -302,14 +302,14 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
                 variant="ghost"
                 aria-label="取消回复"
                 onPress={() => setQuote(null)}
-                className="glass lift tap size-9 min-w-9 rounded-full"
+                className="bg-surface-inset tap size-9 min-w-9 rounded-full"
               >
                 <CloseIcon />
               </Button>
             </div>
           )}
           {pi.status !== "open" && (
-            <div className="text-center text-footnote text-ink-sky-muted">
+            <div className="text-center text-footnote text-ink-muted">
               {pi.status === "connecting" ? "正在连接 Pupu…" : "连接断开，正在重连…"}
             </div>
           )}
@@ -317,7 +317,7 @@ export function Chat({ session, context, top, empty, placeholder, starters = [] 
             <div className="text-center text-footnote text-danger-ink">{outbox.error}</div>
           )}
           {pi.queued > 0 && (
-            <div className="text-center text-footnote text-ink-sky-muted">
+            <div className="text-center text-footnote text-ink-muted">
               还有 {pi.queued} 条消息排着队，Pupu 说完这轮就处理
             </div>
           )}
@@ -472,7 +472,7 @@ function Row({
     case "notice":
       return (
         <div className="flex justify-center">
-          <div className="soft max-w-[85%] rounded-row px-3 py-2 text-center text-footnote text-muted">
+          <div className="bg-surface-inset max-w-[85%] rounded-row px-3 py-2 text-center text-footnote text-ink-muted">
             {row.text}
           </div>
         </div>
@@ -480,8 +480,8 @@ function Row({
     case "handoff":
       return (
         <div className="flex justify-center">
-          <div className="soft flex max-w-[85%] flex-col gap-0.5 rounded-row px-3 py-2 text-center">
-            <span className="text-footnote text-muted">{context.handoffFrom ?? "从聊天转来"}</span>
+          <div className="bg-surface-inset flex max-w-[85%] flex-col gap-0.5 rounded-row px-3 py-2 text-center">
+            <span className="text-footnote text-ink-muted">{context.handoffFrom ?? "从聊天转来"}</span>
             <span className="text-subheadline whitespace-pre-wrap">{row.text}</span>
           </div>
         </div>
@@ -501,7 +501,7 @@ function Row({
     }
     case "error":
       return (
-        <div className="strong w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
+        <div className="bg-surface-inset w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
           {row.text}
         </div>
       );
@@ -515,7 +515,7 @@ function UserMessage({ body, quote, onMenu }: { body: string; quote: string | nu
       {quote && <QuoteStrip quote={quote} className="max-w-[85%]" />}
       <div
         {...press}
-        className="pressable max-w-[85%] rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap backdrop-blur-xl"
+        className="pressable max-w-[85%] rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap"
       >
         {body}
       </div>
@@ -525,7 +525,7 @@ function UserMessage({ body, quote, onMenu }: { body: string; quote: string | nu
 
 function QuoteStrip({ quote, className = "" }: { quote: string; className?: string }) {
   return (
-    <div className={`soft flex gap-2 rounded-row px-3 py-2 ${className}`}>
+    <div className={`bg-surface-inset flex gap-2 rounded-row px-3 py-2 ${className}`}>
       <span className="w-0.5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
       <span className="line-clamp-2 text-footnote">{quote}</span>
     </div>
@@ -550,12 +550,12 @@ function OtherMessage({
   const press = usePressMenu((anchor, point) => onMenu(anchor, body, point));
   return (
     <div className="flex max-w-[85%] items-start gap-2">
-      <MemberAvatar name={sender.name} src={avatar} className="strong size-8 text-footnote" />
+      <MemberAvatar name={sender.name} src={avatar} className="bg-surface-inset size-8 text-footnote" />
       <div className="flex min-w-0 flex-col items-start gap-1">
         {quote && <QuoteStrip quote={quote} className="max-w-full" />}
         <div
           {...press}
-          className="pressable max-w-full rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap backdrop-blur-xl"
+          className="pressable max-w-full rounded-bubble bg-bubble-user px-4 py-2.5 text-message whitespace-pre-wrap"
         >
           <div className="text-footnote">{sender.name}</div>
           {body}
@@ -568,7 +568,7 @@ function OtherMessage({
 function AssistantText({ text, onMenu }: { text: string; onMenu: MenuOpener }) {
   const press = usePressMenu((anchor, point) => onMenu(anchor, text, point));
   return (
-    <div {...press} className="pressable strong bubble w-fit max-w-[85%] rounded-bubble px-4 py-2.5">
+    <div {...press} className="pressable bg-surface-inset w-fit max-w-[85%] rounded-bubble px-4 py-2.5">
       <Streamdown className="sd-theme text-message" controls={false}>
         {text}
       </Streamdown>
@@ -582,7 +582,7 @@ function Typing({ retrying }: { retrying: boolean }) {
     <div
       role="status"
       aria-label={retrying ? "模型忙，正在重试" : "Pupu 在想"}
-      className="strong bubble flex w-fit items-center gap-2 rounded-bubble px-4 py-[13px] text-muted"
+      className="bg-surface-inset flex w-fit items-center gap-2 rounded-bubble px-4 py-[13px] text-ink-muted"
     >
       <span className="inline-flex gap-1">
         {["0ms", "150ms", "300ms"].map((delay) => (
@@ -613,7 +613,7 @@ function ProjectTag({
       type="button"
       disabled={!projectId}
       onClick={() => projectId && context.onOpenProject(projectId)}
-      className="strong bubble flex h-8 items-center gap-2 rounded-tag px-3 text-footnote pointer-fine:h-7"
+      className="bg-surface-inset flex h-8 items-center gap-2 rounded-tag px-3 text-footnote pointer-fine:h-7"
     >
       <FolderIcon className="text-[15px] pointer-fine:text-[13px]" />
       {name}
@@ -632,16 +632,16 @@ function ReportBubble({ card, context, onMenu }: { card: ReportCard; context: Ch
       type="button"
       {...press}
       onClick={() => context.onOpenProject(card.projectId)}
-      className="pressable strong lift flex w-full max-w-[85%] flex-col gap-1 rounded-row px-3 py-2.5 text-left sm:max-w-96"
+      className="pressable bg-surface-inset flex w-full max-w-[85%] flex-col gap-1 rounded-row px-3 py-2.5 text-left sm:max-w-96"
     >
       <span className="flex w-full items-center gap-2">
-        <FolderIcon className="shrink-0 text-[15px] text-muted pointer-fine:text-[13px]" />
+        <FolderIcon className="shrink-0 text-[15px] text-ink-muted pointer-fine:text-[13px]" />
         <span className="min-w-0 flex-1 truncate text-footnote font-semibold">{card.projectName}</span>
         <ReportStatusMark status={card.status} />
-        <ChevronRightIcon className="shrink-0 text-[14px] text-muted pointer-fine:text-[12px]" />
+        <ChevronRightIcon className="shrink-0 text-[14px] text-ink-muted pointer-fine:text-[12px]" />
       </span>
       <span className="text-subheadline [overflow-wrap:anywhere]">{card.summary}</span>
-      {card.more > 0 && <span className="text-caption text-muted">还有 {card.more} 条</span>}
+      {card.more > 0 && <span className="text-caption text-ink-muted">还有 {card.more} 条</span>}
     </button>
   );
 }
@@ -650,14 +650,14 @@ function ReportStatusMark({ status }: { status: ReportStatus }) {
   switch (status) {
     case "blocked":
       return (
-        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">
           {STATUS_LABELS[status]}
         </span>
       );
     case "failed":
       return <span className="shrink-0 text-caption text-danger-ink">{STATUS_LABELS[status]}</span>;
     case "done":
-      return <span className="shrink-0 text-caption text-muted">{STATUS_LABELS[status]}</span>;
+      return <span className="shrink-0 text-caption text-ink-muted">{STATUS_LABELS[status]}</span>;
   }
 }
 
@@ -688,7 +688,7 @@ function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
         </pre>
       )}
       {step.outputPath && (
-        <div className="mx-3 mb-3 -mt-1 text-caption break-all text-muted">
+        <div className="mx-3 mb-3 -mt-1 text-caption break-all text-ink-muted">
           完整输出在 <span className="font-mono">{step.outputPath}</span>
         </div>
       )}
@@ -708,7 +708,7 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
     <div
       data-computer-card={task.computerId ?? ""}
       data-state={task.state}
-      className="strong flex w-full max-w-[420px] flex-col overflow-hidden rounded-bubble"
+      className="bg-surface-inset flex w-full max-w-[420px] flex-col overflow-hidden rounded-bubble"
     >
       <div className="flex items-center gap-2 px-3.5 pt-2.5 pb-2">
         <ComputerIcon className="shrink-0 text-[17px] pointer-fine:text-[15px]" />
@@ -721,11 +721,11 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
         <img
           src={`data:${task.screen.mimeType};base64,${task.screen.data}`}
           alt={`「${task.computer ?? "电脑"}」上的画面`}
-          className={`mx-3.5 max-h-56 rounded-tag object-cover object-top outline outline-1 -outline-offset-1 outline-black/5 ${active ? "" : "opacity-80"}`}
+          className={`mx-3.5 max-h-56 rounded-tag object-cover object-top shadow-raised ${active ? "" : "opacity-80"}`}
         />
       )}
       <div className="flex items-center gap-2 px-3.5 pt-2 pb-2.5">
-        <span className="min-w-0 flex-1 truncate text-footnote text-muted">{task.latest}</span>
+        <span className="min-w-0 flex-1 truncate text-footnote text-ink-muted">{task.latest}</span>
         <button
           type="button"
           aria-expanded={task.expanded}
@@ -746,7 +746,7 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
         )}
       </div>
       {task.expanded && (
-        <ol aria-label="步骤" className="flex flex-col border-t border-separator">
+        <ol aria-label="步骤" className="flex flex-col border-t border-line">
           {task.steps.map((step) => (
             <StepLine key={step.callId} step={step} onToggle={() => onToggle(`tool:${step.callId}`)} />
           ))}
@@ -760,21 +760,21 @@ function ComputerStatus({ task }: { task: ComputerTask }) {
   switch (task.state) {
     case "live":
       return (
-        <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted">
+        <span className="flex shrink-0 items-center gap-1.5 text-caption text-ink-muted">
           <Spinner size="sm" aria-hidden="true" className="size-3.5" />
           {task.status}
         </span>
       );
     case "waiting":
       return (
-        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">
           {task.status}
         </span>
       );
     case "failed":
       return <span className="shrink-0 text-caption text-danger-ink">{task.status}</span>;
     default:
-      return <span className="shrink-0 text-caption text-muted">{task.status}</span>;
+      return <span className="shrink-0 text-caption text-ink-muted">{task.status}</span>;
   }
 }
 
@@ -782,7 +782,7 @@ function ComputerStatus({ task }: { task: ComputerTask }) {
 function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) {
   const header = (
     <>
-      <span className="shrink-0 text-[15px] text-muted pointer-fine:text-[13px]">{STEP_ICONS[step.icon]}</span>
+      <span className="shrink-0 text-[15px] text-ink-muted pointer-fine:text-[13px]">{STEP_ICONS[step.icon]}</span>
       <span className="min-w-0 flex-1 text-left text-footnote break-words">{stepText(step)}</span>
       <StepStatusMark status={step.status} failures={0} />
     </>
@@ -794,7 +794,7 @@ function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
           type="button"
           aria-expanded={step.expanded}
           onClick={onToggle}
-          className="flex min-h-9 w-full items-center gap-2 px-3.5 py-2 hover:bg-foreground/4"
+          className="flex min-h-9 w-full items-center gap-2 px-3.5 py-2 hover:bg-ink/4"
         >
           {header}
         </button>
@@ -807,7 +807,7 @@ function StepLine({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
         </pre>
       )}
       {step.expanded && step.outputPath && (
-        <div className="mx-3.5 mb-2.5 text-caption break-all text-muted">
+        <div className="mx-3.5 mb-2.5 text-caption break-all text-ink-muted">
           完整输出在 <span className="font-mono">{step.outputPath}</span>
         </div>
       )}
@@ -838,20 +838,20 @@ function StepCard({
       <span className="min-w-0 flex-1 text-left text-subheadline break-words">{title}</span>
       <StepStatusMark status={status} failures={failures} />
       {onToggle && (
-        <span className="shrink-0 text-[14px] text-muted pointer-fine:text-[12px]">
+        <span className="shrink-0 text-[14px] text-ink-muted pointer-fine:text-[12px]">
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </span>
       )}
     </>
   );
   return (
-    <div className={`strong max-w-[85%] rounded-row ${expanded && children ? "w-full" : "w-fit"}`}>
+    <div className={`bg-surface-inset max-w-[85%] rounded-row ${expanded && children ? "w-full" : "w-fit"}`}>
       {onToggle ? (
         <button
           type="button"
           aria-expanded={expanded}
           onClick={onToggle}
-          className="lift flex min-h-10 w-full items-center gap-2 rounded-row px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
+          className="flex min-h-10 w-full items-center gap-2 rounded-row px-3 py-2.5 pointer-fine:min-h-9 pointer-fine:py-2"
         >
           {header}
         </button>
@@ -869,7 +869,7 @@ function StepStatusMark({ status, failures }: { status: StepStatus; failures: nu
   switch (status) {
     case "waiting":
       return (
-        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-warning-foreground">
+        <span className="shrink-0 rounded-full bg-warning px-2 py-0.5 text-caption font-semibold text-on-warning">
           等你批准
         </span>
       );
@@ -884,10 +884,10 @@ function StepStatusMark({ status, failures }: { status: StepStatus; failures: nu
         </span>
       );
     case "denied":
-      return <span className="shrink-0 text-caption text-muted">已拒绝</span>;
+      return <span className="shrink-0 text-caption text-ink-muted">已拒绝</span>;
     case "expired":
-      return <span className="shrink-0 text-caption text-muted">没人批，作废了</span>;
+      return <span className="shrink-0 text-caption text-ink-muted">没人批，作废了</span>;
     case "unfinished":
-      return <span className="shrink-0 text-caption text-muted">没做完</span>;
+      return <span className="shrink-0 text-caption text-ink-muted">没做完</span>;
   }
 }

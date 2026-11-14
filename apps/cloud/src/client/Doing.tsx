@@ -96,14 +96,14 @@ function DoingRow({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-subheadline font-medium">{activity.doing ?? "闲着，屏幕控制还开着"}</span>
-        <span className={`truncate text-caption ${error ? "text-danger-ink" : "text-muted"}`}>{error ?? detail}</span>
+        <span className={`truncate text-caption ${error ? "text-danger-ink" : "text-ink-muted"}`}>{error ?? detail}</span>
       </span>
     </>
   );
   const main = "flex min-w-0 flex-1 items-center gap-3 text-left enabled:hover:opacity-75";
 
   return (
-    <div className="strong flex items-center gap-3 rounded-row px-4 py-2">
+    <div className="bg-surface-inset flex items-center gap-3 rounded-row px-4 py-2">
       <button type="button" onClick={() => onOpen(activity)} className={main}>
         {summary}
       </button>

@@ -250,7 +250,7 @@ function Viewer({
     return (
       <Shell onClose={close} title={name}>
         <div className="flex max-w-sm flex-col items-center gap-4 px-6 text-center text-white">
-          <div className="text-title3 font-semibold">打开「{name}」的远程桌面</div>
+          <div className="text-title">打开「{name}」的远程桌面</div>
           {blocked ? (
             <div className="text-subheadline text-white/70">
               {where === "phone"
@@ -264,7 +264,7 @@ function Viewer({
                 type="button"
                 disabled={phase.busy || !known}
                 onClick={() => void connect()}
-                className="tap h-bar w-full rounded-full bg-white text-body font-semibold text-black disabled:opacity-60"
+                className="tap h-control w-full rounded-full bg-white text-body font-semibold text-black disabled:opacity-60"
               >
                 {where === "here" ? (phase.busy ? "正在连接…" : "连接") : phase.busy ? "正在确认…" : "确认并连接"}
               </button>
@@ -430,9 +430,9 @@ function Dialog({
 }) {
   return (
     <div className="absolute inset-0 grid place-items-center bg-black/50">
-      <div role="alertdialog" aria-label={title} className="strong flex w-80 flex-col gap-3 rounded-bubble p-5">
+      <div role="alertdialog" aria-label={title} className="bg-surface-inset flex w-80 flex-col gap-3 rounded-bubble p-5">
         <div className="text-headline font-semibold">{title}</div>
-        <div className="text-subheadline text-muted">{text}</div>
+        <div className="text-subheadline text-ink-muted">{text}</div>
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={onSecondary} className="tap h-control flex-1 rounded-full bg-surface-inset text-body">
             {secondary}
@@ -440,7 +440,7 @@ function Dialog({
           <button
             type="button"
             onClick={onPrimary}
-            className="tap h-control flex-1 rounded-full bg-foreground text-body font-semibold text-background"
+            className="tap h-control flex-1 rounded-full bg-action text-body font-semibold text-on-action"
           >
             {primary}
           </button>

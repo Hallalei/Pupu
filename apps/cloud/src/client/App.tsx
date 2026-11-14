@@ -191,11 +191,10 @@ export function App() {
     [projects, allSpaces, computers, approvals, members, reports, session, refresh, applyActivity, go, route.kind, inEveryone, project?.session]
   );
 
-  // 夜空是私聊的记号；项目是公开的，不用。登录页也是夜空，衬着左边的大图。
-  const night = unauthorized || (lines.isPrivate && route.kind === "chat");
+  // App 里跟着系统的浅色深色；只有登录页（品牌层）铺夜空，衬着左边的大图。
   useEffect(() => {
-    setNight(night);
-  }, [night]);
+    setNight(unauthorized);
+  }, [unauthorized]);
 
   useEffect(() => {
     if (section !== "projects") setListOpen(false);
@@ -272,7 +271,7 @@ export function App() {
       context={{ ...chat, handoffFrom: `从「${space.name}」派来` }}
       placeholder="接着说这件事"
       top={top}
-      empty={<div className="text-message text-ink-sky">{item.title}</div>}
+      empty={<div className="text-message text-ink">{item.title}</div>}
     />
   );
   const waiting = waitingProjects(activity);
@@ -297,7 +296,7 @@ export function App() {
         context={chat}
         placeholder={lines.isPrivate ? PRIVATE_HINT : EVERYONE_HINT}
         empty={
-          <div className="flex flex-col gap-2 text-center text-ink-sky">
+          <div className="flex flex-col gap-2 text-center text-ink">
             <div className="text-greeting">我是 Pupu</div>
             {lines.isPrivate && <div className="text-message">这里只有你和我，别人看不到。</div>}
           </div>
@@ -311,10 +310,10 @@ export function App() {
     body = childChat(
       project,
       child,
-      <span className="glass flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-foreground">
+      <span className="bg-surface-inset flex h-8 max-w-full items-center gap-2 rounded-full px-3 text-footnote text-ink">
         <span className="truncate font-semibold">{child.title}</span>
         <ChildDot child={child} />
-        <span className="shrink-0 text-muted">{childLabel(child)}</span>
+        <span className="shrink-0 text-ink-muted">{childLabel(child)}</span>
       </span>
     );
   } else if (project && inEveryone) {
@@ -325,7 +324,7 @@ export function App() {
         context={chat}
         placeholder={EVERYONE_HINT}
         top={<EveryoneHeader space={project} mayManage={everyone?.mayManage ?? false} onSettings={() => setEveryoneSettings(true)} />}
-        empty={<div className="text-greeting text-ink-sky">{project.name}</div>}
+        empty={<div className="text-greeting text-ink">{project.name}</div>}
       />
     );
   } else if (project) {
@@ -337,7 +336,7 @@ export function App() {
         placeholder={`在「${project.name}」里说`}
         top={<SpaceHeader space={project} members={members} mine={ownsSpace(project, me)} onMembers={() => setInviting(project.id)} />}
         empty={
-          <div className="flex max-w-md flex-col gap-2 text-center text-ink-sky">
+          <div className="flex max-w-md flex-col gap-2 text-center text-ink">
             <div className="text-greeting">{project.name}</div>
             {project.goal && <div className="text-message">{project.goal}</div>}
           </div>
@@ -351,11 +350,11 @@ export function App() {
           <Spinner size="sm" aria-label="正在打开" />
         ) : (
           <>
-            {route.kind === "project" && <div className="text-message text-ink-sky">找不到这个项目</div>}
+            {route.kind === "project" && <div className="text-message text-ink">找不到这个项目</div>}
             <Button
               variant="ghost"
               onPress={() => setCreating(true)}
-              className="glass lift tap h-control rounded-full px-4 text-body font-semibold text-foreground"
+              className="bg-surface-inset tap h-control rounded-full px-4 text-body font-semibold text-ink"
             >
               <PlusIcon />
               新空间
@@ -368,23 +367,22 @@ export function App() {
 
   return (
     <div className="flex h-dvh">
-      <div className="sky" />
       <div className="window-drag" />
       <BrowserTakeover />
       <RemoteDesktopLayer computers={computers} memberId={current?.memberId} confirmBy={confirmBy} passkeys={passkeys} />
-      <aside className="sidebar glass relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-panel lg:flex">
+      <aside className="sidebar bg-surface-inset relative z-10 m-3 mr-0 hidden w-66 shrink-0 flex-col overflow-hidden rounded-row lg:flex">
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">{spaceList(true)}</div>
       </aside>
       <div className="relative flex min-w-0 flex-1 flex-col">
         <header className="relative z-10 shrink-0 pt-[max(env(safe-area-inset-top),8px)]">
-          <div className="titlebar-lead flex h-bar items-center justify-between px-4">
+          <div className="titlebar-lead flex h-control items-center justify-between px-4">
             {/* 宽屏的项目列表在左侧栏，≡ 不要了，位置留着让切换居中。 */}
             {project && child && !wide ? (
               <button
                 type="button"
                 aria-label={`回到「${project.name}」`}
                 onClick={() => go({ kind: "project", id: project.id })}
-                className="glass lift tap grid size-bar place-items-center rounded-full text-[20px]"
+                className="bg-surface-inset tap grid size-control place-items-center rounded-full text-[20px]"
               >
                 <ChevronLeftIcon />
               </button>
@@ -394,15 +392,15 @@ export function App() {
                 aria-label="全部空间"
                 aria-expanded={listOpen}
                 onClick={() => setListOpen((open) => !open)}
-                className="glass lift tap relative grid size-bar place-items-center rounded-full text-[20px] lg:invisible"
+                className="bg-surface-inset tap relative grid size-control place-items-center rounded-full text-[20px] lg:invisible"
               >
                 <MenuIcon />
                 {lines.unread.everyone && !inEveryone && (
-                  <span className="absolute top-1.5 right-1.5 size-2.5 rounded-full bg-danger outline-2 outline-background" />
+                  <span className="absolute top-1.5 right-1.5 size-2.5 rounded-full bg-danger outline-2 outline-surface" />
                 )}
               </button>
             ) : (
-              <div className="size-bar" />
+              <div className="size-control" />
             )}
             <SectionSwitch
               section={section}
@@ -415,7 +413,7 @@ export function App() {
               type="button"
               aria-label="设置"
               onClick={() => setSettings("root")}
-              className="glass lift tap grid size-bar place-items-center rounded-full text-subheadline font-semibold"
+              className="bg-surface-inset tap grid size-control place-items-center rounded-full text-subheadline font-semibold"
             >
               <MemberAvatar
                 name="我"
@@ -428,7 +426,7 @@ export function App() {
         </header>
         {error && (
           <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
-            <div className="strong bubble rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
+            <div className="bg-surface-sheet shadow-card rounded-full px-3 py-1 text-caption text-danger-ink">{error}</div>
           </div>
         )}
         <div className="status relative z-10 flex shrink-0 flex-col">
@@ -459,7 +457,7 @@ export function App() {
         <main className="relative min-h-0 flex-1">
           {body}
           {listOpen && (
-            <div className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface-strong py-2 backdrop-blur-[28px] lg:hidden">
+            <div className="fade-in absolute inset-0 z-40 overflow-y-auto bg-surface py-2 lg:hidden">
               {spaceList(false)}
             </div>
           )}
@@ -468,12 +466,12 @@ export function App() {
       {project && child && wide && (
         <aside
           aria-label="子会话"
-          className="glass relative z-10 m-3 ml-0 flex w-105 shrink-0 flex-col overflow-hidden rounded-panel"
+          className="bg-surface-inset relative z-10 m-3 ml-0 flex w-105 shrink-0 flex-col overflow-hidden rounded-row"
         >
           <header className="flex shrink-0 items-center gap-2 py-3 pr-3 pl-5">
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="truncate text-body font-semibold">{child.title}</span>
-              <span className="flex items-center gap-1.5 text-caption text-muted">
+              <span className="flex items-center gap-1.5 text-caption text-ink-muted">
                 <ChildDot child={child} />
                 {childLabel(child)}
               </span>
@@ -482,7 +480,7 @@ export function App() {
               type="button"
               aria-label="关闭"
               onClick={() => go({ kind: "project", id: project.id })}
-              className="tap grid size-8 place-items-center rounded-full hover:bg-foreground/6"
+              className="tap grid size-8 place-items-center rounded-full hover:bg-ink/6"
             >
               <CloseIcon />
             </button>
@@ -595,18 +593,18 @@ function SectionSwitch({
   avatar: string | null;
 }) {
   const segment =
-    "h-bar-inner rounded-full px-0 text-subheadline text-foreground data-[selected=true]:text-background";
-  const indicator = <Tabs.Indicator className="rounded-full bg-foreground" />;
+    "h-control-sm rounded-full px-0 text-subheadline text-ink data-[selected=true]:text-on-action";
+  const indicator = <Tabs.Indicator className="rounded-full bg-action" />;
 
   return (
     <Tabs selectedKey={section} onSelectionChange={(key) => onSection(key as Section)}>
       <Tabs.ListContainer>
-        <Tabs.List aria-label="Pupu" className="glass h-bar rounded-full p-1">
+        <Tabs.List aria-label="Pupu" className="bg-surface-inset h-control rounded-full p-1">
           <Tabs.Tab id="chat" aria-label={unread ? "我的 Pupu，有新消息" : "我的 Pupu"} className={`${segment} font-semibold`}>
-            <span className="relative flex h-bar-inner items-center gap-1.5 pr-3 pl-1">
+            <span className="relative flex h-control-sm items-center gap-1.5 pr-3 pl-1">
               <MemberAvatar name="Pupu" src={avatar ?? PUPU_AVATAR} className="size-6.5 pointer-fine:size-6" />
               Pupu
-              {unread && <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-background" />}
+              {unread && <span className="absolute top-0.5 left-6 size-2.5 rounded-full bg-danger outline-2 outline-surface" />}
             </span>
             {indicator}
           </Tabs.Tab>
@@ -616,7 +614,7 @@ function SectionSwitch({
             className={`${segment} relative w-16 min-w-16 font-medium pointer-fine:w-14 pointer-fine:min-w-14`}
           >
             项目
-            {everyoneUnread && <span className="absolute top-0.5 right-0.5 size-2.5 rounded-full bg-danger outline-2 outline-background lg:hidden" />}
+            {everyoneUnread && <span className="absolute top-0.5 right-0.5 size-2.5 rounded-full bg-danger outline-2 outline-surface lg:hidden" />}
             {indicator}
           </Tabs.Tab>
         </Tabs.List>
