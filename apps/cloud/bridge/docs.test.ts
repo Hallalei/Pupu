@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { DocStore, docScope } from "../src/docs.ts";
+import { DocStore, docScope, viewerScope, viewerTarget } from "../src/docs.ts";
 import { createDocTools, writeTarget } from "../src/docs-tools.ts";
 import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { renderPrompt } from "../src/prompt.ts";
@@ -204,5 +204,36 @@ describe("skill 列在提示词里", () => {
     assert.match(prompt("10"), /周报格式/);
     assert.doesNotMatch(prompt(MAIN_SESSION), /报价口径/);
     assert.doesNotMatch(prompt("6"), /报价口径/);
+  });
+});
+
+describe("资料：人在界面上看和传（/api/docs）", () => {
+  test("看得到的：组织层、自己在的空间（含 L4）、全组织档；别人的 L3、L4 看不到", async () => {
+    const pupu = await org();
+    const spaces = pupu.projects.listProjects();
+    const titles = (viewer: string | null) => pupu.docs.list(viewerScope(viewer, spaces)).map((doc) => doc.title).sort();
+    assert.deepEqual(titles("m1"), ["体检报告", "公司手册", "周报格式", "定价草案"].sort());
+    assert.deepEqual(titles("m2"), ["公司手册", "周报格式", "定价草案"].sort());
+    assert.deepEqual(titles("m3"), ["公司手册", "周报格式"].sort());
+    assert.deepEqual(titles(null), ["公司手册", "周报格式"].sort());
+    assert.equal(pupu.docs.read(viewerScope("m3", spaces), pupu.ids.l3), undefined);
+  });
+
+  test("能放的：组织层和看得到的空间", async () => {
+    const pupu = await org();
+    const spaces = pupu.projects.listProjects();
+    assert.equal(viewerTarget("m3", null, spaces), null);
+    assert.equal(viewerTarget("m3", pupu.open.id, spaces), pupu.open.id);
+    assert.equal(viewerTarget("m3", pupu.l3.id, spaces), undefined);
+    assert.equal(viewerTarget("m2", pupu.l4.id, spaces), undefined);
+    assert.equal(viewerTarget("m1", pupu.l4.id, spaces), pupu.l4.id);
+    assert.equal(viewerTarget("m1", "没有", spaces), undefined);
+  });
+
+  test("被移出空间以后，那里的资料马上看不到", async () => {
+    const pupu = await org();
+    await pupu.projects.removeMember(writer(pupu.sql), pupu.l3.id, "m2");
+    const spaces = pupu.projects.listProjects();
+    assert.equal(pupu.docs.read(viewerScope("m2", spaces), pupu.ids.l3), undefined);
   });
 });

@@ -13,7 +13,8 @@ import type { Purpose } from "../passkeys";
 import type { Level } from "../access";
 import type { Project } from "../projects";
 import type { ReportCard } from "../reports";
-import type { ProjectView, PupuState } from "../server";
+import type { Doc, DocKind, DocMeta } from "../docs";
+import type { DocsView, ProjectView, PupuState } from "../server";
 import { MAIN_SESSION, type ChatsView } from "../threads";
 import { createSnapshotOrder } from "./snapshot-order";
 
@@ -65,6 +66,11 @@ export const api = {
   /** 主人改空间：拉人、移人、改密级。 */
   changeSpace: (id: string, change: { kind: "add" | "remove"; memberId: string } | { kind: "level"; level: Level }) =>
     request<{ ok: true }>(`/api/spaces/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(change) }),
+  /** 资料：看得到的，和上传能放到哪。 */
+  docs: () => request<DocsView>("/api/docs"),
+  doc: (id: string) => request<Doc>(`/api/docs/${encodeURIComponent(id)}`),
+  uploadDoc: (input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string }) =>
+    request<DocMeta>("/api/docs", { method: "POST", body: JSON.stringify(input) }),
   /** 打开了这个项目：它报回聊天的结果都算看过。 */
   markProjectSeen: (id: string) =>
     request<{ ok: true }>(`/api/projects/${encodeURIComponent(id)}/seen`, { method: "POST" }),

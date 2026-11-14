@@ -10,6 +10,7 @@ import { Approvals, WaitingChip } from "./Approvals";
 import { BrowserTakeover } from "./BrowserTakeover";
 import { Chat, usePressMenu, type ChatContext } from "./Chat";
 import { LINE_HINTS, LINE_NAMES, useChatLines, type LineKey } from "./chat-lines";
+import { Docs } from "./Docs";
 import { Doing } from "./Doing";
 import { CheckIcon, ChevronLeftIcon, CloseIcon, MenuIcon, PlusIcon } from "./icons";
 import { ChildDot, childLabel, InviteSheet, ownsSpace, SpaceHeader, SpaceList } from "./Spaces";
@@ -24,6 +25,7 @@ import { setNight } from "./theme";
 type Route =
   | { readonly kind: "chat" }
   | { readonly kind: "projects" }
+  | { readonly kind: "docs"; readonly id?: string }
   | { readonly kind: "project"; readonly id: string; readonly child?: string };
 
 type Section = "chat" | "projects";
@@ -35,6 +37,8 @@ function parseHash(hash: string): Route {
   const project = path.match(/^\/projects\/(.+)$/);
   if (project) return { kind: "project", id: decodeURIComponent(project[1]) };
   if (path === "/projects") return { kind: "projects" };
+  const doc = path.match(/^\/docs(?:\/(.+))?$/);
+  if (doc) return { kind: "docs", id: doc[1] ? decodeURIComponent(doc[1]) : undefined };
   return { kind: "chat" };
 }
 
@@ -44,6 +48,8 @@ function hashOf(route: Route): string {
       return "#/";
     case "projects":
       return "#/projects";
+    case "docs":
+      return route.id ? `#/docs/${encodeURIComponent(route.id)}` : "#/docs";
     case "project":
       return route.child
         ? `#/projects/${encodeURIComponent(route.id)}/tasks/${encodeURIComponent(route.child)}`
@@ -52,7 +58,7 @@ function hashOf(route: Route): string {
 }
 
 function sectionOf(route: Route): Section {
-  return route.kind === "project" ? "projects" : route.kind;
+  return route.kind === "project" || route.kind === "docs" ? "projects" : route.kind;
 }
 
 function useRoute() {
@@ -221,6 +227,11 @@ export function App() {
       currentChild={child?.session}
       pupuAvatar={pupuAvatar}
       onPupu={openPupu}
+      docs={route.kind === "docs"}
+      onDocs={() => {
+        setListOpen(false);
+        go({ kind: "docs" });
+      }}
       onOpen={(id) => {
         setListOpen(false);
         go({ kind: "project", id });
@@ -269,6 +280,8 @@ export function App() {
         starters={["我想做一个新功能，帮我理一理", "帮我规划一下这周要做的事"]}
       />
     );
+  } else if (route.kind === "docs") {
+    body = <Docs version={projects} open={route.id} onOpen={(id) => go({ kind: "docs", id })} />;
   } else if (project && child && !wide) {
     body = childChat(
       project,

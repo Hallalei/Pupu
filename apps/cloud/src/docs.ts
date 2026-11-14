@@ -7,7 +7,7 @@
  * - 第一版只放文字，正文存在这张表里（有长度上限），没放 R2：R2 要在账户里新建桶，等图片和设计稿一起做。
  */
 
-import { isOpen, mayRead, type AccessThread, type SpaceAccess } from "./access.ts";
+import { isOpen, mayRead, maySeeSpace, type AccessThread, type SpaceAccess } from "./access.ts";
 
 export type DocKind = "doc" | "skill";
 
@@ -44,6 +44,25 @@ export type DocScope = { readonly spaceIds: readonly string[] };
  */
 export function docScope(thread: AccessThread, spaces: readonly (SpaceAccess & { readonly id: string })[]): DocScope {
   return { spaceIds: spaces.filter((space) => mayRead(thread, space)).map((space) => space.id) };
+}
+
+/**
+ * 人在界面上看资料：组织层，加上他看得到的空间（是成员，或全组织档）。人自己进得了 L4，所以 L4 的也在。
+ * 没有成员身份（本机开发没登录）只看全组织档的。
+ */
+export function viewerScope(viewer: string | null, spaces: readonly (SpaceAccess & { readonly id: string })[]): DocScope {
+  return { spaceIds: spaces.filter((space) => maySeeSpace(space, viewer)).map((space) => space.id) };
+}
+
+/** 人在界面上传资料能放到哪：组织层，或者他看得到的空间。返回 undefined 是不能放。 */
+export function viewerTarget(
+  viewer: string | null,
+  spaceId: string | null,
+  spaces: readonly (SpaceAccess & { readonly id: string })[]
+): string | null | undefined {
+  if (spaceId === null) return null;
+  const space = spaces.find((item) => item.id === spaceId);
+  return space && maySeeSpace(space, viewer) ? space.id : undefined;
 }
 
 /** 资料能不能提升到组织层：只有全组织档空间里的能，组织层的不用再提升。私有和机密的要主人先把空间开放。 */

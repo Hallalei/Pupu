@@ -5,7 +5,7 @@ import type { MemberView } from "../members";
 import type { ChildView, ProjectView } from "../server";
 import { WaitingChip } from "./Approvals";
 import { MemberAvatar, PUPU_AVATAR } from "./Avatar";
-import { ChevronRightIcon, CloseIcon, FolderIcon, PlusIcon } from "./icons";
+import { ChevronRightIcon, CloseIcon, FileIcon, FolderIcon, PlusIcon } from "./icons";
 
 /** 空间列表、空间顶上的成员、邀请和密级、主会话里的任务卡。照协作版原型（Design 画布 LZboTdB1BsShjQQY7rDuUH）。 */
 
@@ -80,6 +80,8 @@ export function SpaceList({
   currentChild,
   pupuAvatar,
   onPupu,
+  docs,
+  onDocs,
   onOpen,
   onOpenChild,
   onCreate,
@@ -92,6 +94,8 @@ export function SpaceList({
   currentChild: string | undefined;
   pupuAvatar: string | null;
   onPupu: () => void;
+  docs: boolean;
+  onDocs: () => void;
   onOpen: (id: string) => void;
   onOpenChild: (id: string, session: string) => void;
   onCreate: () => void;
@@ -106,6 +110,15 @@ export function SpaceList({
       <button type="button" onClick={onPupu} className={`${row} ${hover} font-semibold`}>
         <MemberAvatar name="Pupu" src={pupuAvatar ?? PUPU_AVATAR} className="size-6.5" />
         我的 Pupu
+      </button>
+      <button
+        type="button"
+        onClick={onDocs}
+        aria-current={docs ? "page" : undefined}
+        className={`${row} ${docs ? (wide ? "bg-nav-current font-semibold" : "font-semibold") : hover}`}
+      >
+        <FileIcon className="shrink-0 text-[16px] text-muted" />
+        资料
       </button>
       <div className={`mt-3 flex items-center justify-between ${wide ? "px-2.5" : "px-4"}`}>
         <span className="text-footnote font-medium text-muted">空间</span>
