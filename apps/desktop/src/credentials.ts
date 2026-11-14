@@ -16,6 +16,11 @@ export type Credential = {
 export type Pairing = {
   readonly desktop: Credential | null;
   readonly computer: Credential | null;
+  /**
+   * 云端拒了桥的凭据（被吊销了），还没重新配好。`computer` 是 null 不一定是被吊销：配对半路出错时，
+   * 窗口的凭据已经存下，这台电脑的还没拿到。老版本存的没有这一项。
+   */
+  readonly computerRevoked?: boolean;
 };
 
 type Stored = { readonly version: 1; readonly servers: Readonly<Record<string, Pairing>> };

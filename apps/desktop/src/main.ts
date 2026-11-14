@@ -36,11 +36,11 @@ import { credentialsPath, readPairing, writePairing, type Credential, type Pairi
 import { debugSwitches, devVariables } from "./env.ts";
 import { challengeOf, newVerifier, receiveCode } from "./loopback.ts";
 import { desktopStatus, googleEnabled, pairComputer, pairDesktop, redeemSignIn } from "./pairing.ts";
-import { PairingRun, reasonOf, type PairingStatus } from "./pairing-state.ts";
+import { computerAuth, PairingRun, reasonOf, rejectComputer, withComputer, type PairingStatus } from "./pairing-state.ts";
 import { createPairWindow, type GoogleRequest, type PairingInfo, type PairingRequest } from "./pairing-window.ts";
 import { BridgeSupervisor } from "./supervisor.ts";
 import { PupuTray } from "./tray.ts";
-import { trayPairing, type TrayAction, type TrayView } from "./tray-menu.ts";
+import type { TrayAction, TrayView } from "./tray-menu.ts";
 import { startUpdates } from "./updates.ts";
 import { readWithLegacy } from "./legacy-pairing.ts";
 import { canOpenExternally, computerName, DEFAULT_URL, isLocalOrigin, LEGACY_URLS, originOf, sameOrigin } from "./urls.ts";
@@ -334,11 +334,14 @@ async function bridgeAction(action: MenubarAction): Promise<void> {
   }
 }
 
-/** 云端拒了桥的凭据：这台电脑被吊销了。不自动重新授权，等人在配对窗口里点。 */
+/**
+ * 云端拒了桥的凭据：这台电脑被吊销了。记下来（重启后还是「授权被吊销」，不当成配对没做完），
+ * 不自动重新授权，等人在配对窗口里点。
+ */
 async function computerRejected(): Promise<void> {
   if (!pairing.computer) return;
   log(`云端拒了「${pairing.computer.name}」的凭据，多半是被吊销了。`);
-  pairing = { ...pairing, computer: null };
+  pairing = rejectComputer(pairing);
   bridgeState = null;
   await savePairing().catch((error: unknown) => log(`凭据没存上：${message(error)}`));
   render();
@@ -373,8 +376,14 @@ async function cliComputer(): Promise<Credential | null> {
   }
 }
 
-/** 配对一次只做一件，配对窗口跟着它变。 */
-const pairingRun = new PairingRun(sendPairingStatus);
+/**
+ * 配对一次只做一件，配对窗口和托盘跟着它变。半路失败时凭据也可能变了（窗口的存下了、这台电脑的没拿到），
+ * 所以做完不管成没成都刷新一次。
+ */
+const pairingRun = new PairingRun(() => {
+  render();
+  sendPairingStatus();
+});
 
 function pairingStatus(): PairingStatus {
   return { reason: reasonOf(pairing), busy: pairingRun.busy };
@@ -389,7 +398,8 @@ async function pairingInfo(): Promise<PairingInfo> {
   const reason = reasonOf(pairing);
   // 只在第一次配对时给：被吊销过的那份可能就是它，再沿用还是会被拒。
   const adoptable = reason === "first" ? ((await cliComputer())?.name ?? null) : null;
-  const google = reason !== "computer" && (await googleEnabled(origin));
+  // Google 登录换的是窗口的凭据：窗口的还在（被吊销、配对没做完）时不用。
+  const google = !pairing.desktop && (await googleEnabled(origin));
   // 上面在等网络，状态放在最后取。
   return { host: new URL(origin).host, codeOptional: isLocalOrigin(origin), adoptable, google, status: pairingStatus() };
 }
@@ -414,7 +424,7 @@ async function pairWithCode(request: PairingRequest): Promise<string | null> {
     if (!computer) {
       computer =
         (request.adopt ? await cliComputer() : null) ?? (await pairComputer(origin, desktop.token, computerName()));
-      pairing = { ...pairing, computer };
+      pairing = withComputer(pairing, computer);
       await savePairing();
     }
   } catch (error) {
@@ -465,7 +475,7 @@ async function signInWithGoogle(request: GoogleRequest, signal: AbortSignal): Pr
     await savePairing();
     if (!computer) {
       computer = adopted ?? result.computer ?? (await pairComputer(origin, desktop.token, computerName()));
-      pairing = { ...pairing, computer };
+      pairing = withComputer(pairing, computer);
       await savePairing();
     }
   } catch (error) {
@@ -721,7 +731,7 @@ function openPairWindow(): void {
 
 function currentComputer(): DesktopComputer {
   return computerView({
-    computer: pairing.computer,
+    pairing,
     state: bridgeState,
     switches,
     fallbackName: computerName(),
@@ -737,9 +747,9 @@ function sendComputer(): void {
   if (contents && sameOrigin(contents.getURL(), origin)) contents.send("pupu:computer", currentComputer());
 }
 
-/** 托盘那一份：电脑名先用凭据里的，被吊销、还没配对时用这台电脑自己的名字。 */
+/** 托盘那一份：电脑名先用凭据里的，没有这台电脑的凭据（被吊销、还没配对、配对没做完）时用这台电脑自己的名字。 */
 function trayView(): TrayView {
-  return { state: bridgeState, name: pairing.computer?.name ?? computerName(), pairing: trayPairing(pairing), update };
+  return { state: bridgeState, name: pairing.computer?.name ?? computerName(), pairing: computerAuth(pairing), update };
 }
 
 function render(): void {

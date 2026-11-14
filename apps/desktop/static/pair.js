@@ -24,23 +24,31 @@ function show(element, visible) {
   element.hidden = !visible;
 }
 
+/** 窗口的凭据还在，只差这台电脑的（被吊销了，或者配对半路没做完）：点一下就好，不用填码。 */
+function oneClick() {
+  return status.reason === "computer" || status.reason === "unfinished";
+}
+
 /**
  * 天空上一直只有 Pupu 和那句话，换的是卡片里的东西：
  * - 默认：「用 Google 登录」、「或」、配对码、「继续」；窗口的凭据失效了时，顶上多一句为什么。
  * - 在浏览器里等 Google 登录：一句话和「取消」，这时没有主操作。
  * - 整台电脑的授权被吊销：一句话和「重新配对」，不用填码。
+ * - 配对半路没做完（窗口的凭据拿到了，这台电脑的没拿到）：一句话和「再试一次」，不用填码。
  * 一件在做时另一件点不了。
  */
 function render() {
-  const computer = status.reason === "computer";
+  const unfinished = status.reason === "unfinished";
   const waiting = status.busy === "google";
   const pairing = status.busy === "code";
-  const fields = !computer && !waiting;
+  const fields = !oneClick() && !waiting;
   show($("notice"), fields && status.reason === "desktop");
-  show($("message"), computer || waiting);
+  show($("message"), oneClick() || waiting);
   $("message").textContent = waiting
     ? "在打开的浏览器里选你的 Google 账号，登录好了会自动回到这里。"
-    : "这台电脑的授权被吊销了。要让 Pupu 接着用它，就重新配对。";
+    : unfinished
+      ? "这台电脑的配对没做完。"
+      : "这台电脑的授权被吊销了。要让 Pupu 接着用它，就重新配对。";
   show(google, fields && info.google);
   google.disabled = pairing;
   show($("or"), fields && info.google);
@@ -48,9 +56,9 @@ function render() {
   code.disabled = pairing;
   show($("adopt-row"), fields && Boolean(info.adoptable));
   show(submit, !waiting);
-  submit.textContent = computer ? "重新配对" : "继续";
+  submit.textContent = unfinished ? "再试一次" : oneClick() ? "重新配对" : "继续";
   // 没填码时「继续」是 action-off，主次留给 Google；填了才换成 action。正在配对时转圈，点不了。
-  submit.disabled = !computer && !info.codeOptional && !code.value.trim();
+  submit.disabled = !oneClick() && !info.codeOptional && !code.value.trim();
   submit.classList.toggle("busy", pairing);
   submit.toggleAttribute("aria-busy", pairing);
   show(cancel, waiting);
@@ -91,7 +99,7 @@ cancel.addEventListener("click", () => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!info || status.busy) return;
-  if (status.reason !== "computer" && !code.value.trim() && !info.codeOptional) return;
+  if (!oneClick() && !code.value.trim() && !info.codeOptional) return;
   showError("");
   const failed = await window.pupuPairing.pair({ code: code.value.trim(), adopt: adopt() });
   // 成功时主进程会关掉这个窗口。

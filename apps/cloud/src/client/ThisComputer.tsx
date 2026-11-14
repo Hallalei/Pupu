@@ -33,9 +33,13 @@ const WORD: Record<DesktopComputer["status"], string> = {
   waiting: "等你批准"
 };
 
-/** 窗口还在、这台电脑的凭据没了，就是被吊销了。设置首页「这台电脑」那一行也用它。 */
+/**
+ * 窗口还在、这台电脑的凭据没了：配对半路没做完是「没连上」（补充「配对没做完」由 App 报），云端拒了是「授权被吊销」。
+ * 老的 App 分不出这两种，没配好都当被吊销。设置首页「这台电脑」那一行也用它。
+ */
 export function statusWord(computer: DesktopComputer): string {
-  return computer.paired ? WORD[computer.status] : "授权被吊销";
+  if (computer.paired) return WORD[computer.status];
+  return computer.unfinished ? WORD.offline : "授权被吊销";
 }
 
 /** 这一页的行：高 44，左右 16，字 body；不能点的字用 ink-muted。 */
@@ -108,14 +112,23 @@ export function ThisComputer({ computer }: { computer: DesktopComputer }) {
                 {computer.jobs > 0 ? `停止命令（${computer.jobs} 条）` : "停止命令"}
               </button>
             ]
-          : (
-              <div key="revoked" className="flex flex-col items-start gap-2 px-4 py-3">
-                <p className="m-0 text-body">Pupu 现在用不了这台电脑。</p>
-                <button type="button" onClick={() => run("status", () => app.repair())} className={PILL_ACTION}>
-                  重新配对
-                </button>
-              </div>
-            )}
+          : computer.unfinished
+            ? (
+                // 状态那一行已经写了「没连上 · 配对没做完」，这里只给按钮。
+                <div key="unfinished" className="flex px-4 py-3">
+                  <button type="button" onClick={() => run("status", () => app.repair())} className={PILL_ACTION}>
+                    再试一次
+                  </button>
+                </div>
+              )
+            : (
+                <div key="revoked" className="flex flex-col items-start gap-2 px-4 py-3">
+                  <p className="m-0 text-body">Pupu 现在用不了这台电脑。</p>
+                  <button type="button" onClick={() => run("status", () => app.repair())} className={PILL_ACTION}>
+                    重新配对
+                  </button>
+                </div>
+              )}
       </Group>
       <Group label="本机开关" error={errors.switches}>
         {SWITCHES.map(([name, label, hint]) => (

@@ -8,12 +8,17 @@ import { useEffect, useState } from "react";
 export type DesktopComputer = {
   /** 这台电脑有没有配对好、桥有没有在跑。 */
   readonly paired: boolean;
+  /**
+   * 没配好是因为配对半路没做完：窗口连上了，这台电脑的凭据还没拿到，再试一次就好。
+   * 没配好而这一项不是 true，是云端拒了这台电脑的凭据（授权被吊销）。老的 App 不报。
+   */
+  readonly unfinished?: boolean;
   readonly computerId: string | null;
   readonly name: string;
   readonly status: "offline" | "idle" | "busy" | "screen" | "waiting";
   /** 状态词：在线、在做事、在用屏幕、等你批准、没连上、授权被吊销。 */
   readonly title: string;
-  /** 状态词的补充，接在「 · 」后面：屏幕已授权、正在连接…、正在被远程控制。老的 App 不报。 */
+  /** 状态词的补充，接在「 · 」后面：屏幕已授权、正在连接…、配对没做完、正在被远程控制。老的 App 不报。 */
   readonly detail?: string | null;
   readonly lines: readonly string[];
   readonly screenGrant: boolean;
@@ -60,7 +65,7 @@ export type PupuDesktop = {
   takeback(): Promise<void>;
   stopJobs(): Promise<void>;
   openPrivacySettings(pane: PrivacyPane): Promise<void>;
-  /** 窗口的凭据失效了：打开 App 自己的配对窗口。 */
+  /** 窗口的凭据失效了、这台电脑被吊销了或者配对没做完：打开 App 自己的配对窗口。 */
   repair(): Promise<void>;
   /** 人来接手：在主窗口里打开放大视图，里面是 Pupu 浏览器的真实页面。0.2.4 以前的 App 没有。 */
   showBrowser?(): Promise<void>;
