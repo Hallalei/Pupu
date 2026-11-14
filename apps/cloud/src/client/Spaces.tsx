@@ -124,7 +124,7 @@ export function SpaceList({
         className={`${row} ${docs ? (wide ? "bg-nav-current font-semibold" : "font-semibold") : hover}`}
       >
         <FileIcon className="shrink-0 text-[16px] text-muted" />
-        资料
+        Artifacts
       </button>
       <div className={`mt-3 flex items-center justify-between ${wide ? "px-2.5" : "px-4"}`}>
         <span className="text-footnote font-medium text-muted">空间</span>

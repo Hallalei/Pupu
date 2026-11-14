@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { DocStore, docScope, mayDeleteDoc, viewerScope, viewerTarget } from "../src/docs.ts";
+import { bodyFits, DOC_BODY_LIMIT, DocStore, docScope, kindOf, looksLikePage, mayDeleteDoc, PAGE_BODY_LIMIT, PAGE_SANDBOX, viewerScope, viewerTarget } from "../src/docs.ts";
 import { createDocTools, writeTarget } from "../src/docs-tools.ts";
 import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { renderPrompt } from "../src/prompt.ts";
@@ -270,3 +270,61 @@ describe("资料：谁能删", () => {
   });
 });
 
+
+describe("页面（Artifacts）", () => {
+  test("认得出一页 HTML，Markdown 和半截标签不算", () => {
+    assert.equal(looksLikePage("<!DOCTYPE html><html><body>hi</body></html>"), true);
+    assert.equal(looksLikePage("  \n<html lang=\"zh\">"), true);
+    assert.equal(looksLikePage("<!-- 说明 -->\n<!doctype html>"), true);
+    assert.equal(looksLikePage("# 标题\n<html>"), false);
+    assert.equal(looksLikePage("<htmlx>"), false);
+    assert.equal(looksLikePage("<div>片段</div>"), false);
+  });
+
+  test("认不出的种类当文字资料", () => {
+    assert.equal(kindOf("page"), "page");
+    assert.equal(kindOf("skill"), "skill");
+    assert.equal(kindOf("script"), "doc");
+    assert.equal(kindOf(undefined), "doc");
+  });
+
+  test("页面按字节算上限，比文字资料宽", () => {
+    const big = "a".repeat(DOC_BODY_LIMIT + 1);
+    assert.equal(bodyFits("doc", big), false);
+    assert.equal(bodyFits("page", big), true);
+    assert.equal(bodyFits("page", "汉".repeat(PAGE_BODY_LIMIT / 3 + 1)), false);
+  });
+
+  test("沙箱不给同源，也跳不走 App", () => {
+    const flags = PAGE_SANDBOX.split(" ");
+    assert.ok(flags.includes("allow-scripts"));
+    for (const flag of ["allow-same-origin", "allow-top-navigation", "allow-top-navigation-by-user-activation", "allow-popups-to-escape-sandbox"]) {
+      assert.ok(!flags.includes(flag), flag);
+    }
+  });
+
+  test("Pupu 存一个页面：种类留着，列表里不带正文，改的时候种类不变", async () => {
+    const pupu = await org();
+    const run = tools(pupu);
+    const html = "<!doctype html><title>周报看板</title><h1>本周</h1>";
+    const saved = await run("doc_write", { title: "周报看板", summary: "本周数字", body: html, kind: "page" }, "9");
+    assert.equal(saved.isError, undefined, saved.text);
+    const id = String(saved.details?.id);
+    assert.match(saved.text, /页面/);
+    const listed = pupu.docs.list({ spaceIds: [String(saved.details?.spaceId)] }, "page");
+    assert.deepEqual(listed.map((doc) => doc.title), ["周报看板"]);
+    assert.equal("body" in listed[0]!, false);
+    await run("doc_write", { id, title: "周报看板", summary: "", body: "<!doctype html><h1>第二版</h1>" }, "9");
+    assert.equal(pupu.docs.current(id)!.kind, "page");
+    const read = await run("doc_read", { id }, "9");
+    assert.match(read.text, /第二版/);
+  });
+
+  test("页面太大被拒", async () => {
+    const pupu = await org();
+    const run = tools(pupu);
+    const result = await run("doc_write", { title: "大", summary: "", body: "a".repeat(PAGE_BODY_LIMIT + 1), kind: "page" }, "9");
+    assert.equal(result.isError, true);
+    assert.match(result.text, /页面太大/);
+  });
+});

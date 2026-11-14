@@ -167,7 +167,7 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
-import { DOC_BODY_LIMIT, DocStore, docScope, mayDeleteDoc, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
+import { bodyFits, DOC_BODY_LIMIT, DocStore, docScope, kindOf, mayDeleteDoc, PAGE_BODY_LIMIT, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
 import { createDocTools } from "./docs-tools.ts";
 import { createOrgTools } from "./org.ts";
 import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
@@ -2248,7 +2248,7 @@ export class Pupu extends DurableObject<Env> {
     return "ok";
   }
 
-  /** 人上传一份资料。放到哪由他选，只能是他看得到的地方；算他写的。 */
+  /** 人上传一份资料或页面。放到哪由他选，只能是他看得到的地方；算他写的。 */
   async uploadDoc(
     input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string },
     device: string | null = null
@@ -2256,7 +2256,7 @@ export class Pupu extends DurableObject<Env> {
     await this.lifecycle.start();
     const viewer = this.#viewer(device);
     const title = input.title.trim();
-    if (!title || !input.body.trim() || input.body.length > DOC_BODY_LIMIT) return "invalid";
+    if (!title || !input.body.trim() || !bodyFits(input.kind, input.body)) return "invalid";
     const target = viewerTarget(viewer, input.spaceId, this.store.listProjects());
     if (target === undefined) return "forbidden";
     const meta = this.docs.write(
@@ -3123,13 +3123,13 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
         title: String(body.title ?? ""),
         summary: String(body.summary ?? ""),
         body: String(body.body ?? ""),
-        kind: body.kind === "skill" ? "skill" : "doc",
+        kind: kindOf(body.kind),
         spaceId: typeof body.spaceId === "string" ? body.spaceId : null,
         operation: typeof body.operation === "string" && body.operation ? body.operation : crypto.randomUUID()
       },
       caller.device
     );
-    if (result === "invalid") return Response.json({ error: `标题和正文都要有，正文不超过 ${DOC_BODY_LIMIT} 字` }, { status: 400 });
+    if (result === "invalid") return Response.json({ error: `标题和正文都要有。文字不超过 ${DOC_BODY_LIMIT / 10_000} 万字，页面不超过 ${PAGE_BODY_LIMIT / 1_000_000}MB` }, { status: 400 });
     if (result === "forbidden") return Response.json({ error: "没有这个空间" }, { status: 404 });
     return Response.json(result);
   }

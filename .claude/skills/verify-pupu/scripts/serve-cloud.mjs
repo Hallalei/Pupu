@@ -10,6 +10,8 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const cloud = join(repo, "apps/cloud");
 const port = process.env.PUPU_VERIFY_PORT ?? "5199";
 const state = process.env.PUPU_VERIFY_STATE ?? "/tmp/pupu-verify/state";
+// 浏览器的 cookie 按主机名不按端口：localhost 上另一个验证实例种的 cookie 会带过来，被当成坏凭据。并行验证时换成 127.0.0.1。
+const host = process.env.PUPU_VERIFY_HOST;
 const scaffold = join(cloud, "node_modules/.pupu-verify");
 const config = join(scaffold, "vite.config.ts");
 
@@ -28,7 +30,7 @@ mkdirSync(state, { recursive: true });
 mkdirSync(scaffold, { recursive: true });
 writeFileSync(config, source.replace("cloudflare()", `cloudflare({ persistState: { path: ${JSON.stringify(state)} } })`));
 
-const server = spawn("npx", ["vite", "dev", "--config", config, "--port", port, "--strictPort"], {
+const server = spawn("npx", ["vite", "dev", "--config", config, "--port", port, "--strictPort", ...(host ? ["--host", host] : [])], {
   cwd: cloud,
   stdio: "inherit"
 });

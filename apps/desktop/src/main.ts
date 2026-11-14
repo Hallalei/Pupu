@@ -578,8 +578,9 @@ function guard(contents: WebContents, allowPupu: boolean): void {
     event.preventDefault();
     openExternal(url);
   });
+  // Artifacts 的页面是 srcdoc 的沙箱 iframe（不透明源，preload 只进主框架），要放它载进来；页面里再往外跳一律不让。
   contents.on("will-frame-navigate", (event) => {
-    if (!event.isMainFrame && !allowed(event.url)) event.preventDefault();
+    if (!event.isMainFrame && !allowed(event.url) && !(allowPupu && event.url === "about:srcdoc")) event.preventDefault();
   });
   contents.on("will-redirect", (event, url) => {
     if (!allowed(url)) event.preventDefault();

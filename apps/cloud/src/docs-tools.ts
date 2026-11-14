@@ -1,7 +1,7 @@
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { mayRead } from "./access.ts";
-import { DOC_BODY_LIMIT, docScope, mayPromote, type DocKind, type DocMeta, type DocStore } from "./docs.ts";
+import { bodyFits, DOC_BODY_LIMIT, docScope, mayPromote, PAGE_BODY_LIMIT, type DocKind, type DocMeta, type DocStore } from "./docs.ts";
 import type { Project } from "./projects.ts";
 import type { Thread } from "./threads.ts";
 
@@ -49,7 +49,7 @@ export function writeTarget(thread: Thread, wanted: string | null | undefined, s
 
 function line(meta: DocMeta, spaces: readonly Project[]): string {
   const place = meta.spaceId === null ? "组织" : `空间「${spaces.find((space) => space.id === meta.spaceId)?.name ?? "?"}」`;
-  const kind = meta.kind === "skill" ? "skill" : "资料";
+  const kind = meta.kind === "skill" ? "skill" : meta.kind === "page" ? "页面" : "资料";
   return `- ${meta.title}（id: ${meta.id}，${kind}，${place}）${meta.summary ? `：${meta.summary}` : ""}`;
 }
 
@@ -61,9 +61,11 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
 
   const list = defineTool({
     name: "doc_list",
-    description: "列出这里能看的资料和 skill：组织层的，加上这条会话读得到的空间里的。",
+    description: "列出这里能看的资料、skill 和页面：组织层的，加上这条会话读得到的空间里的。",
     parameters: Type.Object({
-      kind: Type.Optional(Type.Union([Type.Literal("doc"), Type.Literal("skill")], { description: "只要资料（doc）或只要 skill，不填是全部" }))
+      kind: Type.Optional(
+        Type.Union([Type.Literal("doc"), Type.Literal("skill"), Type.Literal("page")], { description: "只要资料（doc）、skill 或页面（page），不填是全部" })
+      )
     }),
     replay: "safe",
     async execute(args, api) {
@@ -80,7 +82,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
 
   const search = defineTool({
     name: "doc_search",
-    description: "按关键词找资料和 skill（标题、说明、正文）。",
+    description: "按关键词找资料、skill 和页面（标题、说明、正文）。",
     parameters: Type.Object({ query: Type.String({ description: "关键词" }) }),
     replay: "safe",
     async execute(args, api) {
@@ -97,7 +99,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
 
   const read = defineTool({
     name: "doc_read",
-    description: "读一份资料或 skill 的正文。id 来自 doc_list、doc_search 或提示词里的 skill 列表。",
+    description: "读一份资料、skill 或页面的正文。页面的正文是整页 HTML。id 来自 doc_list、doc_search 或提示词里的 skill 列表。",
     parameters: Type.Object({ id: Type.String() }),
     replay: "safe",
     async execute(args, api) {
@@ -114,13 +116,18 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
   const write = defineTool({
     name: "doc_write",
     description:
-      "存一份资料或 skill，或者改已有的（给 id）。资料是「是什么」（需求、规格、定下的方案）；skill 是「这件事怎么做」（步骤、口径、格式），存之前先问过人。空间里的会话只存到本空间；全员里默认存到组织层；私聊里要问清楚存到组织层还是哪个空间。",
+      "存一份资料、skill 或页面，或者改已有的（给 id）。资料是「是什么」（需求、规格、定下的方案）；skill 是「这件事怎么做」（步骤、口径、格式），存之前先问过人；页面（page）是一页给人看、给人用的 HTML（看板、图解、小工具、原型），大家在 Artifacts 里打开。空间里的会话只存到本空间；全员里默认存到组织层；私聊里要问清楚存到组织层还是哪个空间。",
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "要改的资料 id，新建不填" })),
       title: Type.String({ description: "标题，简短" }),
       summary: Type.String({ description: "一句话说明。skill 写清楚什么时候用它" }),
-      body: Type.String({ description: "正文，Markdown" }),
-      kind: Type.Optional(Type.Union([Type.Literal("doc"), Type.Literal("skill")], { description: "doc 或 skill，默认 doc" })),
+      body: Type.String({
+        description:
+          "资料和 skill 写 Markdown。页面写一整页 HTML（<!doctype html> 开头），样式和脚本都写在里面，外部脚本只用 cdnjs、jsdelivr、unpkg 上带版本号的；页面跑在沙箱里，没有 localStorage 和 cookie，也连不到 Pupu，要的数据直接写进页面；手机上也要能看"
+      }),
+      kind: Type.Optional(
+        Type.Union([Type.Literal("doc"), Type.Literal("skill"), Type.Literal("page")], { description: "doc、skill 或 page，默认 doc。改已有的不用填" })
+      ),
       space_id: Type.Optional(Type.String({ description: "存进哪个空间的 id，组织层写 org。空间里不用填；私聊里必须写清楚" }))
     }),
     replay: "safe",
@@ -128,10 +135,17 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
       const session = String(api.conversationId);
       const thread = actions.threadOf(session);
       if (!thread) return refuse("这条会话存不了资料。");
-      if (args.body.length > DOC_BODY_LIMIT) return refuse(`正文太长了（上限 ${DOC_BODY_LIMIT} 字），分几份存。`);
+      const kind: DocKind = args.kind ?? "doc";
       const spaces = actions.spaces();
       const existing = args.id ? actions.docs.read(docScope(thread, spaces), args.id) : undefined;
       if (args.id && !existing) return refuse(`这里没有 id 为 ${args.id} 的资料。`);
+      if (!bodyFits(existing?.kind ?? kind, args.body)) {
+        return refuse(
+          (existing?.kind ?? kind) === "page"
+            ? `页面太大了（上限 ${PAGE_BODY_LIMIT / 1_000_000}MB），把数据精简一下。`
+            : `正文太长了（上限 ${DOC_BODY_LIMIT} 字），分几份存。`
+        );
+      }
       const wanted = existing ? existing.spaceId : args.space_id === "org" ? null : args.space_id;
       const target = writeTarget(thread, wanted, spaces);
       if (target === undefined && wanted === undefined) {
@@ -144,7 +158,7 @@ export function createDocTools(actions: DocActions): ToolRegistration[] {
         {
           id: existing?.id,
           spaceId: target,
-          kind: args.kind ?? "doc",
+          kind,
           title: args.title.trim() || "没起名的资料",
           summary: args.summary.trim(),
           body: args.body,

@@ -480,6 +480,8 @@ nonisolated struct DocMeta: Decodable, Sendable, Hashable {
     let title: String
     let summary: String
     var isSkill: Bool { kind == "skill" }
+    /// 一页 HTML（Artifacts 里的页面）。
+    var isPage: Bool { kind == "page" }
 }
 
 /// 资料页：看得到的资料，和上传能放到哪（第一个是组织）。
@@ -495,6 +497,8 @@ nonisolated struct DocsView: Decodable, Sendable {
 /// 打开的一份资料。`mayDelete`：上传的人或空间主人（老云端没有这一项，当作不能删）。
 nonisolated struct DocView: Decodable, Sendable {
     let id: String
+    /// doc、skill、page。老云端也有这一项。
+    let kind: String?
     let title: String
     let summary: String
     let body: String

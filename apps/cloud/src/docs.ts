@@ -4,12 +4,13 @@
  * - 资料属于一个空间，或者属于组织层（`space_id` 为空，全员可见）。skill 是一种资料（`kind = skill`），写「这件事怎么做」。
  * - 谁能读：按会话的受众现算，见 `docScope`。范围直接写进查询条件，不查完再筛。
  * - 改一份资料是加一个新版本，旧版本标 `ended_at`，不真删。
- * - 第一版只放文字，正文存在这张表里（有长度上限），没放 R2：R2 要在账户里新建桶，等图片和设计稿一起做。
+ * - page 是一页自带的 HTML（Artifacts），人上传或 Pupu 写的，界面上放进沙箱 iframe 里跑，见 `PAGE_SANDBOX`。
+ * - 正文存在这张表里（有长度上限），没放 R2：R2 要在账户里新建桶，等图片和多文件的页面一起做。
  */
 
 import { isOpen, mayRead, maySeeSpace, type AccessThread, type SpaceAccess } from "./access.ts";
 
-export type DocKind = "doc" | "skill";
+export type DocKind = "doc" | "skill" | "page";
 
 export type DocMeta = {
   /** 这份资料的 id，改了也不变。 */
@@ -30,8 +31,32 @@ export type DocMeta = {
 
 export type Doc = DocMeta & { readonly body: string };
 
-/** 正文上限。第一版只放文字，长文档先分开存。 */
+/** 文字资料的正文上限（字）。长文档先分开存。 */
 export const DOC_BODY_LIMIT = 200_000;
+/** 页面的上限（UTF-8 字节）。Durable Object 的 SQLite 一个值最多 2MB，留点余地。 */
+export const PAGE_BODY_LIMIT = 1_500_000;
+
+/**
+ * 页面跑在什么样的 iframe 里。没有 allow-same-origin：页面是不透明源，拿不到 App 的 cookie、localStorage 和 DOM，
+ * 发到 App 的请求带的 Origin 是 null，`authenticate` 不认。也没有 allow-top-navigation：页面跳不走 App。
+ * 弹窗继承这套沙箱（没有 allow-popups-to-escape-sandbox）。
+ */
+export const PAGE_SANDBOX = "allow-scripts allow-popups allow-modals allow-forms";
+
+/** 正文放不放得下。 */
+export function bodyFits(kind: DocKind, body: string): boolean {
+  return kind === "page" ? new TextEncoder().encode(body).length <= PAGE_BODY_LIMIT : body.length <= DOC_BODY_LIMIT;
+}
+
+/** 看上去是一页 HTML：以 <!doctype html> 或 <html 开头。人上传时用它认页面。 */
+export function looksLikePage(body: string): boolean {
+  return /^\s*(<!--[\s\S]*?-->\s*)*<(!doctype\s+html|html[\s>])/i.test(body);
+}
+
+/** 存着的或者传上来的种类，认不出的当文字资料。 */
+export function kindOf(value: unknown): DocKind {
+  return value === "skill" || value === "page" ? value : "doc";
+}
 /** 提示词里最多列这么多 skill。 */
 export const SKILL_LIST_LIMIT = 30;
 
@@ -91,7 +116,7 @@ function toMeta(row: Row): DocMeta {
   return {
     id: String(row.doc_id),
     spaceId: row.space_id === null || row.space_id === undefined ? null : String(row.space_id),
-    kind: row.kind === "skill" ? "skill" : "doc",
+    kind: kindOf(row.kind),
     title: String(row.title),
     summary: String(row.summary ?? ""),
     size: Number(row.size),
@@ -101,6 +126,9 @@ function toMeta(row: Row): DocMeta {
     updatedAt: Number(row.updated_at)
   };
 }
+
+/** 列表只要这些，不把正文（页面可能上 MB）读出来。 */
+const META_COLUMNS = "doc_id, space_id, kind, title, summary, size, author_id, copied_from, created_at, updated_at";
 
 /** `space_id IN (…) OR space_id IS NULL`，和它的参数。 */
 function scopeWhere(scope: DocScope): { sql: string; params: string[] } {
@@ -148,7 +176,7 @@ export class DocStore {
     const kindSql = kind ? " AND kind = ?" : "";
     return this.#db()
       .exec(
-        `SELECT * FROM pupu_docs WHERE ended_at IS NULL AND ${where.sql}${kindSql} ORDER BY updated_at DESC`,
+        `SELECT ${META_COLUMNS} FROM pupu_docs WHERE ended_at IS NULL AND ${where.sql}${kindSql} ORDER BY updated_at DESC`,
         ...where.params,
         ...(kind ? [kind] : [])
       )
@@ -162,7 +190,7 @@ export class DocStore {
     const like = `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
     return this.#db()
       .exec(
-        `SELECT * FROM pupu_docs WHERE ended_at IS NULL AND ${where.sql}
+        `SELECT ${META_COLUMNS} FROM pupu_docs WHERE ended_at IS NULL AND ${where.sql}
          AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
          ORDER BY updated_at DESC LIMIT ?`,
         ...where.params,

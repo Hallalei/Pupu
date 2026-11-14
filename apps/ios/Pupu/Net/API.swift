@@ -185,9 +185,10 @@ nonisolated struct API: Sendable {
     }
 
     /// 上传文字资料。`operation` 去重：网络重试不多传一份。
-    func uploadDoc(title: String, summary: String, body: String, skill: Bool, spaceId: String?, operation: String) async throws -> DocMeta {
+    /// `kind`：doc、skill、page。
+    func uploadDoc(title: String, summary: String, body: String, kind: String, spaceId: String?, operation: String) async throws -> DocMeta {
         let json: [String: Any] = [
-            "title": title, "summary": summary, "body": body, "kind": skill ? "skill" : "doc",
+            "title": title, "summary": summary, "body": body, "kind": kind,
             "spaceId": spaceId.map { $0 as Any } ?? NSNull(), "operation": operation
         ]
         return try await send("api/docs", method: "POST", raw: try JSONSerialization.data(withJSONObject: json), type: "application/json")
