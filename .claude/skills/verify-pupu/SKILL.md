@@ -88,7 +88,7 @@ node $S/cdp.mjs eval "window.pupuPairing.pair({code:'$CODE',adopt:false})"
 
 ```bash
 U=<iPhone 的 UDID，从 xcrun simctl list devices available 选>
-xcrun simctl boot $U && xcrun simctl bootstatus $U -b
+xcrun simctl boot $U && perl -e 'alarm 90; exec @ARGV' xcrun simctl bootstatus $U
 xcodebuild -project apps/ios/Pupu.xcodeproj -scheme Pupu -sdk iphonesimulator \
   -destination "id=$U" -derivedDataPath /tmp/pupu-verify/ios-dd \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= build
@@ -96,7 +96,7 @@ xcodebuild -project apps/ios/Pupu.xcodeproj -scheme Pupu -sdk iphonesimulator \
 
 用本机临时签名（`CODE_SIGN_IDENTITY=-`），别用 `CODE_SIGNING_ALLOWED=NO`：不签名的包没有钥匙串权限，写入回 -34018，凭据只留在内存里，切组织、重启这类要存凭据的路径会假失败。
 
-`launch` 报 `The system shell probably crashed` 是这台模拟器坏了：`xcrun simctl shutdown $U`，换一个机型重来。
+`bootstatus` 90 秒没回来（退出码 142），或 `launch` 报 `The system shell probably crashed`，是这台模拟器坏了：`xcrun simctl shutdown $U`，换一个机型重来。
 
 构建要几分钟，放后台跑。用 iOS Simulator 工具的 `launch` 装上 `/tmp/pupu-verify/ios-dd/Build/Products/Debug-iphonesimulator/Pupu.app`，再用配对链接连上：
 

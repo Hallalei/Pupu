@@ -48,6 +48,11 @@ const live = await fetch("https://dl.getpupu.com/mac-arm64.json")
   .catch(() => null);
 if (ends[1][1]) line(Boolean(live) && newer(local, live), "电脑 App 版本号比线上新", `本地 ${local}，线上 ${live ?? "读不到"}`);
 else console.log(`--  电脑 App 没改：本地 ${local}，线上 ${live ?? "读不到"}`);
+if (ends[0][1] && !ends[1][1]) {
+  const bundled = execFileSync("git", ["grep", "-hoE", "cloud/src/[A-Za-z0-9_./-]+", "--", "apps/desktop/src"], { cwd: repo, encoding: "utf8" });
+  const hit = [...new Set(bundled.split("\n").filter(Boolean))].map((path) => `apps/${path}`).filter((path) => files.includes(path));
+  line(hit.length === 0, "云端改动没碰电脑 App 打包进去的文件", `${hit.join("、")} 也打进电脑 App，版本号加一再发`);
+}
 
 const check = spawnSync("node", [join(repo, "scripts/check.mjs")], { cwd: repo, encoding: "utf8" });
 line(check.status === 0, "类型检查和测试全过", check.status === 0 ? "" : "跑 node scripts/check.mjs 看哪项");
