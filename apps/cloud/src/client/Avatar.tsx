@@ -1,6 +1,6 @@
 import { Button } from "@heroui/react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { AVATAR_PRESETS } from "../avatar-presets";
+import { AVATAR_PRESETS, PUPU_AVATAR_PRESETS } from "../avatar-presets";
 import type { MemberView } from "../members";
 import { api } from "./api";
 
@@ -50,6 +50,7 @@ export function MyAvatarPage({ me }: { me: MemberView }) {
     <AvatarPage
       name={me.name}
       current={me.avatar}
+      presets={AVATAR_PRESETS}
       resetLabel="用名字的第一个字"
       onPreset={api.setAvatar}
       onUpload={api.uploadAvatar}
@@ -64,6 +65,7 @@ export function PupuAvatarPage({ current }: { current: string | null }) {
       name="Pupu"
       current={current}
       fallback={PUPU_AVATAR}
+      presets={PUPU_AVATAR_PRESETS}
       resetLabel="用原来的"
       onPreset={api.setPupuAvatar}
       onUpload={api.uploadPupuAvatar}
@@ -76,6 +78,7 @@ function AvatarPage({
   name,
   current,
   fallback = null,
+  presets,
   resetLabel,
   onPreset,
   onUpload
@@ -85,6 +88,8 @@ function AvatarPage({
   current: string | null;
   /** 没换过时显示的图；没有就显示名字的第一个字。 */
   fallback?: string | null;
+  /** 成员是像素小人，Pupu 是像素猫。 */
+  presets: readonly { readonly id: string; readonly name: string }[];
   resetLabel: string;
   onPreset: (preset: string | null) => Promise<unknown>;
   onUpload: (image: Blob) => Promise<unknown>;
@@ -135,7 +140,7 @@ function AvatarPage({
         <MemberAvatar name={name} src={current ?? fallback} className="size-24 bg-foreground text-[40px] text-background" />
       </div>
       <div className="grid grid-cols-4 gap-3 rounded-row bg-surface p-4" role="radiogroup" aria-label="预设头像">
-        {AVATAR_PRESETS.map((preset) => {
+        {presets.map((preset) => {
           const url = `/avatars/${preset.id}.png`;
           const selected = current === url;
           return (

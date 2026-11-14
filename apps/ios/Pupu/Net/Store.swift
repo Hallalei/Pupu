@@ -23,8 +23,10 @@ final class Store {
         var activity: [ComputerActivity] = []
         /// 项目报回聊天的结果，按时间先后。
         var reports: [ReportCard] = []
-        /// 能选的预设头像。
+        /// 成员能选的预设头像。
         var avatarPresets: [AvatarPreset] = []
+        /// Pupu 能换的预设头像。
+        var pupuAvatarPresets: [AvatarPreset] = []
         /// Pupu 换过的头像地址，nil 用自带的。
         var pupuAvatar: String?
         var error: String?
@@ -138,6 +140,7 @@ final class Store {
                     activity: state.activity ?? [],
                     reports: state.reports ?? [],
                     avatarPresets: state.avatarPresets ?? [],
+                    pupuAvatarPresets: state.pupuAvatarPresets ?? state.avatarPresets ?? [],
                     pupuAvatar: state.pupuAvatar,
                     error: nil,
                     loaded: true

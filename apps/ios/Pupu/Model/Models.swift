@@ -474,13 +474,15 @@ nonisolated struct PupuState: Decodable, Sendable {
     let connectors: Connectors?
     /// 旧版云端不给。
     let reports: [ReportCard]?
-    /// 能选的预设头像。旧版云端不给。
+    /// 成员能选的预设头像。旧版云端不给。
     let avatarPresets: [AvatarPreset]?
+    /// Pupu 换头像时能选的。旧版云端不给，那时两边共用 avatarPresets。
+    let pupuAvatarPresets: [AvatarPreset]?
     /// Pupu 换过的头像地址，没换过或旧版云端是 nil。
     let pupuAvatar: String?
 }
 
-/// 预设头像：Pupu 衍生的像素猫。`url` 相对这个 Pupu 的地址。
+/// 预设头像：成员的是像素小人，Pupu 的是 Pupu 衍生的像素猫。`url` 相对这个 Pupu 的地址。
 nonisolated struct AvatarPreset: Decodable, Sendable, Hashable {
     let id: String
     let name: String

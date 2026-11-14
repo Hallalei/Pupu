@@ -9,7 +9,7 @@
  * 只有本人能换自己的头像：接口不收成员 id，换的永远是发请求的设备的主人。
  */
 
-import { AVATAR_PRESETS } from "./avatar-presets.ts";
+import { AVATAR_PRESETS, PUPU_AVATAR_PRESETS } from "./avatar-presets.ts";
 
 /** 客户端裁好的边长。 */
 export const AVATAR_SIDE = 256;
@@ -29,8 +29,9 @@ export type StoredAvatar = { readonly type: AvatarType; readonly bytes: Uint8Arr
 /** 成员表 `avatar` 列的值。 */
 export type AvatarChoice = { readonly kind: "preset"; readonly id: string } | { readonly kind: "upload"; readonly at: number };
 
+/** 两套都认：成员挑小人、Pupu 挑猫是各端摆出来的；以前成员选过的猫还照常显示。 */
 export function isPreset(id: unknown): id is string {
-  return typeof id === "string" && AVATAR_PRESETS.some((preset) => preset.id === id);
+  return typeof id === "string" && [...AVATAR_PRESETS, ...PUPU_AVATAR_PRESETS].some((preset) => preset.id === id);
 }
 
 export function parseChoice(value: string | null): AvatarChoice | null {
