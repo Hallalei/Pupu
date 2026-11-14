@@ -74,7 +74,7 @@ describe("收不收上传", () => {
 
 describe("头像的值和地址", () => {
   test("预设只认清单里的 id", () => {
-    assert.ok(AVATAR_PRESETS.length >= 8 && AVATAR_PRESETS.length <= 24);
+    assert.ok(AVATAR_PRESETS.length >= 8 && AVATAR_PRESETS.length <= 12);
     assert.equal(isPreset(AVATAR_PRESETS[0]?.id), true);
     assert.equal(isPreset("../../etc/passwd"), false);
     assert.equal(parseChoice("preset:nope"), null);
