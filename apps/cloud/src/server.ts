@@ -158,6 +158,8 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
+import { DocStore, docScope, SKILL_LIST_LIMIT } from "./docs.ts";
+import { createDocTools } from "./docs-tools.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
 import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
@@ -253,6 +255,7 @@ export class Pupu extends DurableObject<Env> {
   readonly #root = this.ctx.id.equals(this.env.Pupu.idFromName(ROOT_PUPU));
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly children = new SpaceSessionStore(this.ctx.storage.sql);
+  readonly docs = new DocStore(this.ctx.storage.sql);
   readonly threads = new ThreadStore(this.ctx.storage.sql, this.store, (session) => {
     const child = this.children.bySession(session);
     const project = child && this.store.getProject(child.projectId);
@@ -372,7 +375,8 @@ export class Pupu extends DurableObject<Env> {
                   const member = this.members.byId(memberId);
                   return member ? memberName(member) : "这位成员";
                 },
-                thread.kind === "project" ? this.children.ofProject(thread.project.id) : []
+                thread.kind === "project" ? this.children.ofProject(thread.project.id) : [],
+                this.docs.list(docScope(thread, this.store.listProjects()), "skill").slice(0, SKILL_LIST_LIMIT)
               );
             }
           }
@@ -380,6 +384,7 @@ export class Pupu extends DurableObject<Env> {
         tools: [
           ...this.#pupuTools,
           ...this.#delegationTools,
+          ...this.#docTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -1777,6 +1782,15 @@ export class Pupu extends DurableObject<Env> {
   readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
 
   /** 委派工具。`deferred`，只有切成协调模式的主会话会被提供，见 delegation.ts。 */
+  /** 共享资料和 skill 的工具，按会话的受众筛，见 docs.ts、docs-tools.ts。 */
+  readonly #docTools = createDocTools({
+    docs: this.docs,
+    threadOf: (session) => this.threads.of(session),
+    spaces: () => this.store.listProjects(),
+    now: () => Date.now(),
+    changed: () => this.#changed()
+  });
+
   readonly #delegationTools = createDelegationTools({
     threadOf: (session) => this.threads.of(session),
     children: this.children,
@@ -1864,7 +1878,7 @@ export class Pupu extends DurableObject<Env> {
     const pi = await this.harness.pi();
     const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
     if (!conversation) return false;
-    const tools = [...this.#pupuTools, ...this.#delegationTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
+    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
     await conversation.configure(
       mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } },
       BACKGROUND_CONTEXT
