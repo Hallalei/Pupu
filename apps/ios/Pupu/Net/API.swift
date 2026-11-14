@@ -4,6 +4,8 @@ nonisolated struct APIError: LocalizedError {
     let message: String
     /// 401：凭据不对，或者这台手机被吊销了。
     var unauthorized = false
+    /// 请求没发到 Pupu（断网、地址不对、服务器没开）。登录页据此写「连不上 <主机>，看看网络。」。
+    var offline = false
     var errorDescription: String? { message }
 }
 
@@ -229,7 +231,7 @@ nonisolated struct API: Sendable {
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            throw APIError(message: "连不上 Pupu：\(error.localizedDescription)")
+            throw APIError(message: "连不上 Pupu：\(error.localizedDescription)", offline: true)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {

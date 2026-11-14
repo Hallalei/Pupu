@@ -405,10 +405,18 @@ final class SwitchView: UISwitch {
         super.init(frame: frame)
         onTintColor = Theme.action
         addAction(UIAction { [weak self] _ in self?.paintThumb() }, for: .valueChanged)
+        // 圆钮的颜色在设上去那一刻就按当时的深浅色定死了：新建的开关还没进窗口时按浅色算，深色里会画成白钮。
+        // 进窗口和换深浅色时按自己现在的主题重新上一次色。
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: SwitchView, _: UITraitCollection) in view.paintThumb() }
         paintThumb()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        paintThumb()
+    }
 
     override var isOn: Bool {
         didSet { paintThumb() }
@@ -420,6 +428,6 @@ final class SwitchView: UISwitch {
     }
 
     private func paintThumb() {
-        thumbTintColor = isOn ? Theme.onAction : nil
+        thumbTintColor = isOn ? Theme.onAction.resolvedColor(with: traitCollection) : nil
     }
 }

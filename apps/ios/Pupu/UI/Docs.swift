@@ -705,6 +705,8 @@ final class UploadDocViewController: UIViewController, UIDocumentPickerDelegate 
         placeButton.configuration?.imagePlacement = .trailing
         placeButton.configuration?.imagePadding = 6
         placeButton.configuration?.imageColorTransformer = UIConfigurationColorTransformer { _ in Theme.inkMuted }
+        // changesSelectionAsPrimaryAction 会自己在后面加一个上下箭头，和上面的 chevron.down 重复；只留一个，和网页一样。
+        placeButton.configuration?.indicator = .none
         placeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         placeButton.showsMenuAsPrimaryAction = true
         placeButton.changesSelectionAsPrimaryAction = true

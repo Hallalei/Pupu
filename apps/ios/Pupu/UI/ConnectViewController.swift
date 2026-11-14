@@ -444,7 +444,7 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         flow = .editing
         if error is CancellationError {
             show(nil)
-        } else if error is URLError {
+        } else if error is URLError || (error as? APIError)?.offline == true {
             show("连不上 \(base.host() ?? base.absoluteString)，看看网络。")
         } else {
             show(error.localizedDescription)

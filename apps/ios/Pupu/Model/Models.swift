@@ -388,7 +388,7 @@ nonisolated struct ReportCard: Decodable, Sendable, Hashable {
     var quote: String { "项目「\(projectName)」的报告 · \(currentStatus.label)：\(summary)" }
 }
 
-/// 「我 → 账户」：成员连给 Pupu 的 Gmail、日历、GitHub 这类账号。凭据在 open-connector，见云端 src/connectors/。
+/// 「设置 → 账户」：成员连给 Pupu 的 Gmail、日历、GitHub 这类账号。凭据在 open-connector，见云端 src/connectors/。
 nonisolated struct Connectors: Decodable, Sendable, Hashable {
     nonisolated struct Service: Decodable, Sendable, Hashable {
         /// open-connector 的 provider id，比如 gmail。

@@ -48,7 +48,7 @@ export function pickAccount(
   const candidates = accounts.filter((row) => row.service === service);
   const name = serviceOf(service)?.name ?? service;
   if (candidates.length === 0) {
-    return { ok: false, reason: `还没有连上 ${name}。请用户在「设置 → 账户」里连上再说。` };
+    return { ok: false, reason: `还没有连上 ${name}。请用户在手机 App 的「设置 → 账户」里连上再说。` };
   }
   const wanted = account?.trim().toLowerCase();
   if (wanted) {
@@ -111,7 +111,7 @@ export function createConnectorTools(deps: ConnectorDeps): ToolRegistration[] {
       const connected = [...new Set(accounts.map((row) => row.service))];
       const services = args.service ? [args.service] : connected;
       if (services.length === 0) {
-        return { output: text("还没有人连账号。请用户在「设置 → 账户」里连上。") };
+        return { output: text("还没有人连账号。请用户在手机 App 的「设置 → 账户」里连上。") };
       }
       try {
         const found = (await Promise.all(services.map((service) => client.search(args.query, service, 6)))).flat();

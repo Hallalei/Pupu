@@ -156,10 +156,10 @@ describe("用哪个账号", () => {
     assert.equal(picked.ok && picked.row.id, "app-1");
   });
 
-  test("没连上的服务照实说，让用户去「我 → 账户」", () => {
+  test("没连上的服务照实说，让用户去手机 App 的「设置 → 账户」", () => {
     const picked = pickAccount([account()], "github", undefined);
     assert.equal(picked.ok, false);
-    assert.match(!picked.ok ? picked.reason : "", /还没有连上 GitHub/);
+    assert.match(!picked.ok ? picked.reason : "", /还没有连上 GitHub。请用户在手机 App 的「设置 → 账户」里连上/);
   });
 
   test("连了几个又没说用哪个，先问；按邮箱或 id 都能选", () => {

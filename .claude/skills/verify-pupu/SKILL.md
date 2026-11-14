@@ -94,9 +94,14 @@ CODE=$(curl -s -X POST localhost:5199/api/pairing-codes | python3 -c 'import jso
 xcrun simctl openurl $U "pupu://pair?server=http%3A%2F%2Flocalhost%3A5199&code=$CODE"
 ```
 
-App 弹「连接到 localhost?」，截图找到「连接」再点，点按带 `duration: 0.15`。回到「聊天」页、`/api/state` 的 `devices` 里出现 `phone` 就连上了。
+App 弹「连接到 localhost?」，截图找到「连接」再点，点按带 `duration: 0.15`。回到「我的 Pupu」（顶栏左边是切换按钮，中间是 Pupu 头像和名字）、`/api/state` 的 `devices` 里出现 `phone` 就连上了。
 
-模拟器键盘是拼音，`text` 动作打不出中文。要发中文时走 WebSocket，见 [features/chat.md](features/chat.md)。
+- 这个 Pupu 连过手机以后（吊销了也算），新手机只能用已经连上的手机生成的码；网页或 curl 拿的码会被拒（`mayPair`）。要把手机配成某个成员的，就在没连过手机的新实例上，先用假 Google 登录那个人，用他的 cookie 拿码，再在登录页填码。不带 cookie 拿的码配出来的手机没有成员身份，看到的是老组织的样子（没有私聊，输入栏写「在「全员」里说」）。
+- 本机没设访问口令时，登录页的配对码留空、在输入框里按 `return` 也能连上（服务器当本机开发放行），配出来的手机归创建者，没有创建者就没有成员身份。
+
+模拟器键盘是拼音，`text` 动作打不出中文。打字母要再按一次 `return` 把拼音条里的字母落下来；打拼音时点候选条上的词能写进中文。要发长段中文时走 WebSocket，见 [features/chat.md](features/chat.md)。刚弹出 sheet 或重开 App 后第一下点输入栏常常没聚焦，打字前先截图看光标。
+
+实时活动只能由推送开，模拟器收不到：Debug 包用启动参数 `-PupuLiveActivityDemo screen|command|approval|done` 开一个示例，再锁屏或切到别的 App 看。灵动岛要用有岛的机型（iPhone 17、17 Pro），17e 没有岛。示例上的「拒绝」「允许」也不要点。
 
 ## 证据
 
