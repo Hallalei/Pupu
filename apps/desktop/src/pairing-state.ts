@@ -1,12 +1,39 @@
-import type { Pairing } from "./credentials.ts";
+import type { Credential, Pairing } from "./credentials.ts";
+
+/**
+ * 这台电脑（桥）的授权，托盘、配对窗口和设置里「这台电脑」那一页都从这里分：
+ * - `ok`：有凭据。只是窗口的凭据没了也算，桥照样在跑；
+ * - `first`：窗口和这台电脑的凭据都没有，要从头配对；
+ * - `unfinished`：窗口的凭据拿到了，这台电脑的还没拿到。配对半路出了错，再试一次就好；
+ * - `revoked`：云端拒了这台电脑的凭据。只有这种是规范 ThisComputer 里的「授权被吊销」。
+ */
+export type ComputerAuth = "ok" | "first" | "unfinished" | "revoked";
+
+export function computerAuth(pairing: Pairing): ComputerAuth {
+  if (pairing.computer) return "ok";
+  if (!pairing.desktop) return "first";
+  return pairing.computerRevoked ? "revoked" : "unfinished";
+}
+
+/** 云端拒了这台电脑的凭据：丢掉它，记下是被吊销了。 */
+export function rejectComputer(pairing: Pairing): Pairing {
+  return { ...pairing, computer: null, computerRevoked: true };
+}
+
+/** 拿到了这台电脑的新凭据，被吊销的记号跟着旧的一起去掉。 */
+export function withComputer(pairing: Pairing, computer: Credential): Pairing {
+  const { computerRevoked: _revoked, ...rest } = pairing;
+  return { ...rest, computer };
+}
 
 /**
  * 为什么要配对，跟着手上的凭据变：
  * - `first`：两份凭据都没有；
  * - `desktop`：窗口的凭据被吊销了，要一个新码；
- * - `computer`：窗口还能用，只是这台电脑的授权没了，点一下就重新授权，不用码。
+ * - `computer`：窗口还能用，云端拒了这台电脑的凭据，点一下就重新配对，不用码；
+ * - `unfinished`：窗口还能用，这台电脑的凭据上次没拿到，点一下再试，不用码。
  */
-export type PairingReason = "first" | "desktop" | "computer";
+export type PairingReason = "first" | "desktop" | "computer" | "unfinished";
 
 /** 正在做的那一次：用码配对，或者在浏览器里等 Google 登录。 */
 export type PairingBusy = "code" | "google";
@@ -18,8 +45,8 @@ export type PairingStatus = {
 };
 
 export function reasonOf(pairing: Pairing): PairingReason {
-  if (pairing.desktop) return "computer";
-  return pairing.computer ? "desktop" : "first";
+  if (!pairing.desktop) return pairing.computer ? "desktop" : "first";
+  return computerAuth(pairing) === "revoked" ? "computer" : "unfinished";
 }
 
 /**

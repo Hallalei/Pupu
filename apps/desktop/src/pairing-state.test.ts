@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PairingRun, reasonOf, type PairingBusy } from "./pairing-state.ts";
+import type { Pairing } from "./credentials.ts";
+import { computerAuth, PairingRun, reasonOf, rejectComputer, withComputer, type PairingBusy } from "./pairing-state.ts";
 
 const credential = { id: "d1", name: "mbpro", token: "secret" };
+const computer = { id: "c1", name: "mbpro", token: "bridge-secret" };
 
 function deferred() {
   let resolve!: (value: string | null) => void;
@@ -51,8 +53,31 @@ test("取消只结束在等的那次", async () => {
   assert.equal(run.busy, null);
 });
 
-test("窗口凭据拿到了、电脑授权没拿到：再试一次只要点重新授权，不用码", () => {
+test("两份都没有是第一次配对；只是窗口的没了，桥照常，配对窗口要码", () => {
+  assert.equal(computerAuth({ desktop: null, computer: null }), "first");
   assert.equal(reasonOf({ desktop: null, computer: null }), "first");
-  assert.equal(reasonOf({ desktop: credential, computer: null }), "computer");
-  assert.equal(reasonOf({ desktop: null, computer: credential }), "desktop");
+  assert.equal(computerAuth({ desktop: null, computer }), "ok");
+  assert.equal(reasonOf({ desktop: null, computer }), "desktop");
+});
+
+test("配对半路没做完（窗口的凭据存下了，第二步云端回 500）：是没做完，点一下再试，不算被吊销", () => {
+  const halfway: Pairing = { desktop: credential, computer: null };
+  assert.equal(computerAuth(halfway), "unfinished");
+  assert.equal(reasonOf(halfway), "unfinished");
+  // 重启后从凭据文件读回来还是没做完。
+  assert.equal(computerAuth(JSON.parse(JSON.stringify(halfway)) as Pairing), "unfinished");
+});
+
+test("云端拒了这台电脑的凭据才算被吊销，重启后也是；重新配好以后记号去掉", () => {
+  const revoked = rejectComputer({ desktop: credential, computer });
+  assert.equal(revoked.computer, null);
+  assert.equal(computerAuth(revoked), "revoked");
+  assert.equal(reasonOf(revoked), "computer");
+  assert.equal(computerAuth(JSON.parse(JSON.stringify(revoked)) as Pairing), "revoked");
+
+  const repaired = withComputer(revoked, { ...computer, id: "c2" });
+  assert.deepEqual(repaired, { desktop: credential, computer: { ...computer, id: "c2" } });
+  assert.equal(computerAuth(repaired), "ok");
+  // 再被拒一次，又是被吊销；不是半路没做完。
+  assert.equal(computerAuth(rejectComputer(repaired)), "revoked");
 });

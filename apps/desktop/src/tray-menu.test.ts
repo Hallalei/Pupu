@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MenubarState } from "../../cloud/bridge/menubar.ts";
-import { trayMenu, trayPairing, trayTooltip, type TrayAction, type TrayView } from "./tray-menu.ts";
+import { computerAuth } from "./pairing-state.ts";
+import { trayMenu, trayTooltip, type TrayAction, type TrayView } from "./tray-menu.ts";
 
 const state: MenubarState = {
   status: "busy",
@@ -99,6 +100,25 @@ test("被吊销以后给重新配对，不再显示桥的旧状态", () => {
   assert.equal(trayTooltip(revoked), "Pupu · mbpro：授权被吊销");
 });
 
+test("配对半路没做完：没连上 · 配对没做完，给再试一次，不说被吊销", () => {
+  const sent: TrayAction[] = [];
+  const unfinished = { ...view, state: null, pairing: "unfinished" as const };
+  const items = trayMenu(unfinished, (action) => sent.push(action));
+  assert.deepEqual(labels(items), [
+    "mbpro · 没连上",
+    "配对没做完",
+    "—",
+    "打开 Pupu",
+    "再试一次…",
+    "—",
+    "退出 Pupu（这台电脑会下线）"
+  ]);
+  assert.equal(items[1]?.enabled, false);
+  (items.find((item) => item.label === "再试一次…")?.click as () => void)();
+  assert.deepEqual(sent, [{ action: "pair" }]);
+  assert.equal(trayTooltip(unfinished), "Pupu · mbpro：没连上 · 配对没做完");
+});
+
 test("桥还没报状态时是「没连上 · 正在连接…」，没有开关", () => {
   const starting = { ...view, state: null };
   assert.deepEqual(labels(trayMenu(starting, () => {})), [
@@ -113,12 +133,15 @@ test("桥还没报状态时是「没连上 · 正在连接…」，没有开关"
   assert.equal(trayTooltip(view), "Pupu · mbpro：在做事");
 });
 
-test("只是窗口的凭据没了，这台电脑的还在：照常显示，收回屏幕点得到", () => {
+test("托盘跟着凭据走：只是窗口的没了照常显示；少了电脑的，云端拒过才写被吊销", () => {
   const credential = { id: "c1", name: "mbpro", token: "t" };
-  assert.equal(trayPairing({ desktop: null, computer: null }), "first");
-  assert.equal(trayPairing({ desktop: credential, computer: null }), "revoked");
-  assert.equal(trayPairing({ desktop: null, computer: credential }), "ok");
-  assert.equal(trayPairing({ desktop: credential, computer: credential }), "ok");
+  const shown = (pairing: Parameters<typeof computerAuth>[0]) =>
+    labels(trayMenu({ ...view, state: null, pairing: computerAuth(pairing) }, () => {}))[0];
+  assert.equal(shown({ desktop: null, computer: null }), "这台电脑还没配对");
+  assert.equal(shown({ desktop: credential, computer: null }), "mbpro · 没连上");
+  assert.equal(shown({ desktop: credential, computer: null, computerRevoked: true }), "mbpro · 授权被吊销");
+  assert.equal(computerAuth({ desktop: null, computer: credential }), "ok");
+  assert.equal(computerAuth({ desktop: credential, computer: credential }), "ok");
 });
 
 test("下好新版本后，退出上面多一项重启更新", () => {

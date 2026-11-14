@@ -222,8 +222,9 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
         let centered = NSMutableParagraphStyle()
         centered.alignment = .center
         if useToken {
+            // 口令遮着，但不是这个人的密码：不标成 .password，免得系统要存进钥匙串。
             secret.isSecureTextEntry = true
-            secret.textContentType = .password
+            secret.textContentType = .oneTimeCode
             secret.keyboardType = .default
             secret.autocapitalizationType = .none
             secret.defaultTextAttributes = [.font: Theme.font(.body), .foregroundColor: Theme.ink, .paragraphStyle: centered]
@@ -424,6 +425,8 @@ final class ConnectViewController: UIViewController, UITextFieldDelegate {
             do {
                 let paired = try await API.pair(base: base, code: code, accessToken: accessToken, name: UIDevice.current.name)
                 try Task.checkCancellation()
+                // 填着字的遮挡框跟着这一页拿掉时，系统会问「保存密码?」：先清空。
+                secret.text = nil
                 Connection.shared.adopt(base: base, paired: paired)
             } catch {
                 finished(error, base: base)

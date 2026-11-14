@@ -193,11 +193,14 @@ export function reportsWait(
   return reported !== null && reported > askedAt;
 }
 
-/** 子会话回投给主会话的那条消息。 */
+/**
+ * 子会话回投给主会话的那条消息。界面上只放第一句，所以第一句要自己读得通：
+ * 做完、被停下、人在子会话里直接说，都是「回报了」，结果写在下面给模型看。
+ */
 export function childReport(title: string, reply: string): string {
   const text = reply.trim() || "（没有写结果）";
   const cut = text.length > REPORT_LIMIT ? `${text.slice(0, REPORT_LIMIT)}…（太长，截断了，全文在子会话里）` : text;
-  return noticeMessage(`子会话「${title}」回报：\n${cut}`);
+  return noticeMessage(`子会话「${title}」回报了。\n${cut}`);
 }
 
 export type DelegationActions = {
