@@ -74,7 +74,17 @@ export function mayRead(from: AccessThread, space: SpaceAccess & { readonly id: 
   if ((from.kind === "project" || from.kind === "child") && from.project.id === space.id) return true;
   if (space.level === "L4") return false;
   if (isOpen(space.level)) return true;
+  // 空间里的会话只读本空间和全组织的（协作方案第 2 节第 2 条）：空间以后拉新人进来，记录里不会有他不该看的。
+  if (from.kind === "project" || from.kind === "child") return false;
   const audience = audienceOf(from);
   // 一个成员都没有的空间（最后一个人也被移出了）不算全部受众都看得到。
   return !audience.everyone && audience.members.length > 0 && audience.members.every((member) => space.members.includes(member));
 }
+
+/** 空间的主人：能拉人、移人、改密级、切模式。早先的项目没有主人，谁都改不了，保持全组织可见。 */
+export function mayManageSpace(space: { readonly ownerId: string | null }, actor: string | null): boolean {
+  return actor !== null && space.ownerId === actor;
+}
+
+/** 界面上能选的密级。L1 对外分享第一版不做。 */
+export const SPACE_LEVELS: readonly Level[] = ["L2", "L3", "L4"];
