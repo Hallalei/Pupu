@@ -79,14 +79,26 @@ export function runBridge(options: RunOptions): RunningBridge {
   let localModel: LocalModel | null = null;
   const findMagpie = options.magpie ?? (() => discoverMagpie());
   let magpie: Magpie | null = null;
+  // 连续几次没找到。一次超时不算关了，免得对话中途报「Magpie 没开」。
+  let magpieMisses = 0;
   // 这条连接上最后报过的清单。换连接时清掉，重报一次。
   let magpieSent: string | null = null;
-  const checkMagpie = async (): Promise<Magpie | null> => {
-    magpie = await findMagpie().catch(() => null);
+  const lookMagpie = async (): Promise<void> => {
+    const found = await findMagpie().catch(() => null);
+    if (found || ++magpieMisses >= 2) {
+      magpie = found;
+      if (found) magpieMisses = 0;
+    }
+  };
+  const reportMagpie = (session: BridgeConnection | null): void => {
     const key = JSON.stringify(magpie?.models ?? null);
-    if (key !== magpieSent && current?.send({ type: "model", message: { kind: "magpie", models: magpie?.models ?? null } })) {
+    if (key !== magpieSent && session?.send({ type: "model", message: { kind: "magpie", models: magpie?.models ?? null } })) {
       magpieSent = key;
     }
+  };
+  const checkMagpie = async (): Promise<Magpie | null> => {
+    await lookMagpie();
+    reportMagpie(current);
     return magpie;
   };
   const relay = new ModelRelayClient({
@@ -177,6 +189,8 @@ export function runBridge(options: RunOptions): RunningBridge {
       config = await options.config();
       if (stopped) break;
       if (options.model) localModel = await options.model();
+      // 连上之前先找好，ready 时和 info 一起报：晚报的那几秒里云端会当这台电脑的 Pupu 太旧。
+      await lookMagpie();
       refresh();
       // 有没有人在用：连上时报一次，之后变了才报。
       let present: boolean | null = null;
@@ -196,7 +210,7 @@ export function runBridge(options: RunOptions): RunningBridge {
             if (takebackQueued) takebackQueued = !session.send({ type: "takeback" });
             session.send({ type: "model", message: { kind: "info", model: infoOf(localModel) } });
             magpieSent = null;
-            void checkMagpie();
+            reportMagpie(session);
             magpieTimer ??= setInterval(() => void checkMagpie(), MAGPIE_POLL_MS);
             magpieTimer.unref?.();
             reportFinishedTo((frame) => session.send(frame));

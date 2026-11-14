@@ -660,7 +660,10 @@ export class Pupu extends DurableObject<Env> {
     this.bridge.onModel = (computerId, message) => this.relay.receive(computerId, message);
     this.bridge.onModelGone = (computerId) => this.relay.gone(computerId);
     this.bridge.onMagpie = (computerId, models) => {
-      this.modelChoice.setMagpieModels(computerId, models);
+      // 只记创建者自己的和没主人的电脑：别人的清单用不上，也不该留在云端。
+      const owner = this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+      const creator = this.members.list().find((member) => member.role === "creator")?.id ?? null;
+      if (owner === null || owner === creator) this.modelChoice.setMagpieModels(computerId, models);
     };
     // 不等 onStart：没启动 pi 的 RPC（登录、配对、移除成员）改了电脑，网页和灵动岛也要跟上。
     this.bridge.onChange = () => {
@@ -1558,7 +1561,14 @@ export class Pupu extends DurableObject<Env> {
       const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis: this.modelApis });
       if (!probe.ok) return { ok: false, status: 400, error: probe.error };
     }
-    if (choice.source === "computer" && choice.magpie) {
+    const before = this.modelChoice.get();
+    // 只拨了「离线时用 Pupu 自带的」：不用再试，电脑离线时也要能拨。
+    const sameMagpie =
+      choice.source === "computer" &&
+      before.source === "computer" &&
+      before.computerId === choice.computerId &&
+      before.magpie?.id === choice.magpie?.id;
+    if (choice.source === "computer" && choice.magpie && !sameMagpie) {
       const state = this.#magpieOf(choice.computerId);
       const name = this.#computerName(choice.computerId);
       if (state === "offline") return { ok: false, status: 400, error: `「${name}」没连上，连上后再选。` };
@@ -1592,12 +1602,13 @@ export class Pupu extends DurableObject<Env> {
     return { current, mayEdit, own: own ? keyView(own) : null, keys: this.modelChoice.keyProviders(), magpie };
   }
 
-  /** 这个人能用哪几台电脑上的 Magpie：只有自己的。本机开发没带凭据的都能用。 */
+  /** 这个人能用哪几台电脑上的 Magpie：只有自己的和没主人的。本机开发没带凭据的都能用。 */
   #magpieComputers(actor: Actor | null | undefined): string[] {
     if (actor === undefined) return [];
     return this.computers
       .list()
-      .filter((row) => actor === null || (row.ownerId !== null && row.ownerId === actor.memberId))
+      // 早期配对的电脑没有主人，和别处一样当创建者的（只有创建者能换模型）。
+      .filter((row) => actor === null || row.ownerId === null || row.ownerId === actor.memberId)
       .map((row) => row.id);
   }
 
