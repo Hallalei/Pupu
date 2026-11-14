@@ -81,6 +81,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ decision, proof })
     }),
+  /** 按过通行密钥，换一张一次性的票去连这台电脑的远程桌面。见 server.ts 的 `desktopTicket`。 */
+  desktopTicket: (computerId: string, proof: AuthenticationResponseJSON) =>
+    request<{ ticket: string }>("/api/desktop-tickets", { method: "POST", body: JSON.stringify({ computerId, proof }) }),
   /** 用通行密钥确认一件事之前，先拿挑战。 */
   proofOptions: (purpose: Purpose) =>
     request<PublicKeyCredentialRequestOptionsJSON>("/api/proofs", { method: "POST", body: JSON.stringify({ purpose }) }),

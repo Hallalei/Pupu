@@ -16,6 +16,7 @@ import { Login } from "./Login";
 import { NewProject } from "./NewProject";
 import { confirmWhere, type ConfirmWhere } from "./passkey";
 import { Settings, type SettingsPage } from "./Settings";
+import { RemoteDesktopLayer } from "./RemoteDesktop";
 import { setNight } from "./theme";
 
 /** 用地址栏的 hash 做路由，手机上的返回手势也能用。 */
@@ -249,6 +250,7 @@ export function App() {
       <div className="sky" />
       <div className="window-drag" />
       <BrowserTakeover />
+      <RemoteDesktopLayer computers={computers} memberId={current?.memberId} confirmBy={confirmBy} passkeys={passkeys} />
       <Sidebar
         projects={projects}
         waiting={waiting}

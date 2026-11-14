@@ -1,5 +1,5 @@
 /**
- * 远程桌面的信令和租约（技术方案第 6 节）。手机连 `/api/desktop/:computerId`，这里把消息转给这台电脑的桥；
+ * 远程桌面的信令和租约（技术方案第 6 节）。手机和网页连 `/api/desktop/:computerId`，这里把消息转给这台电脑的桥；
  * 视频和键鼠走 WebRTC 点对点，不经过这里。做法参考 Cindy 的 docs/remote-desktop.md（Apache-2.0）：
  * 一台电脑同一时间只有一个观看者，新来的要明说接管，租约靠心跳续，过期的判断放在桥上，
  * 这样 Durable Object 休眠或重启都不会让一个掉线的手机一直占着屏幕。
@@ -235,17 +235,21 @@ export function parseDesktopUp(value: unknown): DesktopUp | null {
 }
 
 /**
- * 能不能开这台电脑的远程桌面：只有主人自己的手机。开远程桌面等于人拿着手机在这台电脑前，
- * 所以和「审批只认手机」一样不给网页和电脑 App；还没主人的电脑（迁移前配的）哪台手机都行。
+ * 能不能开这台电脑的远程桌面。开远程桌面等于人坐在这台电脑前，所以要人亲手确认，和审批一样：
+ * - 主人自己的手机直接能开；还没主人的电脑（迁移前配的）哪台手机都行。
+ * - 网页和电脑 App 开在 Pupu 能操作的电脑上，它能自己点，所以要主人刚为这台电脑按过通行密钥：
+ *   `confirmedBy` 是这次连接带来的确认是谁做的（见 server.ts 的 `desktopTicket`）。没主人的电脑不给。
  * `actor` 是 null 是本机开发没带凭据。
  */
 export function mayViewDesktop(
   actor: { readonly kind: string; readonly memberId: string | null } | null | undefined,
-  ownerId: string | null
+  ownerId: string | null,
+  confirmedBy: string | null = null
 ): boolean {
   if (actor === null) return true;
-  if (actor?.kind !== "phone") return false;
-  return ownerId === null || actor.memberId === ownerId;
+  if (actor === undefined) return false;
+  if (actor.kind === "phone") return ownerId === null || actor.memberId === ownerId;
+  return ownerId !== null && actor.memberId === ownerId && confirmedBy === ownerId;
 }
 
 /** 测试和 Durable Object 的 WebSocket 都能当这个用。 */
@@ -272,7 +276,8 @@ export type DesktopOptions = {
   readonly deviceOf: (request: Request) => string | null;
   /** 把一帧发给这台电脑的桥。不在线返回 false。 */
   readonly toBridge: (computerId: string, session: string, message: DesktopDown) => boolean;
-  readonly mayView: (device: string | null, computerId: string) => boolean;
+  /** `ticket` 是网页按过通行密钥换来的一次性票，放在地址的 `ticket` 参数里；手机不带。 */
+  readonly mayView: (device: string | null, computerId: string, ticket: string | null) => boolean;
   readonly iceServers: () => Promise<readonly IceServer[]>;
   readonly deviceName: (device: string | null) => string;
   readonly newSession: () => string;
@@ -326,9 +331,10 @@ export class RemoteDesktopHub {
   }
 
   async onConnect(socket: DesktopSocket, request: Request): Promise<void> {
-    const computerId = computerIdOfPath(new URL(request.url).pathname);
+    const url = new URL(request.url);
+    const computerId = computerIdOfPath(url.pathname);
     const device = this.#options.deviceOf(request);
-    if (!computerId || !this.#options.mayView(device, computerId)) {
+    if (!computerId || !this.#options.mayView(device, computerId, url.searchParams.get("ticket"))) {
       send(socket, { type: "ended", reason: "not_allowed" });
       socket.close(1008, "not allowed");
       return;

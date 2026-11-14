@@ -27,6 +27,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CodeIcon,
+  CursorIcon,
   ComputerIcon,
   FolderIcon,
   InfoIcon,
@@ -40,6 +41,7 @@ import {
   SparkleIcon,
   TicketIcon
 } from "./icons";
+import { openRemoteDesktop, useRemoteDesktop } from "./RemoteDesktop";
 import { addPasskey, Cancelled, confirm, openInBrowser, type ConfirmWhere, type Passkeys } from "./passkey";
 import { ModelSection, modelSummary } from "./ModelSettings";
 import { ThisComputer } from "./ThisComputer";
@@ -303,6 +305,7 @@ export function Settings({
             actor={actor}
             onRevoke={() => onRevoke(featured.id)}
             onSetPolicy={(policy) => onSetPolicy(featured.id, policy)}
+            onClose={() => onPage(null)}
           />
         )}
         {others.length > 0 && (
@@ -334,6 +337,7 @@ export function Settings({
           onPage("computers");
         }}
         onSetPolicy={(policy) => onSetPolicy(computer.id, policy)}
+        onClose={() => onPage(null)}
       />
     ) : (
       <Note>这台电脑已经吊销了。</Note>
@@ -858,7 +862,8 @@ function ComputerPanel({
   owner,
   actor,
   onRevoke,
-  onSetPolicy
+  onSetPolicy,
+  onClose
 }: {
   computer: ComputerView;
   /** 就是眼前这台电脑（电脑 App 里）。 */
@@ -868,11 +873,35 @@ function ComputerPanel({
   actor: Actor | null | undefined;
   onRevoke: () => Promise<void>;
   onSetPolicy: (policy: ComputerPolicy) => Promise<void>;
+  /** 关掉设置：远程桌面盖满整个窗口，设置弹窗还开着会抢走键盘焦点。 */
+  onClose: () => void;
 }) {
   const row = useRowAction();
   const policy = useRowAction();
+  const remote = useRemoteDesktop(computer.id);
+  // 和 iOS 一样只给主人自己的电脑；离线的放一行灰的说明。
+  const mine = !here && computer.ownerId !== null && computer.ownerId === actor?.memberId;
   return (
     <section className="flex flex-col gap-1.5" data-computer={computer.id}>
+      {remote && remote !== "phone" ? (
+        <button
+          type="button"
+          onClick={() => {
+            openRemoteDesktop(computer.id, remote);
+            if (remote !== "browser") onClose();
+          }}
+          className="tap mb-2 flex h-control w-full items-center justify-center gap-2 rounded-full bg-foreground text-body font-semibold text-background"
+        >
+          <CursorIcon />
+          {remote === "browser" ? "在浏览器里远程控制" : "远程控制"}
+        </button>
+      ) : remote === "phone" ? (
+        <div className="mb-2"><Note>在手机 App 上远程控制这台电脑。</Note></div>
+      ) : mine && !computer.online ? (
+        <div className="mb-2 flex h-control w-full items-center justify-center rounded-full bg-foreground/35 text-body font-semibold text-background">
+          离线，连上才能远程控制
+        </div>
+      ) : null}
       <div className="flex flex-col divide-y divide-separator overflow-hidden rounded-row bg-surface">
         <div className="flex items-center gap-3 px-4 py-3.5">
           <ComputerIcon className="shrink-0 text-[26px]" />
