@@ -17,6 +17,8 @@ const APPS = {
 };
 /** 电脑 App 直接引 apps/cloud 的源码，云端一改它也要重查。 */
 const ALSO = { cloud: ["desktop"] };
+/** 检查这个 app 要装谁的依赖：电脑 App 的类型检查会读到云端的包。 */
+const NEEDS = { desktop: ["desktop", "cloud"] };
 
 function changedSince(ref) {
   const files = execFileSync("git", ["diff", "--name-only", `${ref}...HEAD`], { cwd: repo, encoding: "utf8" }).split("\n");
@@ -43,7 +45,8 @@ if (!apps.length) {
   process.exit(0);
 }
 
-const missing = apps.filter((app) => !existsSync(join(repo, "apps", app, "node_modules")));
+const needed = [...new Set(apps.flatMap((app) => NEEDS[app] ?? [app]))];
+const missing = needed.filter((app) => !existsSync(join(repo, "apps", app, "node_modules")));
 if (missing.length) {
   console.error("check：依赖没装，检查没法跑。先装：");
   for (const app of missing) console.error(`  (cd apps/${app} && npm ci)`);

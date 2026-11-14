@@ -335,20 +335,38 @@ async function run(
   };
   child.stdout?.on("data", onChunk);
   child.stderr?.on("data", onChunk);
+  let drain: NodeJS.Timeout | undefined;
   const ended = (code: number | null, error?: string) => {
+    clearTimeout(drain);
     push.flush();
     void finish(call, recordFile, log, code, error, host, tail);
   };
   child.once("error", (error) => {
     ended(null, error instanceof Error ? error.message : String(error));
   });
+  // 「exit」时输出可能还没读完，机器忙时最后几块会晚到，所以以「close」（管道读到头）为准收尾。
+  // 命令甩到后台的子进程占着管道时「close」等不来：shell 退出后最多再等 EXIT_DRAIN_MS，
+  // 之后按退出码收尾，那个子进程后面的输出读掉不留，免得它写满管道卡住。
   child.once("exit", (code) => {
+    drain = setTimeout(() => {
+      for (const stream of [child.stdout, child.stderr]) {
+        stream?.off("data", onChunk);
+        stream?.resume();
+      }
+      ended(code);
+    }, EXIT_DRAIN_MS);
+    drain.unref();
+  });
+  child.once("close", (code) => {
     ended(code);
   });
   host.send({ type: "started", requestId, commandId, outputPath });
   if (action.background) call.phase = DETACHED;
   return true;
 }
+
+/** shell 退出后，最多等这么久把输出读到头。 */
+const EXIT_DRAIN_MS = 2_000;
 
 /** 命令退出了：记下结果。云端还在等的话回 exit，被停掉的说是谁停的。 */
 async function finish(
