@@ -51,7 +51,7 @@ export async function probeModel(input: ProbeInput, fetchImpl: typeof fetch = fe
   } catch (error) {
     clearTimeout(timer);
     if (controller.signal.aborted) return { ok: false, error: "模型 45 秒都没回话。" };
-    return { ok: false, error: `连不上这个地址：${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, error: unreachable(causeCode(error)) };
   }
   try {
     const text = await response.text();
@@ -71,6 +71,27 @@ export async function probeModel(input: ProbeInput, fetchImpl: typeof fetch = fe
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 请求没拿到回应：「连不上这个地址：」后面写人话。认得的三种照系统的错码分，别的一律「检查地址和网络」。
+ * 自带 key 那份（key-probe.ts）也用这几句，两份表单说法一样。
+ */
+export function unreachable(code: string): string {
+  if (code === "ENOTFOUND") return "连不上这个地址：找不到这个地址，看看有没有拼错。";
+  if (code === "ECONNREFUSED") return "连不上这个地址：对方拒绝连接，看看模型服务开着没有。";
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER/.test(code)) return "连不上这个地址：对方的证书不对。";
+  return "连不上这个地址：检查地址和网络。";
+}
+
+/**
+ * Node 的 fetch 只说「fetch failed」，错码在 `cause.code`。localhost 同时试 IPv4 和 IPv6 时 cause 是 AggregateError，
+ * 码在它自己身上，老版本的 Node 只在第一个错上。
+ */
+function causeCode(error: unknown): string {
+  const cause = (error as { cause?: { code?: unknown; errors?: readonly { code?: unknown }[] } } | null)?.cause;
+  const code = cause?.code ?? cause?.errors?.[0]?.code;
+  return typeof code === "string" ? code : "";
 }
 
 function statusError(status: number, text: string): string {

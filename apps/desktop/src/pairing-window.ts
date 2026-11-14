@@ -38,7 +38,7 @@ export function createPairWindow(
     height: 640,
     resizable: false,
     fullscreenable: false,
-    title: "连上 Pupu",
+    title: "Pupu",
     ...windowChrome(),
     show: false,
     webPreferences: {

@@ -9,11 +9,11 @@
 
 ## How to get to it (user POV)
 
-- 第一次打开电脑 App 的「连上 Pupu」窗口。
+- 第一次打开电脑 App 的配对窗口。
 
 ## Driving it with CDP
 
-Preconditions: 按 `SKILL.md` 用 `open -g` 起了电脑 App，`cdp.mjs targets` 显示「连上 Pupu」。
+Preconditions: 按 `SKILL.md` 用 `open -g` 起了电脑 App，`cdp.mjs targets` 显示 `Pupu file://…/pair.html`。
 
 - `desktop.pair`：按 `SKILL.md` 的配对命令。结果：`cdp.mjs targets` 显示 `Pupu http://localhost:5199/`。
 - `desktop.online`：`curl -s localhost:5199/api/state`。结果：`devices` 有 `desktop`，`computers` 有这台电脑且 `online` 为 true。

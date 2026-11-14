@@ -263,6 +263,18 @@ describe("按服务商调", () => {
     assert.match(probe.error, /key 不对/);
   });
 
+  test("探测：连不上时说人话，不写 SDK 那句「Connection error.」", async () => {
+    const down: typeof fetch = async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    };
+    for (const choice of [CLAUDE, KIMI]) {
+      const probe = await probeKeyModel({ model: keyModel(choice), apiKey: choice.apiKey, apis, fetch: down });
+      assert.ok(!probe.ok, choice.provider);
+      assert.match(probe.error, /^连不上这个地址：/, `${choice.provider}: ${probe.error}`);
+      assert.doesNotMatch(probe.error, /fetch failed|Connection error/i, choice.provider);
+    }
+  });
+
   test("中途从 Kimi（带思考）换到 Claude：别家的思考去掉，工具调用和结果对得上", async () => {
     const seen: Seen[] = [];
     const listFiles: Tool = { name: "list_files", description: "列目录", parameters: Type.Object({ path: Type.String() }) };

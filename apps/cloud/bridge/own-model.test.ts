@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test, { describe } from "node:test";
 import type { Context, Tool } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -10,6 +12,7 @@ import { MODEL_PIECE_CHARS, ModelRelay, requestPieces, type ModelDown, type Mode
 import { describeRouter, ROUTER_MODEL, routeOf, routerProvider, type RouterDeps } from "../src/model/router.ts";
 import { modelView, parseChoice, PUPU_CHOICE, type ModelChoice } from "../src/model/settings.ts";
 import { ModelStore } from "../src/model/store.ts";
+import { probeModel } from "../src/model/probe.ts";
 import { USAGE_LIMIT_MESSAGE, withDailyLimit } from "../src/usage.ts";
 import { ModelRelayClient, parseLocalModel, type LocalModel } from "./model.ts";
 import { sqlStorage } from "./sql-memory.ts";
@@ -396,5 +399,41 @@ describe("模型设置", () => {
     assert.ok(typeof parsed !== "string");
     assert.equal(parsed.baseUrl, "http://10.0.0.5:8000/v1");
     assert.equal(parsed.apiKey, "");
+  });
+});
+
+describe("电脑上的模型：存之前试一次", () => {
+  const down =
+    (cause: unknown): typeof fetch =>
+    async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause });
+    };
+
+  test("连不上：按错码说人话，不写「fetch failed」", async () => {
+    const cases: [unknown, string][] = [
+      [{ code: "ENOTFOUND" }, "连不上这个地址：找不到这个地址，看看有没有拼错。"],
+      [{ code: "ECONNREFUSED" }, "连不上这个地址：对方拒绝连接，看看模型服务开着没有。"],
+      // 老版本的 Node 同时试 IPv4、IPv6 时，码只在第一个错上。
+      [{ errors: [{ code: "ECONNREFUSED" }, { code: "ECONNREFUSED" }] }, "连不上这个地址：对方拒绝连接，看看模型服务开着没有。"],
+      [{ code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, "连不上这个地址：对方的证书不对。"],
+      [{ code: "CERT_HAS_EXPIRED" }, "连不上这个地址：对方的证书不对。"],
+      [{ code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" }, "连不上这个地址：对方的证书不对。"],
+      [{ code: "ECONNRESET" }, "连不上这个地址：检查地址和网络。"],
+      [undefined, "连不上这个地址：检查地址和网络。"]
+    ];
+    for (const [cause, want] of cases) {
+      assert.deepEqual(await probeModel(LOCAL, down(cause)), { ok: false, error: want }, JSON.stringify(cause));
+    }
+  });
+
+  test("真连一个没人听的端口：127.0.0.1 和 localhost 都说对方拒绝连接", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const host of ["127.0.0.1", "localhost"]) {
+      const probe = await probeModel({ ...LOCAL, baseUrl: `http://${host}:${port}/v1` });
+      assert.deepEqual(probe, { ok: false, error: "连不上这个地址：对方拒绝连接，看看模型服务开着没有。" }, host);
+    }
   });
 });

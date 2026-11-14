@@ -33,12 +33,17 @@ export async function writeLocalModel(model: LocalModel | null): Promise<void> {
     await rm(target, { force: true });
     return;
   }
-  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+  // 钥匙串锁着、点了拒绝，可能在问能不能用的时候就说不行，也可能到加密时才出错，两处都算钥匙串用不了。
+  let sealed: Buffer;
+  try {
+    if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("safeStorage 用不了");
+    sealed = await safeStorage.encryptStringAsync(JSON.stringify(model));
+  } catch {
     throw new Error("这台电脑上的钥匙串用不了，key 没法加密保存。");
   }
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.${process.pid}.tmp`;
-  await writeFile(temporary, await safeStorage.encryptStringAsync(JSON.stringify(model)), { mode: 0o600 });
+  await writeFile(temporary, sealed, { mode: 0o600 });
   await chmod(temporary, 0o600);
   await rename(temporary, target);
 }
