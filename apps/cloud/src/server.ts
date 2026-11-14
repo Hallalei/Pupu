@@ -166,6 +166,7 @@ import { createDocTools } from "./docs-tools.ts";
 import { createOrgTools } from "./org.ts";
 import { createMemoryTools, memoryBlock, MemoryStore, withMemory } from "./memory.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
+import type { SpaceColor, SpaceIcon } from "./space-look.ts";
 import { childReport, COORDINATOR_KEY, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
 import { createPupuTools } from "./tools";
@@ -206,7 +207,9 @@ export type ChildView = {
 };
 
 /** 资料页：看得到的资料，和上传时能选的地方（id 为 null 是组织层）。 */
-export type DocsView = { docs: DocMeta[]; places: { id: string | null; name: string }[] };
+export type DocsView = { docs: DocMeta[]; places: DocPlace[] };
+/** 资料能放的地方：组织层（id 为 null）或一个空间。空间带上颜色和图标，组标题画标记方块用。 */
+export type DocPlace = { id: string | null; name: string; color?: SpaceColor; icon?: SpaceIcon | null };
 /** 打开的一份资料，带上这个人能不能删。 */
 export type DocView = Doc & { mayDelete: boolean };
 
@@ -1971,6 +1974,7 @@ export class Pupu extends DurableObject<Env> {
     name: string;
     goal: string;
     background: string;
+    icon?: SpaceIcon;
   }): Promise<Project> {
     const name = input.name.trim();
     if (!name) throw new Error("项目名不能为空");
@@ -1979,7 +1983,8 @@ export class Pupu extends DurableObject<Env> {
       session: session.id,
       name,
       goal: input.goal.trim(),
-      background: input.background.trim()
+      background: input.background.trim(),
+      icon: input.icon
     });
     await this.#applyMode(inserted, "coordinator");
     const project = this.store.getProject(inserted.id)!;
@@ -2087,7 +2092,10 @@ export class Pupu extends DurableObject<Env> {
     const visible = spaces.filter((space) => viewerTarget(viewer, space.id, spaces) !== undefined);
     return {
       docs: this.docs.list(viewerScope(viewer, spaces)),
-      places: [{ id: null, name: "组织" }, ...visible.map((space) => ({ id: space.id, name: space.name }))]
+      places: [
+        { id: null, name: "组织" },
+        ...visible.map((space) => ({ id: space.id, name: space.name, color: space.color, icon: space.icon }))
+      ]
     };
   }
 
@@ -2144,11 +2152,12 @@ export class Pupu extends DurableObject<Env> {
   /** 主人改空间：拉人、移人、改密级、切模式。规则见 spaces.ts。受众变了，开着的连接重新过一遍。 */
   async changeSpace(projectId: string, change: SpaceChange, device: string | null = null): Promise<SpaceVerdict> {
     await this.lifecycle.start();
-    // 全员空间没有主人和成员名单，只能切模式，组织的创建者切。
+    // 全员空间没有主人和成员名单，只能切模式、换颜色和图标，组织的创建者改。
     if (projectId === EVERYONE_ID) {
-      if (change.kind !== "mode") return "invalid";
+      if (change.kind !== "mode" && change.kind !== "color" && change.kind !== "icon") return "invalid";
       if (this.#actor(device)?.role !== "creator") return "forbidden";
-      await this.#applyMode(this.store.everyone(), change.mode);
+      if (change.kind === "mode") await this.#applyMode(this.store.everyone(), change.mode);
+      else this.store.setEveryoneLook(change.kind === "color" ? { color: change.color } : { icon: change.icon });
       this.#changed();
       return "ok";
     }
@@ -2168,6 +2177,12 @@ export class Pupu extends DurableObject<Env> {
         break;
       case "mode":
         await this.setSpaceMode(projectId, change.mode);
+        break;
+      case "color":
+        await this.store.setLook(this.#sqlWriter, projectId, { color: change.color });
+        break;
+      case "icon":
+        await this.store.setLook(this.#sqlWriter, projectId, { icon: change.icon });
         break;
     }
     this.sockets.revalidate();

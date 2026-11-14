@@ -6,6 +6,7 @@
  */
 
 import type { Level } from "./access.ts";
+import { DEFAULT_SPACE_COLOR, isSpaceColor, isSpaceIcon, pickSpaceIcon, type SpaceColor, type SpaceIcon } from "./space-look.ts";
 
 export type Project = {
   readonly id: string;
@@ -27,7 +28,14 @@ export type Project = {
   readonly members: readonly string[];
   /** `direct`：主会话自己动手，和以前的项目一样。`coordinator`：主会话只委派和汇报，见 delegation.ts。 */
   readonly mode: SpaceMode;
+  /** 空间色，染窗框和标记方块。见 space-look.ts。 */
+  readonly color: SpaceColor;
+  /** 标记方块里的像素图标。null 时方块里写名字的第一个字。 */
+  readonly icon: SpaceIcon | null;
 };
+
+/** 界面上能改的那两样：颜色和图标。 */
+export type SpaceLook = { readonly color: SpaceColor; readonly icon: SpaceIcon | null };
 
 /**
  * 主人被移出组织，他建的空间就解散：存档，不删。消息、资料、成员名单都留着，
@@ -44,8 +52,12 @@ export type SpaceMode = "direct" | "coordinator";
 export const EVERYONE_ID = "everyone";
 const EVERYONE_SESSION = "1";
 const EVERYONE_MODE_META = "everyone-mode";
+const EVERYONE_COLOR_META = "everyone-color";
+const EVERYONE_ICON_META = "everyone-icon";
+/** 全员没换过时的样子：雾蓝，房子。 */
+const EVERYONE_LOOK: SpaceLook = { color: DEFAULT_SPACE_COLOR, icon: "house" };
 
-export function everyoneSpace(mode: SpaceMode): Project {
+export function everyoneSpace(mode: SpaceMode, look: SpaceLook = EVERYONE_LOOK): Project {
   return {
     id: EVERYONE_ID,
     session: EVERYONE_SESSION,
@@ -58,7 +70,9 @@ export function everyoneSpace(mode: SpaceMode): Project {
     level: "L2",
     ownerId: null,
     members: [],
-    mode
+    mode,
+    color: look.color,
+    icon: look.icon
   };
 }
 
@@ -122,7 +136,9 @@ function toProject(row: Row): Project {
     level: levelOf(row.level ?? null),
     ownerId: row.owner_id === null || row.owner_id === undefined ? null : String(row.owner_id),
     members: row.members ? String(row.members).split(",").sort() : [],
-    mode: row.mode === "coordinator" ? "coordinator" : "direct"
+    mode: row.mode === "coordinator" ? "coordinator" : "direct",
+    color: isSpaceColor(row.color) ? row.color : DEFAULT_SPACE_COLOR,
+    icon: isSpaceIcon(row.icon) ? row.icon : null
   };
 }
 
@@ -164,6 +180,17 @@ export class ProjectStore {
       if (!columns.some((column) => column.name === "archived_at")) {
         this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN archived_at INTEGER");
       }
+      // 空间色和图标（设计规范 2026-11-14）。老空间先用雾蓝，图标按名字挑一次，挑不出来就写名字的第一个字。
+      if (!columns.some((column) => column.name === "color")) {
+        this.#sql.exec(`ALTER TABLE pupu_projects ADD COLUMN color TEXT NOT NULL DEFAULT '${DEFAULT_SPACE_COLOR}'`);
+      }
+      if (!columns.some((column) => column.name === "icon")) {
+        this.#sql.exec("ALTER TABLE pupu_projects ADD COLUMN icon TEXT");
+        for (const row of this.#sql.exec("SELECT id, name FROM pupu_projects").toArray()) {
+          const icon = pickSpaceIcon(String(row.name));
+          if (icon) this.#sql.exec("UPDATE pupu_projects SET icon = ? WHERE id = ?", icon, String(row.id));
+        }
+      }
       this.#sql.exec(`CREATE TABLE IF NOT EXISTS pupu_project_members (
         project_id TEXT NOT NULL,
         member_id TEXT NOT NULL,
@@ -203,9 +230,20 @@ export class ProjectStore {
       .map(toProject);
   }
 
-  /** 全员空间，模式是现在存着的。 */
+  /** 全员空间，模式、颜色和图标是现在存着的。 */
   everyone(): Project {
-    return everyoneSpace(this.meta(EVERYONE_MODE_META) === "coordinator" ? "coordinator" : "direct");
+    const color = this.meta(EVERYONE_COLOR_META);
+    const icon = this.meta(EVERYONE_ICON_META);
+    return everyoneSpace(this.meta(EVERYONE_MODE_META) === "coordinator" ? "coordinator" : "direct", {
+      color: isSpaceColor(color) ? color : EVERYONE_LOOK.color,
+      icon: isSpaceIcon(icon) ? icon : EVERYONE_LOOK.icon
+    });
+  }
+
+  /** 换全员的颜色或图标。没给的那样不动。 */
+  setEveryoneLook(look: Partial<SpaceLook>): void {
+    if (look.color) this.setMeta(EVERYONE_COLOR_META, look.color);
+    if (look.icon) this.setMeta(EVERYONE_ICON_META, look.icon);
   }
 
   setEveryoneMode(mode: SpaceMode): void {
@@ -227,24 +265,27 @@ export class ProjectStore {
     return row ? toProject(row) : undefined;
   }
 
+  /** `icon` 没给就按名字挑一个。颜色先用雾蓝。 */
   insertProject(input: {
     session: string;
     name: string;
     goal: string;
     background: string;
+    icon?: SpaceIcon | null;
   }): Project {
     const now = Date.now();
     const id = crypto.randomUUID();
     this.#db().exec(
-      `INSERT INTO pupu_projects (id, session, name, goal, background, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO pupu_projects (id, session, name, goal, background, created_at, updated_at, icon)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.session,
       input.name,
       input.goal,
       input.background,
       now,
-      now
+      now,
+      input.icon === undefined ? pickSpaceIcon(input.name) : input.icon
     );
     return this.getProject(id)!;
   }
@@ -280,15 +321,15 @@ export class ProjectStore {
    */
   async createSpace(
     writer: SpaceWriter,
-    input: { session: string; name: string; goal: string; background: string; ownerId: string },
+    input: { session: string; name: string; goal: string; background: string; ownerId: string; icon?: SpaceIcon | null },
     now: number
   ): Promise<Project> {
     this.#db();
     const id = crypto.randomUUID();
     await writer.transaction(async (tx) => {
       await tx.run(
-        `INSERT INTO pupu_projects (id, session, name, goal, background, created_at, updated_at, level, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'L3', ?)`,
+        `INSERT INTO pupu_projects (id, session, name, goal, background, created_at, updated_at, level, owner_id, icon)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'L3', ?, ?)`,
         id,
         input.session,
         input.name,
@@ -296,7 +337,8 @@ export class ProjectStore {
         input.background,
         now,
         now,
-        input.ownerId
+        input.ownerId,
+        input.icon === undefined ? pickSpaceIcon(input.name) : input.icon
       );
       await tx.run(
         "INSERT INTO pupu_project_members (project_id, member_id, added_by, added_at) VALUES (?, ?, ?, ?)",
@@ -351,6 +393,13 @@ export class ProjectStore {
   async restoreOwnedBy(writer: SpaceWriter, ownerId: string): Promise<void> {
     this.#db();
     await writer.run("UPDATE pupu_projects SET archived_at = NULL WHERE owner_id = ? AND archived_at IS NOT NULL", ownerId);
+  }
+
+  /** 换空间的颜色或图标。没给的那样不动；换样子不算空间动过，列表顺序不变。 */
+  async setLook(writer: SpaceWriter, projectId: string, look: Partial<SpaceLook>): Promise<void> {
+    this.#db();
+    if (look.color) await writer.run("UPDATE pupu_projects SET color = ? WHERE id = ?", look.color, projectId);
+    if (look.icon) await writer.run("UPDATE pupu_projects SET icon = ? WHERE id = ?", look.icon, projectId);
   }
 
   /** 切换主会话的模式。这一版没有接到任何入口。 */

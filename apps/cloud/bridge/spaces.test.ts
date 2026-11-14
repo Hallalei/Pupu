@@ -10,6 +10,7 @@ import { createPupuTools } from "../src/tools.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports } from "../src/spaces.ts";
 import { docScope, viewerScope } from "../src/docs.ts";
 import { sqlStorage } from "./sql-memory.ts";
+import { pickSpaceIcon } from "../src/space-look.ts";
 
 const NOW = 1_800_000_000_000;
 
@@ -70,7 +71,9 @@ describe("老数据迁移", () => {
       level: "L2",
       ownerId: null,
       members: [],
-      mode: "direct"
+      mode: "direct",
+      color: "mist",
+      icon: "chart"
     });
   });
 
@@ -281,7 +284,9 @@ describe("权限矩阵：界面上改空间（协作方案第 8 节）", () => {
     { kind: "add", memberId: "m3" },
     { kind: "remove", memberId: "m2" },
     { kind: "level", level: "L2" },
-    { kind: "mode", mode: "coordinator" }
+    { kind: "mode", mode: "coordinator" },
+    { kind: "color", color: "sage" },
+    { kind: "icon", icon: "globe" }
   ] as const;
 
   test("主人什么都能改", () => {
@@ -325,6 +330,65 @@ describe("权限矩阵：界面上改空间（协作方案第 8 节）", () => {
     assert.equal(parseSpaceChange({ kind: "add" }), null);
     assert.equal(parseSpaceChange({ kind: "owner", memberId: "m2" }), null);
     assert.equal(parseSpaceChange(null), null);
+    assert.deepEqual(parseSpaceChange({ kind: "color", color: "lilac" }), { kind: "color", color: "lilac" });
+    assert.deepEqual(parseSpaceChange({ kind: "icon", icon: "paw" }), { kind: "icon", icon: "paw" });
+    assert.equal(parseSpaceChange({ kind: "color", color: "red" }), null);
+    assert.equal(parseSpaceChange({ kind: "icon", icon: "building" }), null);
+    assert.equal(parseSpaceChange({ kind: "icon", icon: null }), null);
+  });
+});
+
+describe("空间的颜色和图标（设计规范 SpaceColor、SpaceMark）", () => {
+  test("老空间迁移：都是雾蓝，图标按名字挑一次，挑不出来留空写第一个字", () => {
+    const sql = sqlStorage();
+    sql.exec(`CREATE TABLE pupu_projects (
+      id TEXT PRIMARY KEY, session TEXT NOT NULL UNIQUE, name TEXT NOT NULL, goal TEXT NOT NULL,
+      background TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    )`);
+    sql.exec("INSERT INTO pupu_projects (id, session, name, goal, created_at, updated_at) VALUES ('a', '5', '官网改版', '', 1, 3)");
+    sql.exec("INSERT INTO pupu_projects (id, session, name, goal, created_at, updated_at) VALUES ('b', '6', '阿周的事', '', 1, 2)");
+    const looks = new ProjectStore(sql).listProjects().map(({ name, color, icon }) => ({ name, color, icon }));
+    assert.deepEqual(looks, [
+      { name: "官网改版", color: "mist", icon: "globe" },
+      { name: "阿周的事", color: "mist", icon: null }
+    ]);
+  });
+
+  test("新空间：没给图标按名字挑，给了用给的，颜色先用雾蓝", async () => {
+    const sql = sqlStorage();
+    const projects = new ProjectStore(sql);
+    const named = await projects.createSpace(writer(sql), { session: "10", name: "Q4 招聘", goal: "", background: "", ownerId: "m1" }, NOW);
+    assert.deepEqual([named.color, named.icon], ["mist", "briefcase"]);
+    const chosen = projects.insertProject({ session: "11", name: "随便", goal: "", background: "", icon: "rocket" });
+    assert.equal(chosen.icon, "rocket");
+  });
+
+  test("换颜色和图标：没给的那样不动，列表顺序不变", async () => {
+    const { sql, projects, space, open } = await org();
+    const before = projects.listProjects().map((project) => project.id);
+    await projects.setLook(writer(sql), space.id, { color: "apricot" });
+    await projects.setLook(writer(sql), space.id, { icon: "paw" });
+    const changed = projects.getProject(space.id)!;
+    assert.deepEqual([changed.color, changed.icon], ["apricot", "paw"]);
+    assert.equal(projects.getProject(open.id)!.color, "mist");
+    assert.deepEqual(projects.listProjects().map((project) => project.id), before);
+  });
+
+  test("全员：默认雾蓝加房子，换了存在 pupu_meta", () => {
+    const projects = new ProjectStore(sqlStorage());
+    assert.deepEqual([projects.everyone().color, projects.everyone().icon], ["mist", "house"]);
+    projects.setEveryoneLook({ color: "graphite" });
+    projects.setEveryoneLook({ icon: "flag" });
+    assert.deepEqual([projects.everyone().color, projects.everyone().icon], ["graphite", "flag"]);
+  });
+
+  test("按名字挑图标：中文按字面，英文要整个词", () => {
+    assert.equal(pickSpaceIcon("官网改版"), "globe");
+    assert.equal(pickSpaceIcon("周报"), "chart");
+    assert.equal(pickSpaceIcon("我的读书笔记"), "book");
+    assert.equal(pickSpaceIcon("Build pipeline"), null);
+    assert.equal(pickSpaceIcon("new UI"), "palette");
+    assert.equal(pickSpaceIcon("大家的事"), null);
   });
 });
 

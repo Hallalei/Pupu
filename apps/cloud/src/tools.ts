@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import type { Project, ProjectStore } from "./projects.ts";
 import { mayRead } from "./access.ts";
 import type { Thread } from "./threads.ts";
+import { isSpaceIcon, SPACE_ICONS, type SpaceIcon } from "./space-look.ts";
 
 function text(value: string) {
   return [{ type: "text" as const, text: value }];
@@ -16,6 +17,8 @@ export type PupuActions = {
     name: string;
     goal: string;
     background: string;
+    /** 没给就按名字挑。 */
+    icon?: SpaceIcon;
   }): Promise<Project>;
   /** 把一件事交给项目会话去做，`origin` 是从哪条聊天转来的。同一个 operationId 只交一次。 */
   handOff(project: Project, task: string, operationId: string, origin: string): Promise<void>;
@@ -68,6 +71,11 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
           description:
             "建好后要马上在项目里做的第一件事，写清楚。在大家那里带上用户的原话；在私聊里只写这件事需要的内容，不抄原话，不带无关的私事。没有就省略"
         })
+      ),
+      icon: Type.Optional(
+        Type.String({
+          description: `项目名前面的像素图标，按名字挑一个最贴的，比如「官网改版」用 globe。只能是这些之一：${SPACE_ICONS.join("、")}`
+        })
       )
     }),
     replay: "safe",
@@ -83,7 +91,8 @@ export function createPupuTools(actions: PupuActions): ToolRegistration[] {
         (await actions.createProject({
           name: args.name,
           goal: args.goal,
-          background: args.background
+          background: args.background,
+          icon: isSpaceIcon(args.icon) ? args.icon : undefined
         }));
       store.setMeta(key, project.id);
       const task =

@@ -1,5 +1,5 @@
 /**
- * 界面上对空间的改动：拉人、移人、改密级、切模式。只做判断，不碰数据库，规则见 docs/协作方案.md 第 5、9 节。
+ * 界面上对空间的改动：拉人、移人、改密级、切模式、换颜色和图标。只做判断，不碰数据库，规则见 docs/协作方案.md 第 5、9 节。
  *
  * - 看不到这个空间的人，得到的和空间不存在一样（不泄露它在不在）。
  * - 只有主人能改。早先的项目没有主人，谁都改不了，保持全组织可见。
@@ -8,12 +8,15 @@
 
 import { mayManageSpace, mayRead, maySeeSpace, type AccessThread, SPACE_LEVELS, type Level, type SpaceAccess } from "./access.ts";
 import type { SpaceMode } from "./projects.ts";
+import { isSpaceColor, isSpaceIcon, type SpaceColor, type SpaceIcon } from "./space-look.ts";
 
 export type SpaceChange =
   | { readonly kind: "add"; readonly memberId: string }
   | { readonly kind: "remove"; readonly memberId: string }
   | { readonly kind: "level"; readonly level: Level }
-  | { readonly kind: "mode"; readonly mode: SpaceMode };
+  | { readonly kind: "mode"; readonly mode: SpaceMode }
+  | { readonly kind: "color"; readonly color: SpaceColor }
+  | { readonly kind: "icon"; readonly icon: SpaceIcon };
 
 export type SpaceVerdict = "ok" | "missing" | "forbidden" | "invalid";
 
@@ -36,6 +39,10 @@ export function checkSpaceChange(
       return SPACE_LEVELS.includes(change.level) ? "ok" : "invalid";
     case "mode":
       return change.mode === "direct" || change.mode === "coordinator" ? "ok" : "invalid";
+    case "color":
+      return isSpaceColor(change.color) ? "ok" : "invalid";
+    case "icon":
+      return isSpaceIcon(change.icon) ? "ok" : "invalid";
   }
 }
 
@@ -52,6 +59,8 @@ export function parseSpaceChange(body: unknown): SpaceChange | null {
   if (input.kind === "mode" && (input.mode === "direct" || input.mode === "coordinator")) {
     return { kind: "mode", mode: input.mode };
   }
+  if (input.kind === "color" && isSpaceColor(input.color)) return { kind: "color", color: input.color };
+  if (input.kind === "icon" && isSpaceIcon(input.icon)) return { kind: "icon", icon: input.icon };
   return null;
 }
 
@@ -59,7 +68,7 @@ export function parseSpaceChange(body: unknown): SpaceChange | null {
 export const SPACE_ERRORS: Record<Exclude<SpaceVerdict, "ok">, { status: 400 | 403 | 404; error: string }> = {
   missing: { status: 404, error: "没有这个空间" },
   forbidden: { status: 403, error: "只有建这个空间的人能改" },
-  invalid: { status: 400, error: "改不了：只能拉组织里的人，建的人移不出去，密级只有 L2 到 L4" }
+  invalid: { status: 400, error: "改不了：只能拉组织里的人，建的人移不出去，密级只有 L2 到 L4，颜色和图标只能从给的里挑" }
 };
 
 /**
