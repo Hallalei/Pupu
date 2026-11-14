@@ -28,7 +28,16 @@ description: 驱动真实的 Pupu 证明改动能用：网页走 ego lite，电�
 
 起云端：`preview_start {name: "pupu-verify"}`。没有这个工具时在后台跑 `node $S/serve-cloud.mjs`。
 
-它监听 `localhost:5199`，每次从空数据开始，数据在 `/tmp/pupu-verify/state`，用户的开发数据不受影响。日志出现 `ready in` 才算起来。端口被占时跑体检，确认是别的验证在用就等它结束。
+它监听 `localhost:5199`，每次从空数据开始，数据在 `/tmp/pupu-verify/state`，用户的开发数据不受影响。日志出现 `ready in` 才算起来。
+
+5199 被别的会话的验证占着时，另起一份并行实例，整次验证都带这三个变量：
+
+```bash
+export PUPU_VERIFY_HOST=127.0.0.1 PUPU_VERIFY_PORT=5201 PUPU_CDP_PORT=9334
+node $S/serve-cloud.mjs
+```
+
+并行实例的数据在 `/tmp/pupu-verify-$PUPU_VERIFY_PORT/state`，下文命令里的 `localhost:5199` 换成 `127.0.0.1:$PUPU_VERIFY_PORT`，`/tmp/pupu-verify/` 换成 `/tmp/pupu-verify-$PUPU_VERIFY_PORT/`，`9333` 换成 `$PUPU_CDP_PORT`。换主机名是因为浏览器的 cookie 按主机名不按端口：留在 localhost，那份实例种的 `pupu_token` 会带过来，页面一直停在配对页。通行密钥只认域名，要测它就等 5199 空出来。
 
 然后跑体检：
 
@@ -79,13 +88,15 @@ node $S/cdp.mjs eval "window.pupuPairing.pair({code:'$CODE',adopt:false})"
 
 ```bash
 U=<iPhone 的 UDID，从 xcrun simctl list devices available 选>
-xcrun simctl boot $U
+xcrun simctl boot $U && xcrun simctl bootstatus $U -b
 xcodebuild -project apps/ios/Pupu.xcodeproj -scheme Pupu -sdk iphonesimulator \
   -destination "id=$U" -derivedDataPath /tmp/pupu-verify/ios-dd \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= build
 ```
 
 用本机临时签名（`CODE_SIGN_IDENTITY=-`），别用 `CODE_SIGNING_ALLOWED=NO`：不签名的包没有钥匙串权限，写入回 -34018，凭据只留在内存里，切组织、重启这类要存凭据的路径会假失败。
+
+`launch` 报 `The system shell probably crashed` 是这台模拟器坏了：`xcrun simctl shutdown $U`，换一个机型重来。
 
 构建要几分钟，放后台跑。用 iOS Simulator 工具的 `launch` 装上 `/tmp/pupu-verify/ios-dd/Build/Products/Debug-iphonesimulator/Pupu.app`，再用配对链接连上：
 

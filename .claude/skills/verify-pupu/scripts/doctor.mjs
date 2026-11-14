@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const port = process.env.PUPU_VERIFY_PORT ?? "5199";
+const host = process.env.PUPU_VERIFY_HOST ?? "localhost";
 const cdpPort = process.env.PUPU_CDP_PORT ?? "9333";
 const run = (command) => {
   try {
@@ -26,7 +27,7 @@ line(Boolean(listener) && command.includes(".pupu-verify"), `云端 ${port} 是�
 
 let state = null;
 if (listener) {
-  const response = await fetch(`http://localhost:${port}/api/state`).catch(() => null);
+  const response = await fetch(`http://${host}:${port}/api/state`).catch(() => null);
   state = response;
   line(response?.status === 200, "/api/state 可读", String(response?.status ?? "连不上"));
 }
@@ -35,6 +36,11 @@ const vars = existsSync(join(repo, "apps/cloud/.dev.vars")) ? readFileSync(join(
 line(/^DEEPSEEK_API_KEY=.+/m.test(vars), "本地有 DEEPSEEK_API_KEY", "没有时 Pupu 不会回复");
 line(/^ACCESS_TOKEN=/m.test(vars) === false, "本地没设 ACCESS_TOKEN", "设了就不能空码配对");
 line(Boolean(run("command -v ego-browser")), "ego-browser 可用");
+line(
+  existsSync(join(repo, "apps/desktop/node_modules/electron/dist/Electron.app")),
+  "电脑 App 的 Electron 本体在",
+  "测电脑 App 才要；缺了跑 (cd apps/desktop && npm ci && node node_modules/electron/install.js)"
+);
 
 const cdp = await fetch(`http://127.0.0.1:${cdpPort}/json/version`).catch(() => null);
 console.log(`--  电脑 App CDP ${cdpPort}：${cdp?.ok ? "在跑" : "没在跑"}`);

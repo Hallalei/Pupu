@@ -43,6 +43,13 @@ PUPU_URL=http://localhost:5173 npm run dev
 
 手机 App 用 Xcode 打开 `apps/ios/Pupu.xcodeproj`，换成你自己的开发团队和 Bundle ID 再跑。
 
+## 检查
+
+```bash
+node scripts/check.mjs                 # 三个 app 的类型检查和测试
+git config core.hooksPath .githooks    # 推送前自动跑改到的那几个
+```
+
 ## 部署自己的一份
 
 云端和官网都部署在 Cloudflare Workers 上。`apps/cloud/wrangler.jsonc` 和 `apps/site/wrangler.jsonc` 里的域名、数据库 ID 是 getpupu.com 这一份的，部署前换成你自己的。要设哪些 secret，见 [apps/cloud/README.md](apps/cloud/README.md) 的「部署」一节。

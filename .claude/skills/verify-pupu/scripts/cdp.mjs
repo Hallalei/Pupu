@@ -39,8 +39,8 @@ if (command === "targets") {
 }
 
 // 主窗口是加载云端页面的那个，其他是隐藏的采集窗口和 Pupu 浏览器的页面（也是 http）。
-// CDP_PAGE 给网址开头来挑，默认挑本地验证的云端 http://localhost:5199。
-const prefix = process.env.CDP_PAGE ?? "http://localhost:5199";
+// CDP_PAGE 给网址开头来挑，默认挑本地验证的云端（PUPU_VERIFY_HOST、PUPU_VERIFY_PORT，没设就是 http://localhost:5199）。
+const prefix = process.env.CDP_PAGE ?? `http://${process.env.PUPU_VERIFY_HOST ?? "localhost"}:${process.env.PUPU_VERIFY_PORT ?? "5199"}`;
 const page = targets.find((target) => target.url.startsWith(prefix)) ?? targets.find((target) => target.url.startsWith("http")) ?? targets[0];
 if (!page) throw new Error("没有页面");
 
