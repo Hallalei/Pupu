@@ -148,10 +148,28 @@ async function opens(jar, session) {
 check((await opens(bee, beePrivateA)) === true, "bee 自己打得开 A 里的个人入口");
 check((await opens(owner, beePrivateA)) === false, "林夏打不开 bee 的个人入口");
 
+// 7b. bee 切在 A 时建空间：落在 A，不落在自己的 B。bee 是主人，把林夏拉进来。
+const created = await bee.json("/api/spaces", { method: "POST", body: JSON.stringify({ name: "定价", goal: "定下季度价格" }) });
+check(created.status === 200 && created.body.id, "bee 在 A 里建了空间「定价」");
+const spaceId = created.body.id;
+const ownerIdInA = (await owner.json("/api/state")).body.members.find((m) => m.email === "owner@example.com").id;
+const beeIdInA = (await owner.json("/api/state")).body.members.find((m) => m.email === "bee@example.com").id;
+const spaceInA = (await bee.json("/api/state")).body.projects.find((p) => p.id === spaceId);
+check(spaceInA?.ownerId === beeIdInA, "空间在 A 里，主人是 bee 在 A 的身份");
+const pulled = await bee.json(`/api/spaces/${spaceId}`, { method: "POST", body: JSON.stringify({ kind: "add", memberId: ownerIdInA }) });
+check(pulled.status === 200, "bee 把林夏拉进空间");
+check((await owner.json("/api/state")).body.projects.some((p) => p.id === spaceId), "林夏看得到「定价」");
+
 // 8. 林夏把 bee 移出 A。
 const beeMemberA = (await owner.json("/api/state")).body.members.find((m) => m.email === "bee@example.com");
 const removed = await local.json(`/api/members/${beeMemberA.id}/remove`, { method: "POST" });
 check(removed.status === 200, "林夏移除 bee");
+// 被移出的人是空间主人：空间留着，林夏照样看得到，bee 从成员里拿掉；主人还记着 bee，所以林夏改不了（这一条是现状，待定）。
+const ownerView = await owner.json("/api/state");
+const orphan = ownerView.body.projects?.find((p) => p.id === spaceId);
+check(ownerView.status === 200 && orphan && !orphan.members.includes(beeIdInA), "主人被移出组织后空间还在，林夏的状态照常，bee 不在成员里");
+const takeOver = await owner.json(`/api/spaces/${spaceId}`, { method: "POST", body: JSON.stringify({ kind: "level", level: "L2" }) });
+log(`     （现状）主人被移出后林夏改空间：${takeOver.status}，空间主人还是 ${orphan?.ownerId === beeIdInA ? "bee" : orphan?.ownerId}`);
 const after = await bee.json("/api/state");
 check(after.status === 200 && after.body.members.length === 1 && after.body.members[0].role === "creator", "bee 的网页没 401，自动回到自己的 B");
 beeOrgs = (await bee.json("/api/orgs")).body;
@@ -169,6 +187,8 @@ check(again.status === 200, "再邀请后又能切进 A");
 const beeAgain = (await bee.json("/api/state")).body;
 check(beeAgain.chats.private?.session === beePrivateA, "个人入口回来了，还是原来那条");
 check((await opens(bee, beePrivateA)) === true, "bee 又打得开了");
+const spaceForBee = beeAgain.projects.find((p) => p.id === spaceId);
+log(`     （现状）bee 回来后看「定价」：${spaceForBee ? `看得到，成员 ${spaceForBee.members.length} 人` : "看不到"}`);
 
 // 10. 没有 Pupu 的新账号 cat 被邀请进 A：只进 A，不替他开自己的；以后能用码开。
 await local.json("/api/members", { method: "POST", body: JSON.stringify({ email: "cat@example.com" }) });
