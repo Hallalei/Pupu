@@ -31,6 +31,8 @@ final class SessionSocket {
     }
 
     private static let revokedCloseCode = 4003
+    /// 这条会话不再给你看了（被移出空间、空间收窄），云端 protocol.ts 的 FORBIDDEN_CLOSE_CODE。别再连。
+    private static let forbiddenCloseCode = 4004
     /// 心跳是固定字符串，云端用 setWebSocketAutoResponse 直接回 pong，不叫醒 Durable Object。
     /// 和电脑桥用的是同一对（云端 bridge/protocol.ts 的 BRIDGE_PING、BRIDGE_PONG）。
     private static let ping = "pupu:ping"
@@ -162,6 +164,11 @@ final class SessionSocket {
         }
         // 4003：这台手机被吊销了（云端 protocol.ts 的 REVOKED_CLOSE_CODE）。
         if task.closeCode.rawValue == Self.revokedCloseCode { onChanged?() }
+        if task.closeCode.rawValue == Self.forbiddenCloseCode {
+            enter(.stopped)
+            onChanged?()
+            return
+        }
         let delay = min(10, pow(2, Double(min(failures, 3))))
         let sleep = Task { _ = try? await Task.sleep(for: .seconds(delay)) }
         enter(.waiting(sleep, failures: failures))

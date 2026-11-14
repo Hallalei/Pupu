@@ -3,6 +3,7 @@ import { describeComputers } from "./bridge/status.ts";
 import { HANDOFF_MARK, NOTICE_MARK } from "./messages.ts";
 import { mayRead } from "./access.ts";
 import type { SpaceChild } from "./delegation.ts";
+import type { DocMeta } from "./docs.ts";
 import type { Project, ProjectStore } from "./projects.ts";
 import { STATUS_LABELS, statusOf, type ReportStore } from "./reports.ts";
 import type { ChatThread, Thread } from "./threads.ts";
@@ -200,6 +201,22 @@ function chatPrompt(thread: ChatThread, nameOf: (memberId: string) => string): s
   return thread.kind === "main" ? MAIN_PROMPT : privatePrompt(nameOf(thread.memberId));
 }
 
+const DOCS = `组织里有共享的资料和 skill：
+- 资料是「是什么」：需求、规格、定下的方案。skill 是「这件事怎么做」：步骤、口径、格式。用 doc_search、doc_list 找，doc_read 读正文。工具只给这条会话的受众都能看的。
+- 用户要你记下一份方案、规格，就用 doc_write 存成资料。用户说「把刚才这个流程存成 skill」，或者你看出这是以后会反复用的做法，先用一句话问要不要存成 skill，同意了再存（kind 写 skill，summary 写清楚什么时候用）。
+- 存到哪由工具按这条会话判断：空间里只存本空间，大家里默认存到组织层，私聊里先问用户存到组织层还是哪个空间。被拒了照实说，不要换个地方硬存。`;
+
+function describeSkills(skills: readonly DocMeta[]): string {
+  if (skills.length === 0) return `${DOCS}
+
+这里能用的 skill：还没有。`;
+  const lines = skills.map((skill) => `- ${skill.title}（id: ${skill.id}）：${skill.summary || "没写说明"}`);
+  return `${DOCS}
+
+这里能用的 skill（用得上时先 doc_read 读正文，照着做）：
+${lines.join("\n")}`;
+}
+
 /**
  * 每次请求前按会话渲染系统提示词。`accounts` 是连上的账号，一个一行的说明；`nameOf` 是成员的显示名字。
  */
@@ -210,7 +227,8 @@ export function renderPrompt(
   computers: readonly ComputerView[],
   accounts: readonly string[],
   nameOf: (memberId: string) => string,
-  children: readonly SpaceChild[] = []
+  children: readonly SpaceChild[] = [],
+  skills: readonly DocMeta[] = []
 ): string {
   const body =
     thread.kind === "child"
@@ -220,5 +238,5 @@ export function renderPrompt(
         ? coordinatorPrompt(thread.project, children)
         : projectPrompt(thread.project, computers)
       : `${chatPrompt(thread, nameOf)}\n\n${currentState(thread, store, reports)}\n\n${describeComputers(computers)}`;
-  return `${body}\n\n${describeConnectors(accounts)}\n\n今天是 ${today()}（UTC）。`;
+  return `${body}\n\n${describeSkills(skills)}\n\n${describeConnectors(accounts)}\n\n今天是 ${today()}（UTC）。`;
 }

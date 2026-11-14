@@ -28,10 +28,12 @@ export type SpaceChild = {
 /** 回投到主会话的结果最多这么长，超出的截掉，人可以点进子会话看全文。 */
 export const REPORT_LIMIT = 1500;
 
+import { DOC_READ_TOOLS } from "./docs-tools.ts";
+
 export const DELEGATION_TOOLS = ["delegate", "message_child", "list_children", "stop_child"] as const;
 
 /** 协调模式下主会话只能用这些。 */
-export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects"];
+export const COORDINATOR_TOOLS: readonly string[] = [...DELEGATION_TOOLS, "list_projects", ...DOC_READ_TOOLS];
 
 type Row = Record<string, SqlStorageValue>;
 

@@ -159,6 +159,8 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
+import { DOC_BODY_LIMIT, DocStore, docScope, SKILL_LIST_LIMIT, viewerScope, viewerTarget, type Doc, type DocKind, type DocMeta } from "./docs.ts";
+import { createDocTools } from "./docs-tools.ts";
 import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
 import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
@@ -198,6 +200,9 @@ export type ChildView = {
   readonly reportedAt: number | null;
   readonly summary: string;
 };
+
+/** 资料页：看得到的资料，和上传时能选的地方（id 为 null 是组织层）。 */
+export type DocsView = { docs: DocMeta[]; places: { id: string | null; name: string }[] };
 
 /** 状态里的空间：项目本身加上它的子会话。 */
 export type ProjectView = Project & { readonly children: readonly ChildView[] };
@@ -284,6 +289,7 @@ export class Pupu extends DurableObject<Env> {
   readonly #root = this.ctx.id.equals(this.env.Pupu.idFromName(ROOT_PUPU));
   readonly store = new ProjectStore(this.ctx.storage.sql);
   readonly children = new SpaceSessionStore(this.ctx.storage.sql);
+  readonly docs = new DocStore(this.ctx.storage.sql);
   readonly threads = new ThreadStore(this.ctx.storage.sql, this.store, (session) => {
     const child = this.children.bySession(session);
     const project = child && this.store.getProject(child.projectId);
@@ -404,7 +410,8 @@ export class Pupu extends DurableObject<Env> {
                   const member = this.members.byId(memberId);
                   return member ? memberName(member) : "这位成员";
                 },
-                thread.kind === "project" ? this.children.ofProject(thread.project.id) : []
+                thread.kind === "project" ? this.children.ofProject(thread.project.id) : [],
+                this.docs.list(docScope(thread, this.store.listProjects()), "skill").slice(0, SKILL_LIST_LIMIT)
               );
             }
           }
@@ -412,6 +419,7 @@ export class Pupu extends DurableObject<Env> {
         tools: [
           ...this.#pupuTools,
           ...this.#delegationTools,
+          ...this.#docTools,
           ...createComputerTools(this.bridge),
           ...createConnectorTools(this.#connectorDeps)
         ],
@@ -1896,6 +1904,15 @@ export class Pupu extends DurableObject<Env> {
   /** 空间的密级、成员、模式走 pi 的写队列，见 projects.ts 的 `SpaceWriter`。 */
   readonly #sqlWriter = new DurableObjectSqliteDatabase(this.ctx.storage);
 
+  /** 共享资料和 skill 的工具，按会话的受众筛，见 docs.ts、docs-tools.ts。 */
+  readonly #docTools = createDocTools({
+    docs: this.docs,
+    threadOf: (session) => this.threads.of(session),
+    spaces: () => this.store.listProjects(),
+    now: () => Date.now(),
+    changed: () => this.#changed()
+  });
+
   /** 委派工具。`deferred`，只有切成协调模式的主会话会被提供，见 delegation.ts。 */
   readonly #delegationTools = createDelegationTools({
     threadOf: (session) => this.threads.of(session),
@@ -1946,6 +1963,51 @@ export class Pupu extends DurableObject<Env> {
     return project;
   }
 
+  /** 界面上的资料列表：这个人看得到的资料，和他能把资料放到哪。 */
+  async listDocs(device: string | null = null): Promise<DocsView> {
+    await this.lifecycle.start();
+    const viewer = this.#viewer(device);
+    const spaces = this.store.listProjects();
+    const visible = spaces.filter((space) => viewerTarget(viewer, space.id, spaces) !== undefined);
+    return {
+      docs: this.docs.list(viewerScope(viewer, spaces)),
+      places: [{ id: null, name: "组织" }, ...visible.map((space) => ({ id: space.id, name: space.name }))]
+    };
+  }
+
+  async readDoc(id: string, device: string | null = null): Promise<Doc | undefined> {
+    await this.lifecycle.start();
+    return this.docs.read(viewerScope(this.#viewer(device), this.store.listProjects()), id);
+  }
+
+  /** 人上传一份资料。放到哪由他选，只能是他看得到的地方；算他写的。 */
+  async uploadDoc(
+    input: { title: string; summary: string; body: string; kind: DocKind; spaceId: string | null; operation: string },
+    device: string | null = null
+  ): Promise<DocMeta | "invalid" | "forbidden"> {
+    await this.lifecycle.start();
+    const viewer = this.#viewer(device);
+    const title = input.title.trim();
+    if (!title || !input.body.trim() || input.body.length > DOC_BODY_LIMIT) return "invalid";
+    const target = viewerTarget(viewer, input.spaceId, this.store.listProjects());
+    if (target === undefined) return "forbidden";
+    const meta = this.docs.write(
+      {
+        spaceId: target,
+        kind: input.kind,
+        title,
+        summary: input.summary.trim(),
+        body: input.body,
+        authorId: viewer,
+        fromSession: null,
+        operation: `upload:${viewer ?? "local"}:${input.operation}`
+      },
+      Date.now()
+    );
+    this.#changed();
+    return meta;
+  }
+
   /** 主人改空间：拉人、移人、改密级、切模式。规则见 spaces.ts。受众变了，开着的连接重新过一遍。 */
   async changeSpace(projectId: string, change: SpaceChange, device: string | null = null): Promise<SpaceVerdict> {
     await this.lifecycle.start();
@@ -1984,7 +2046,7 @@ export class Pupu extends DurableObject<Env> {
     const pi = await this.harness.pi();
     const conversation = await pi.conversation(project.session as never, BACKGROUND_CONTEXT);
     if (!conversation) return false;
-    const tools = [...this.#pupuTools, ...this.#delegationTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
+    const tools = [...this.#pupuTools, ...this.#delegationTools, ...this.#docTools].filter((tool) => COORDINATOR_TOOLS.includes(tool.name));
     await conversation.configure(
       mode === "coordinator" ? { modelTools: tools } : { modelTools: { remove: [] } },
       BACKGROUND_CONTEXT
@@ -2719,6 +2781,32 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     const verdict = await caller.pupu.changeSpace(decodeURIComponent(space[1] ?? ""), change, caller.device);
     if (verdict !== "ok") return Response.json({ error: SPACE_ERRORS[verdict].error }, { status: SPACE_ERRORS[verdict].status });
     return Response.json({ ok: true });
+  }
+  if (pathname === "/api/docs" && method === "GET") {
+    return Response.json(await caller.pupu.listDocs(caller.device));
+  }
+  if (pathname === "/api/docs" && method === "POST") {
+    const body = await readJson<{ title?: unknown; summary?: unknown; body?: unknown; kind?: unknown; spaceId?: unknown; operation?: unknown }>(request);
+    const result = await caller.pupu.uploadDoc(
+      {
+        title: String(body.title ?? ""),
+        summary: String(body.summary ?? ""),
+        body: String(body.body ?? ""),
+        kind: body.kind === "skill" ? "skill" : "doc",
+        spaceId: typeof body.spaceId === "string" ? body.spaceId : null,
+        operation: typeof body.operation === "string" && body.operation ? body.operation : crypto.randomUUID()
+      },
+      caller.device
+    );
+    if (result === "invalid") return Response.json({ error: `标题和正文都要有，正文不超过 ${DOC_BODY_LIMIT} 字` }, { status: 400 });
+    if (result === "forbidden") return Response.json({ error: "没有这个空间" }, { status: 404 });
+    return Response.json(result);
+  }
+  const doc = pathname.match(/^\/api\/docs\/([^/]+)$/);
+  if (doc && method === "GET") {
+    const found = await caller.pupu.readDoc(decodeURIComponent(doc[1] ?? ""), caller.device);
+    if (!found) return Response.json({ error: "没有这份资料" }, { status: 404 });
+    return Response.json(found);
   }
   if (pathname === "/api/projects" && method === "POST") {
     const body = await readJson<{ name?: string; goal?: string }>(request);
