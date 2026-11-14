@@ -282,7 +282,14 @@ export function App() {
   );
 
   let body;
-  if (route.kind === "chat") {
+  if (route.kind === "chat" && !loaded) {
+    // 还不知道有没有私聊：先别开会话，免得落到全员那条，发出去全组织都看得到。
+    body = (
+      <div className="grid h-full place-items-center">
+        <Spinner size="sm" aria-label="正在打开" />
+      </div>
+    );
+  } else if (route.kind === "chat") {
     body = (
       <Chat
         key={session}

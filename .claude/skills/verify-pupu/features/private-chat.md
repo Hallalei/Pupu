@@ -1,42 +1,31 @@
 # 私聊
 
-每个成员有一条只有自己和 Pupu 的私聊。聊天这一段长按或右键，在大家和私聊之间切换。
+每个成员有一条只有自己和 Pupu 的私聊。聊天这一段（「Pupu」）就是它；原来的「大家」成了空间列表第一个的「全员」（见 spaces.md 的 `space.everyone`）。2026-11-14 起没有长按切换。
 
 ## Sub-features
 
-- `private.switch`：长按或右键聊天这一段弹两行菜单，当前项打勾。选私聊后天空变夜空，输入栏写「只发给 Pupu」。
+- `private.open`：登录后聊天这一段直接是私聊：夜空，输入栏「只发给 Pupu」。`/api/state` 第一次拿到之前只转圈、没有输入栏，免得发到全员。
 - `private.isolated`：别人连不上你的私聊，会话 WebSocket 收到 `打不开这条聊天` 后以 1011 关闭。查不到的会话也一样。
-- `private.dot`：没在显示的那条有 Pupu 的新回复时，头像右上角亮红点；切过去就消失。
+- `private.dot`：私聊有 Pupu 的新回复、人在「项目」段时，聊天这一段亮红点。全员的新消息在空间列表「全员」那行亮红点。
 - `private.handoff`：私聊里转交前 Pupu 先说内容会公开。报告卡回到这条私聊，别人的 `/api/state` 里没有这张卡，项目里不带无关私事。
 - `private.approval`：私聊发起的电脑动作，审批卡和「正在做」只给发起人和电脑主人。第三个人的 `/api/state`、`activity` 帧里都没有。
 
 ## How to get to it (user POV)
 
-- 手机宽度：长按顶部聊天这一段。电脑浏览器窄窗口：右键。
-- 宽屏：左侧栏「大家」「私聊」。
+- 顶部「Pupu」段。宽屏和 ≡ 列表里是「我的 Pupu」。
 
 ## Driving it with ego-browser
 
-Preconditions: 要几个成员，`apps/cloud/.dev.vars` 按 `apps/cloud/README.md` 的「本地测 Google 登录」写好，`node apps/cloud/dev/fake-google.mjs` 在跑。没带凭据时没有成员身份，`chats.private` 是 null，不弹菜单。
+Preconditions: 要几个成员，`apps/cloud/.dev.vars` 按 `apps/cloud/README.md` 的「本地测 Google 登录」写好，`node apps/cloud/dev/fake-google.mjs` 在跑。没带凭据时没有成员身份，`chats.private` 是 null，聊天这一段退回全员那条（老行为）。
 
 - 登录：不带凭据也算已登录，不显示登录页，直接打开 `/api/auth/google/start?client=browser`，再点 `loc=css:#owner` 或 `loc=css:#family`。
 - 第二个成员要单独的 cookie：换一个 host。`localhost` 给创建者，`127.0.0.1` 给成员。vite 只听 `::1`，先在 `127.0.0.1:<端口>` 起一个转发到 `[::1]:<端口>` 的 TCP 小脚本。`GOOGLE_OIDC_DEV_BASE` 和 `isLocal` 这两个 host 都认。
 - 邀请：创建者登录后，`curl -X POST /api/pair -d '{"kind":"phone","name":"验证手机"}'` 拿到一张归创建者的手机凭据，再带 `Authorization: Bearer` 调 `POST /api/members`。这张凭据也用来批准审批。
 - 第三个成员不用开浏览器：`curl -c jar` 走 `/api/auth/google/start`，给跳转地址加 `&email=stranger@example.com`，再回到 callback。之后用 `curl -b jar localhost:<端口>/api/state` 看。
 - 窄屏：`await page.cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: false })`。每次 `ego-browser nodejs` 都要重设。
-- `private.switch`（右键）：
-  ```js
-  const box = await page.evaluate(() => {
-    const r = document.querySelector("[role=tab][aria-label]").getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  });
-  await page.mouse.click(box.x, box.y, { button: "right" });
-  await page.click('text="私聊"');
-  await page.waitForSelector('loc=css:textarea[placeholder="只发给 Pupu"]');
-  ```
-- `private.switch`（长按）：`Emulation.setTouchEmulationEnabled`，然后 `Input.dispatchTouchEvent` 的 `touchStart`，等 650 毫秒，再 `touchEnd`。
+- `private.open`：`await page.waitForSelector('loc=css:textarea[placeholder="只发给 Pupu"]')`。测转圈：拦住 `/api/state`（停掉服务或 `Fetch.enable` 挂起），应只有「正在打开」，没有 textarea。
 - `private.isolated`：在成员页面里 `new WebSocket("ws://" + location.host + "/agents/pupu/me?_pk=" + crypto.randomUUID() + "&session=<别人的私聊>")`。`/api/state` 的 `chats.private.session` 是各人的私聊。
-- `private.dot`：林夏停在私聊，阿周在大家发一句。结果：林夏那边聊天这一段的 `aria-label` 变成「私聊，大家有新消息」。
+- `private.dot`：林夏停在某个空间，阿周在全员发一句。结果：林夏那边 ≡ 列表「全员」那行有红点。
 
 ## Gotchas
 

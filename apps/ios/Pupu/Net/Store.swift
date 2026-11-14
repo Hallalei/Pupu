@@ -31,6 +31,8 @@ final class Store {
         var pupuAvatar: String?
         var error: String?
         var loaded = false
+        /// 至少成功拉到过一次：拉失败也算 loaded，但那时 chats 还是默认的那一份，不知道有没有私聊。
+        var synced = false
     }
 
     /// 拉 /api/state：一次只拉一份。拉的时候又有人要，记下来，拉完再拉一次。
@@ -149,7 +151,8 @@ final class Store {
                     avatarPresets: state.avatarPresets ?? [],
                     pupuAvatar: state.pupuAvatar,
                     error: nil,
-                    loaded: true
+                    loaded: true,
+                    synced: true
                 )
             }
             Push.shared.clearDelivered(pending: current.approvals.map(\.id))

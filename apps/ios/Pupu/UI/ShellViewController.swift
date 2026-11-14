@@ -48,6 +48,7 @@ final class ShellViewController: UIViewController {
     private var ownChatView: ChatViewController?
     private var projectChat: ChatViewController?
     private lazy var noProject = NoProjectViewController(create: { [weak self] in self?.createProject() })
+    private let loading = LoadingViewController()
     private var shown: UIViewController?
 
     init(identity: Identity) {
@@ -162,7 +163,8 @@ final class ShellViewController: UIViewController {
     private func render() {
         doing.update(Store.shared.activity, shown: section == .chat || inEveryone)
         switch section {
-        case .chat: display(ownChat)
+        // 还不知道有没有私聊：先别开会话，免得落到全员那条，发出去全组织都看得到。
+        case .chat: display(Store.shared.synced ? ownChat : loading)
         case .projects: showProjects()
         }
         updatePill()
@@ -352,7 +354,7 @@ final class ShellViewController: UIViewController {
     private func openActivity(_ activity: ComputerActivity) {
         if let ref = activity.project, let project = Store.shared.project(id: ref.id) {
             open(project)
-        } else if !((section == .chat ? ownChat : inEveryone ? projectChat : nil)?.showComputerCard(activity.computerId) ?? false) {
+        } else if !((section == .chat ? (Store.shared.synced ? ownChat : nil) : inEveryone ? projectChat : nil)?.showComputerCard(activity.computerId) ?? false) {
             openSettings(page: .computer(activity.computerId))
         }
     }
@@ -401,6 +403,22 @@ final class ShellViewController: UIViewController {
         let alert = UIAlertController(title: "没做成", message: text, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "好", style: .default))
         (presentedViewController ?? self).present(alert, animated: true)
+    }
+}
+
+/// 第一次拉到状态之前，聊天段先转圈。
+final class LoadingViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.startAnimating()
+        spinner.accessibilityLabel = "加载中"
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
     }
 }
 
