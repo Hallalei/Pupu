@@ -64,7 +64,7 @@ JS
   --args "$PWD" --remote-debugging-port=9333)
 ```
 
-`node $S/cdp.mjs targets` 能列出「连上 Pupu」窗口就算起来了。之后用 `cdp.mjs eval '<js>'` 和 `cdp.mjs shot <png>` 操作和截图。
+`PUPU_BACKGROUND=1` 时窗口一直藏着，不出现在用户屏幕上，CDP 照样能读页面、截图。`node $S/cdp.mjs targets` 能列出「连上 Pupu」窗口就算起来了。测完立刻按端口关掉，不留到下一次。之后用 `cdp.mjs eval '<js>'` 和 `cdp.mjs shot <png>` 操作和截图。
 
 配对：
 

@@ -16,8 +16,11 @@ import type { ComputerView } from "../bridge/protocol";
 import type { MemberView } from "../members";
 import { BROWSER_CANCEL_TEXT, quotedMessage, type Sender } from "../messages";
 import { MemberAvatar } from "./Avatar";
+import { TaskCard } from "./Spaces";
+import type { ChildView } from "../server";
 import type { Project } from "../projects";
 import { reportQuote, STATUS_LABELS, type ReportCard, type ReportStatus } from "../reports";
+import { openRemoteDesktop, useRemoteDesktop } from "./RemoteDesktop";
 import { BrowserCard, type BrowserFrameView } from "./BrowserCard";
 import { offerBrowserCancel } from "./BrowserTakeover";
 import {
@@ -64,6 +67,11 @@ export type ChatContext = {
   readonly onProjectsChanged: () => void;
   /** 收到电脑在做什么的更新。 */
   readonly onActivity?: (activity: readonly ComputerActivity[]) => void;
+  /** 空间的子会话，按会话 id。任务卡上的状态从这里查。 */
+  readonly children?: ReadonlyMap<string, ChildView>;
+  readonly onOpenChild?: (session: string) => void;
+  /** 转来的第一条上面写的「从哪来」。默认「从聊天转来」。 */
+  readonly handoffFrom?: string;
 };
 
 type ChatProps = {
@@ -473,13 +481,24 @@ function Row({
       return (
         <div className="flex justify-center">
           <div className="soft flex max-w-[85%] flex-col gap-0.5 rounded-row px-3 py-2 text-center">
-            <span className="text-footnote text-muted">从聊天转来</span>
+            <span className="text-footnote text-muted">{context.handoffFrom ?? "从聊天转来"}</span>
             <span className="text-subheadline whitespace-pre-wrap">{row.text}</span>
           </div>
         </div>
       );
     case "report":
       return <ReportBubble card={row.card} context={context} onMenu={onMenu} />;
+    case "child": {
+      const session = row.session;
+      const open = context.onOpenChild;
+      return (
+        <TaskCard
+          title={row.title}
+          child={session === null ? undefined : context.children?.get(session)}
+          onOpen={session !== null && open ? () => open(session) : undefined}
+        />
+      );
+    }
     case "error":
       return (
         <div className="strong w-fit max-w-[85%] rounded-row px-4 py-2.5 text-subheadline [overflow-wrap:anywhere] text-danger-ink">
@@ -680,10 +699,11 @@ function ToolCard({ step, onToggle }: { step: ToolStep; onToggle: () => void }) 
 /**
  * 电脑任务卡：在哪台电脑上、在做什么、状态；带回过截图就显示最近的画面，点「步骤」看每一步。
  * 样子学浏览器卡片和原型里的子会话卡，iOS 的 ComputerCardCell 是同一个样子，两边一起改。
- * 「接手」是打开远程桌面，只有手机上有看远程桌面的地方，网页和电脑 App 上不放。
+ * 「接手」是打开远程桌面，只给主人自己在线的电脑，网页上先按通行密钥，电脑 App 里交给浏览器，见 RemoteDesktop.tsx。
  */
 function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: string) => void }) {
   const active = task.state === "live" || task.state === "waiting";
+  const remote = useRemoteDesktop(task.computerId);
   return (
     <div
       data-computer-card={task.computerId ?? ""}
@@ -715,6 +735,15 @@ function ComputerCard({ task, onToggle }: { task: ComputerTask; onToggle: (id: s
           步骤
           <ChevronDownIcon className={`text-[11px] ${task.expanded ? "rotate-180" : ""}`} />
         </button>
+        {remote && remote !== "phone" && task.computerId && (
+          <button
+            type="button"
+            onClick={() => openRemoteDesktop(task.computerId!, remote)}
+            className="tap flex h-8 shrink-0 items-center rounded-full bg-surface-inset px-3 text-footnote font-semibold pointer-fine:h-7"
+          >
+            接手
+          </button>
+        )}
       </div>
       {task.expanded && (
         <ol aria-label="步骤" className="flex flex-col border-t border-separator">

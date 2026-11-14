@@ -135,6 +135,41 @@ describe("远程桌面的租约", () => {
     assert.equal(socket.closed, true);
   });
 
+  test("地址里的票交给权限判断", async () => {
+    const seen: (string | null)[] = [];
+    const desktop = new RemoteDesktopHub({
+      sockets: () => [],
+      deviceOf: () => "b",
+      toBridge: () => true,
+      mayView: (_device, _computer, ticket) => {
+        seen.push(ticket);
+        return ticket === "t1";
+      },
+      iceServers: async () => [],
+      deviceName: () => "",
+      newSession: () => "s"
+    });
+    const ok = phone();
+    await desktop.onConnect(ok, new Request("https://pupu.example/api/desktop/c1?ticket=t1"));
+    const bad = phone();
+    await desktop.onConnect(bad, new Request("https://pupu.example/api/desktop/c1"));
+    assert.deepEqual(seen, ["t1", null]);
+    assert.equal(ok.closed, false);
+    assert.equal(bad.last("ended")?.reason, "not_allowed");
+  });
+
+  test("网页和电脑 App 要主人刚为这台电脑按过通行密钥", () => {
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", "m1"), true);
+    assert.equal(mayViewDesktop({ kind: "desktop", memberId: "m1" }, "m1", "m1"), true);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", null), false);
+    // 票是别人换的、或者不是主人：都不行。
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, "m1", "m2"), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m2" }, "m1", "m2"), false);
+    // 没主人的电脑手机能开，网页不行。
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: "m1" }, null, "m1"), false);
+    assert.equal(mayViewDesktop({ kind: "browser", memberId: null }, null, null), false);
+  });
+
   test("只有主人自己的手机能看", () => {
     assert.equal(mayViewDesktop({ kind: "phone", memberId: "m1" }, "m1"), true);
     assert.equal(mayViewDesktop({ kind: "phone", memberId: "m2" }, "m1"), false);

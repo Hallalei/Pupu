@@ -20,6 +20,9 @@ export type SpaceChild = {
   readonly createdAt: number;
   /** 派了活、还没回报的时间。null 是空着。 */
   readonly busySince: number | null;
+  /** 最近一次回投给主会话的时间和第一行。还没回投过是 null 和空串。 */
+  readonly reportedAt: number | null;
+  readonly summary: string;
 };
 
 /** 回投到主会话的结果最多这么长，超出的截掉，人可以点进子会话看全文。 */
@@ -38,7 +41,9 @@ function toChild(row: Row): SpaceChild {
     projectId: String(row.project_id),
     title: String(row.title),
     createdAt: Number(row.created_at),
-    busySince: row.busy_since === null ? null : Number(row.busy_since)
+    busySince: row.busy_since === null ? null : Number(row.busy_since),
+    reportedAt: row.reported_at === null || row.reported_at === undefined ? null : Number(row.reported_at),
+    summary: String(row.summary ?? "")
   };
 }
 
@@ -61,6 +66,11 @@ export class SpaceSessionStore {
         busy_since INTEGER,
         reported_at INTEGER
       )`);
+      // 早先建的表没有 summary 这一列，补上。
+      const columns = this.#sql.exec("PRAGMA table_info(pupu_space_sessions)").toArray();
+      if (!columns.some((column) => column.name === "summary")) {
+        this.#sql.exec("ALTER TABLE pupu_space_sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''");
+      }
       this.#ready = true;
     }
     return this.#sql;
@@ -120,9 +130,14 @@ export class SpaceSessionStore {
     );
   }
 
-  /** 记下回投给主会话的时间。 */
-  markReported(session: string, at: number): void {
-    this.#db().exec("UPDATE pupu_space_sessions SET reported_at = ? WHERE session = ?", at, session);
+  /** 记下回投给主会话的时间和结果第一行（界面上任务卡用）。 */
+  markReported(session: string, at: number, summary = ""): void {
+    this.#db().exec(
+      "UPDATE pupu_space_sessions SET reported_at = ?, summary = ? WHERE session = ?",
+      at,
+      summary,
+      session
+    );
   }
 
   /** 这个空间最近一次有子会话回投的时间。 */

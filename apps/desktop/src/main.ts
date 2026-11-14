@@ -70,6 +70,8 @@ const dataName = app.isPackaged ? "Pupu" : "Pupu Dev";
  * 用户手上的活不被打断。界面用 CDP（--remote-debugging-port）读 DOM、截图来看。
  */
 const background = !app.isPackaged && process.env.PUPU_BACKGROUND === "1";
+/** 带 --tray 启动（本机换新版后重开时用）：已经配对就只进菜单栏，不开窗口，免得打断用户。 */
+const trayStart = process.argv.includes("--tray");
 
 app.setName("Pupu");
 // 开发时可以用 PUPU_USER_DATA 另开一份数据，同时跑两个互不干扰的 App 来测。
@@ -595,13 +597,9 @@ function updateDock(): void {
   app.setActivationPolicy(!background && (mainWindow || pairWindow) ? "regular" : "accessory");
 }
 
-/** 显示窗口并拿到前台；后台测试时只显示，不激活 App、不抢焦点。 */
+/** 显示窗口并拿到前台。后台测试时窗口一直藏着，不出现在用户屏幕上；CDP 照样能读页面、截图。 */
 function reveal(window: BrowserWindow): void {
-  if (window.isDestroyed()) return;
-  if (background) {
-    window.showInactive();
-    return;
-  }
+  if (window.isDestroyed() || background) return;
   window.show();
   window.focus();
 }
@@ -914,8 +912,9 @@ async function boot(): Promise<void> {
     update = version;
     render();
   }, log);
-  if (pairing.desktop) await openMain();
-  else openPairWindow();
+  if (pairing.desktop) {
+    if (!trayStart) await openMain();
+  } else openPairWindow();
 }
 
 if (refused.length > 0) {

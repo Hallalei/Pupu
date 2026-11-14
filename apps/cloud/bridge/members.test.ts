@@ -25,9 +25,9 @@ const NOW = 1_800_000_000_000;
 
 describe("邮箱", () => {
   test("Gmail 的点和大小写不算数，googlemail.com 就是 gmail.com；别家的点算数", () => {
-    assert.equal(emailKey("Wang.Lei@GMail.com"), "wanglei@gmail.com");
-    assert.equal(emailKey("wanglei@googlemail.com"), "wanglei@gmail.com");
-    assert.equal(emailKey("wang.lei@example.com"), "wang.lei@example.com");
+    assert.equal(emailKey("Lin.Xia@GMail.com"), "linxia@gmail.com");
+    assert.equal(emailKey("linxia@googlemail.com"), "linxia@gmail.com");
+    assert.equal(emailKey("lin.xia@example.com"), "lin.xia@example.com");
   });
 
   test("像不像邮箱", () => {
@@ -98,8 +98,8 @@ describe("创建者和成员", () => {
 describe("成员表", () => {
   test("只能有一个创建者；邀请过的邮箱不能再邀请", () => {
     const members = new MemberStore(sqlStorage());
-    const creator = members.addCreator("Wang.Lei@gmail.com", NOW);
-    assert.equal(creator?.email, "wanglei@gmail.com");
+    const creator = members.addCreator("Lin.Xia@gmail.com", NOW);
+    assert.equal(creator?.email, "linxia@gmail.com");
     assert.equal(creator?.role, "creator");
     assert.equal(creator?.joinedAt, NOW);
     assert.equal(members.addCreator("other@example.com", NOW), undefined);
@@ -109,16 +109,16 @@ describe("成员表", () => {
     assert.equal(mom?.joinedAt, null);
     assert.equal(mom?.invitedBy, creator?.id);
     assert.equal(members.invite("MOM@example.com", null, NOW + 2), undefined);
-    assert.equal(members.invite("wanglei@gmail.com", null, NOW + 2), undefined, "创建者也算在名单上");
+    assert.equal(members.invite("linxia@gmail.com", null, NOW + 2), undefined, "创建者也算在名单上");
 
-    assert.equal(members.byEmail("wang.lei@gmail.com")?.id, creator?.id);
+    assert.equal(members.byEmail("lin.xia@gmail.com")?.id, creator?.id);
     members.markJoined(mom?.id ?? "", NOW + 3);
     members.markJoined(mom?.id ?? "", NOW + 4);
     assert.equal(members.byEmail("mom@example.com")?.joinedAt, NOW + 3, "只记第一次");
     assert.deepEqual(
       members.list().map((row) => [row.email, row.role]),
       [
-        ["wanglei@gmail.com", "creator"],
+        ["linxia@gmail.com", "creator"],
         ["mom@example.com", "member"]
       ]
     );

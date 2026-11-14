@@ -159,6 +159,7 @@ import { pushTakeover } from "./push/takeover";
 import { PiSessionSockets } from "./sockets";
 import { dailyLimitFrom, dayOf, USAGE_LIMIT_MESSAGE, UsageStore, withDailyLimit } from "./usage";
 import { maySeeSpace } from "./access.ts";
+import { checkSpaceChange, parseSpaceChange, readableReports, SPACE_ERRORS, type SpaceChange, type SpaceVerdict } from "./spaces.ts";
 import { childReport, COORDINATOR_TOOLS, createDelegationTools, mayCall, reportsWait, SpaceSessionStore } from "./delegation.ts";
 import { chatSessions, mayOpen, ThreadStore, workFilter, type ChatsView, type PrivateChatRow, type Thread } from "./threads";
 import { createPupuTools } from "./tools";
@@ -186,8 +187,23 @@ const SIGN_IN_JOB = "sign-in-expiry";
 
 /** v0 只有一个用户，所以只有一个 Pupu 实例。 */
 
+/** 空间里的一个子会话，任务卡和子会话页用。`busy`：派了活还没回报。 */
+export type ChildView = {
+  readonly session: string;
+  readonly title: string;
+  readonly createdAt: number;
+  readonly busy: boolean;
+  /** 子会话里有电脑动作在等批准。 */
+  readonly waiting: boolean;
+  readonly reportedAt: number | null;
+  readonly summary: string;
+};
+
+/** 状态里的空间：项目本身加上它的子会话。 */
+export type ProjectView = Project & { readonly children: readonly ChildView[] };
+
 export type PupuState = {
-  readonly projects: readonly Project[];
+  readonly projects: readonly ProjectView[];
   readonly computers: ReturnType<ComputerBridge["list"]>;
   /** 等用户批准的电脑动作，先来的在前。 */
   readonly approvals: readonly ApprovalView[];
@@ -490,9 +506,10 @@ export class Pupu extends DurableObject<Env> {
     sockets: () => this.ctx.getWebSockets(DESKTOP_TAG),
     deviceOf: (request) => request.headers.get(DEVICE_HEADER),
     toBridge: (computerId, session, message) => this.bridge.sendDesktop(computerId, session, message),
-    mayView: (device, computerId) => mayViewDesktop(this.#actor(device), this.#ownerOf(computerId)),
+    mayView: (device, computerId, ticket) =>
+      mayViewDesktop(this.#actor(device), this.#ownerOf(computerId), this.#useDesktopTicket(ticket, device, computerId)),
     iceServers: () => iceServersFrom(this.env),
-    deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的手机",
+    deviceName: (device) => this.devices.list().find((row) => row.id === device)?.name ?? "别的设备",
     newSession: () => crypto.randomUUID()
   });
   readonly sockets = new PiSessionSockets(
@@ -961,8 +978,23 @@ export class Pupu extends DurableObject<Env> {
     const viewer = this.#viewer(current);
     const own = viewer === null ? null : await this.#ensurePrivateChat(viewer);
     const sees = this.#seenBy(viewer);
+    const waitingSessions = new Set(this.approvals.pending(Date.now()).map((row) => row.session));
     return {
-      projects: this.store.listProjects().filter((project) => maySeeSpace(project, viewer)),
+      projects: this.store
+        .listProjects()
+        .filter((project) => maySeeSpace(project, viewer))
+        .map((project) => ({
+          ...project,
+          children: this.children.ofProject(project.id).map((child) => ({
+            session: child.session,
+            title: child.title,
+            createdAt: child.createdAt,
+            busy: child.busySince !== null,
+            waiting: waitingSessions.has(child.session),
+            reportedAt: child.reportedAt,
+            summary: child.summary
+          }))
+        })),
       computers: this.bridge.list(),
       approvals: [
         ...this.gate.pending((row) => sees(row.session, row.computerId)),
@@ -1001,8 +1033,10 @@ export class Pupu extends DurableObject<Env> {
 
   /** 主会话的卡大家都看，别人私聊转交的不发给你。 */
   #reportCards(own: PrivateChatRow | null): ReportCard[] {
-    const names = new Map(this.store.listProjects().map((project) => [project.id, project.name]));
-    return reportCards(this.reports.visible(chatSessions(own)), (id) => names.get(id));
+    const projects = new Map(this.store.listProjects().map((project) => [project.id, project]));
+    // 空间后来收窄了：以前报到这条聊天的卡，这条聊天的受众不再都看得到，就不再给。
+    const rows = readableReports(this.reports.visible(chatSessions(own)), projects, (session) => this.threads.of(session));
+    return reportCards(rows, (id) => projects.get(id)?.name);
   }
 
   /**
@@ -1659,6 +1693,37 @@ export class Pupu extends DurableObject<Env> {
     return ok ? memberId : null;
   }
 
+  /** 网页开远程桌面换来的票，见 `desktopTicket`。 */
+  readonly #desktopTickets = new Map<
+    string,
+    { readonly device: string | null; readonly computerId: string; readonly memberId: string; readonly expiresAt: number }
+  >();
+
+  /**
+   * 网页或电脑 App 要开远程桌面：主人刚用通行密钥为这台电脑确认过，换一张一次性的票，马上拿去连
+   * `/api/desktop/:id?ticket=`。票只在内存里，30 秒过期，用一次就没了：信令断了要人再按一次，
+   * 不让一次确认变成之后谁都能悄悄连回来的通行证。没主人的电脑、别人的电脑都换不到。
+   */
+  async desktopTicket(device: string | null, computerId: string, proof: PasskeyProof | null): Promise<string | null> {
+    const owner = this.computers.list().find((row) => row.id === computerId)?.ownerId ?? null;
+    if (owner === null) return null;
+    if ((await this.#proven(device, { kind: "desktop", computerId }, proof)) !== owner) return null;
+    const now = Date.now();
+    for (const [key, row] of this.#desktopTickets) if (row.expiresAt <= now) this.#desktopTickets.delete(key);
+    const ticket = crypto.randomUUID();
+    this.#desktopTickets.set(ticket, { device, computerId, memberId: owner, expiresAt: now + 30_000 });
+    return ticket;
+  }
+
+  /** 用掉一张票：是这台设备为这台电脑换的、没过期，返回确认的成员。 */
+  #useDesktopTicket(ticket: string | null, device: string | null, computerId: string): string | null {
+    if (!ticket) return null;
+    const row = this.#desktopTickets.get(ticket);
+    this.#desktopTickets.delete(ticket);
+    if (!row || row.expiresAt <= Date.now() || row.device !== device || row.computerId !== computerId) return null;
+    return row.memberId;
+  }
+
   /** 网页要确认一件事：先拿挑战。不是成员、或者在这个网址上没有通行密钥是 null。 */
   async passkeyProofOptions(device: string | null, rp: RelyingParty, purpose: Purpose) {
     const memberId = this.#viewer(device);
@@ -1852,7 +1917,7 @@ export class Pupu extends DurableObject<Env> {
     const run = this.#askedAt.get(thread.session) ?? Date.now();
     // 停下时 pi 把排着的也撤了，直接空出来。
     this.children.markIdle(thread.session, stopped ? undefined : run);
-    this.children.markReported(thread.session, Date.now());
+    this.children.markReported(thread.session, Date.now(), progressLine(reply));
     this.ctx.waitUntil(
       this.harness
         .session(thread.project.session)
@@ -1864,8 +1929,52 @@ export class Pupu extends DurableObject<Env> {
     );
   }
 
+  /** 成员在界面上建空间：L3，只有他自己和 Pupu。不是成员（本机开发没登录）的建不了。 */
+  async createSpace(input: { name: string; goal: string }, device: string | null = null): Promise<Project | null> {
+    await this.lifecycle.start();
+    const owner = this.#viewer(device);
+    if (owner === null) return null;
+    const name = input.name.trim();
+    if (!name) throw new Error("空间名不能为空");
+    const session = await this.harness.sessions.create();
+    const project = await this.store.createSpace(
+      this.#sqlWriter,
+      { session: session.id, name, goal: input.goal.trim(), background: "", ownerId: owner },
+      Date.now()
+    );
+    this.#changed();
+    return project;
+  }
+
+  /** 主人改空间：拉人、移人、改密级、切模式。规则见 spaces.ts。受众变了，开着的连接重新过一遍。 */
+  async changeSpace(projectId: string, change: SpaceChange, device: string | null = null): Promise<SpaceVerdict> {
+    await this.lifecycle.start();
+    const project = this.store.getProject(projectId);
+    const verdict = checkSpaceChange(project, this.#viewer(device), change, (id) => this.members.byId(id) !== undefined);
+    if (verdict !== "ok" || !project) return verdict;
+    const now = Date.now();
+    switch (change.kind) {
+      case "add":
+        await this.store.addMember(this.#sqlWriter, projectId, change.memberId, this.#viewer(device)!, now);
+        break;
+      case "remove":
+        await this.store.removeMember(this.#sqlWriter, projectId, change.memberId);
+        break;
+      case "level":
+        await this.store.setLevel(this.#sqlWriter, projectId, change.level, now);
+        break;
+      case "mode":
+        await this.setSpaceMode(projectId, change.mode);
+        break;
+    }
+    this.sockets.revalidate();
+    this.#changed();
+    this.#activityChanged();
+    return "ok";
+  }
+
   /**
-   * 把空间切成协调模式：主会话只留委派工具。这一版只给本机开发用（见 `/api/projects/:id/mode`），线上没有入口。
+   * 把空间切成协调模式：主会话只留委派工具。主人在界面上切（`changeSpace`），本机开发另有 `/api/projects/:id/mode`。
    */
   async setSpaceMode(projectId: string, mode: SpaceMode): Promise<boolean> {
     await this.lifecycle.start();
@@ -2509,6 +2618,14 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
     if (!options) return Response.json({ error: `你在 ${url.host} 上还没有通行密钥，先在设置里加一把` }, { status: 409 });
     return Response.json(options);
   }
+  if (pathname === "/api/desktop-tickets" && method === "POST") {
+    const body = await readJson<{ computerId?: unknown; proof?: unknown }>(request);
+    const computerId = typeof body.computerId === "string" ? body.computerId : "";
+    const ticket = await caller.pupu.desktopTicket(caller.device, computerId, proofOf(url, body.proof));
+    return ticket
+      ? Response.json({ ticket })
+      : Response.json({ error: "没确认上，只有电脑主人本人能开远程桌面" }, { status: 403 });
+  }
   if (pathname === "/api/passkeys/options" && method === "POST") {
     const body = await readJson<{ proof?: unknown }>(request);
     const result = await caller.pupu.passkeyAddOptions(caller.device, relyingParty(url), proofOf(url, body.proof));
@@ -2587,6 +2704,20 @@ async function handleApi(request: Request, env: Env, url: URL, caller: Caller) {
   if (seen && method === "POST") {
     const ok = await caller.pupu.markProjectSeen(decodeURIComponent(seen[1] ?? ""), caller.device);
     if (!ok) return Response.json({ error: "没有这个项目" }, { status: 404 });
+    return Response.json({ ok: true });
+  }
+  if (pathname === "/api/spaces" && method === "POST") {
+    const body = await readJson<{ name?: string; goal?: string }>(request);
+    const space = await caller.pupu.createSpace({ name: String(body.name ?? ""), goal: String(body.goal ?? "") }, caller.device);
+    if (!space) return Response.json({ error: "登录之后才能建空间" }, { status: 403 });
+    return Response.json(space);
+  }
+  const space = pathname.match(/^\/api\/spaces\/([^/]+)$/);
+  if (space && method === "POST") {
+    const change = parseSpaceChange(await readJson<unknown>(request));
+    if (!change) return Response.json({ error: SPACE_ERRORS.invalid.error }, { status: 400 });
+    const verdict = await caller.pupu.changeSpace(decodeURIComponent(space[1] ?? ""), change, caller.device);
+    if (verdict !== "ok") return Response.json({ error: SPACE_ERRORS[verdict].error }, { status: SPACE_ERRORS[verdict].status });
     return Response.json({ ok: true });
   }
   if (pathname === "/api/projects" && method === "POST") {

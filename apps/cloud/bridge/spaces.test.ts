@@ -7,6 +7,7 @@ import { ProjectStore, type SpaceWriter } from "../src/projects.ts";
 import { ReportStore } from "../src/reports.ts";
 import { MAIN_SESSION, ThreadStore, type Thread } from "../src/threads.ts";
 import { createPupuTools } from "../src/tools.ts";
+import { checkSpaceChange, parseSpaceChange, readableReports } from "../src/spaces.ts";
 import { sqlStorage } from "./sql-memory.ts";
 
 const NOW = 1_800_000_000_000;
@@ -158,9 +159,10 @@ describe("谁能看什么", () => {
     assert.equal(mayRead(inSpace("L4"), space("L4")), true);
   });
 
-  test("从一个空间读另一个：这边每个成员都得在那边", () => {
+  test("从一个空间读另一个：只读得到全组织的，成员再多也读不到别的 L3", () => {
     const target = { ...space("L3", ["m1", "m2", "m3"]), id: "t" };
-    assert.equal(mayRead(inSpace("L3", ["m1", "m2"]), target), true);
+    assert.equal(mayRead(inSpace("L3", ["m1", "m2"]), target), false);
+    assert.equal(mayRead(inSpace("L3", ["m1", "m2"]), { ...space("L2"), id: "o" }), true);
     assert.equal(mayRead(inSpace("L3", ["m1", "m4"]), target), false);
     assert.equal(mayRead(inSpace("L2"), target), false);
   });
@@ -266,5 +268,98 @@ describe("被移出组织的人（第 8 节的身份）", () => {
     assert.equal(back.id, zhou.id);
     assert.equal(mayOpen(threads.of("20"), back.id), true, "个人入口回来了");
     assert.equal(maySeeSpace(projects.getProject(space.id)!, back.id), false, "L3 空间没有自动回来");
+  });
+});
+
+describe("权限矩阵：界面上改空间（协作方案第 8 节）", () => {
+  // 林夏 m1 建了 L3「定价」，拉了阿周 m2；小吴 m3 是组织成员但不在空间里；阿梅 m4 被移出了空间；
+  // 创建者 c 不在空间里；老项目「周报」没有主人；m9 已经不在组织里。
+  const org = new Set(["m1", "m2", "m3", "m4", "c"]);
+  const isOrg = (id: string) => org.has(id);
+  const l3 = { id: "s", level: "L3" as Level, members: ["m1", "m2"], ownerId: "m1" };
+  const legacy = { id: "w", level: "L2" as Level, members: [] as string[], ownerId: null };
+  const changes = [
+    { kind: "add", memberId: "m3" },
+    { kind: "remove", memberId: "m2" },
+    { kind: "level", level: "L2" },
+    { kind: "mode", mode: "coordinator" }
+  ] as const;
+
+  test("主人什么都能改", () => {
+    for (const change of changes) assert.equal(checkSpaceChange(l3, "m1", change, isOrg), "ok", change.kind);
+  });
+
+  test("空间成员不是主人：看得到，改不了", () => {
+    for (const change of changes) assert.equal(checkSpaceChange(l3, "m2", change, isOrg), "forbidden", change.kind);
+  });
+
+  test("非成员、被移出空间的人、创建者、没登录的：和空间不存在一样", () => {
+    for (const viewer of ["m3", "m4", "c", "m9", null]) {
+      for (const change of changes) assert.equal(checkSpaceChange(l3, viewer, change, isOrg), "missing", `${viewer} ${change.kind}`);
+    }
+    assert.equal(checkSpaceChange(undefined, "m1", changes[0], isOrg), "missing");
+  });
+
+  test("全组织档：谁都看得到，只有主人能改", () => {
+    const open = { ...l3, level: "L2" as Level };
+    assert.equal(checkSpaceChange(open, "m3", changes[2], isOrg), "forbidden");
+    assert.equal(checkSpaceChange(open, "c", changes[0], isOrg), "forbidden");
+    assert.equal(checkSpaceChange(open, "m1", { kind: "level", level: "L3" }, isOrg), "ok");
+  });
+
+  test("老项目没有主人：谁都改不了，创建者也不行", () => {
+    for (const viewer of ["m1", "c", null]) {
+      for (const change of changes) assert.equal(checkSpaceChange(legacy, viewer, change, isOrg), "forbidden");
+    }
+  });
+
+  test("只能拉组织里的人；主人移不出去；L1 不做", () => {
+    assert.equal(checkSpaceChange(l3, "m1", { kind: "add", memberId: "m9" }, isOrg), "invalid");
+    assert.equal(checkSpaceChange(l3, "m1", { kind: "remove", memberId: "m1" }, isOrg), "invalid");
+    assert.equal(checkSpaceChange(l3, "m1", { kind: "level", level: "L1" }, isOrg), "invalid");
+  });
+
+  test("请求体：认不出来的是 null", () => {
+    assert.deepEqual(parseSpaceChange({ kind: "add", memberId: "m3" }), { kind: "add", memberId: "m3" });
+    assert.deepEqual(parseSpaceChange({ kind: "level", level: "L4" }), { kind: "level", level: "L4" });
+    assert.equal(parseSpaceChange({ kind: "level", level: "L5" }), null);
+    assert.equal(parseSpaceChange({ kind: "add" }), null);
+    assert.equal(parseSpaceChange({ kind: "owner", memberId: "m2" }), null);
+    assert.equal(parseSpaceChange(null), null);
+  });
+});
+
+describe("权限矩阵：改了以后各出口跟着变", () => {
+  test("改成 L3 以后，不在名单上的人看不到、打不开；移出的人也一样", async () => {
+    const { sql, projects, threads } = await org();
+    const project = projects.insertProject({ session: "11", name: "官网", goal: "", background: "" });
+    // 老项目没有主人；这里模拟一个有主人的全组织空间收窄。
+    sql.exec("UPDATE pupu_projects SET owner_id = 'm1' WHERE id = ?", project.id);
+    await projects.addMember(writer(sql), project.id, "m1", "m1", NOW);
+    await projects.addMember(writer(sql), project.id, "m2", "m1", NOW);
+    assert.equal(mayOpen(threads.of("11"), "m3"), true);
+    await projects.setLevel(writer(sql), project.id, "L3", NOW);
+    assert.equal(maySeeSpace(projects.getProject(project.id)!, "m3"), false);
+    assert.equal(mayOpen(threads.of("11"), "m3"), false);
+    assert.equal(mayOpen(threads.of("11"), "m2"), true);
+    await projects.removeMember(writer(sql), project.id, "m2");
+    assert.equal(mayOpen(threads.of("11"), "m2"), false);
+    assert.equal(maySeeSpace(projects.getProject(project.id)!, "m2"), false);
+  });
+
+  test("报告卡：空间收窄以后，以前报到主会话的卡不再给；本人私聊里的还在", async () => {
+    const { sql, projects, threads } = await org();
+    const project = projects.insertProject({ session: "11", name: "官网", goal: "", background: "" });
+    await projects.addMember(writer(sql), project.id, "m1", "m1", NOW);
+    const rows = [
+      { id: "r1", projectId: project.id, origin: MAIN_SESSION },
+      { id: "r2", projectId: project.id, origin: "7" }
+    ];
+    const current = () => new Map(projects.listProjects().map((item) => [item.id, item]));
+    assert.deepEqual(readableReports(rows, current(), (session) => threads.of(session)).map((row) => row.id), ["r1", "r2"]);
+    await projects.setLevel(writer(sql), project.id, "L3", NOW);
+    assert.deepEqual(readableReports(rows, current(), (session) => threads.of(session)).map((row) => row.id), ["r2"]);
+    await projects.setLevel(writer(sql), project.id, "L4", NOW);
+    assert.deepEqual(readableReports(rows, current(), (session) => threads.of(session)), []);
   });
 });
